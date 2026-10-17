@@ -4,6 +4,7 @@ extends Node3D
 @onready var player: Node3D = $Player
 @onready var spawner: Node3D = $Spawner
 @onready var camera: Camera3D = $Camera3D
+@onready var sun: DirectionalLight3D = $Sun
 @onready var hud: CanvasLayer = $Hud
 
 var distance := 0.0     # total distance flown (units) = score
@@ -13,6 +14,9 @@ var _death_time := 0.0
 
 func _ready() -> void:
 	_setup_environment()
+	# Angled light: top, front and side faces of every cube get different (flat) brightness.
+	sun.look_at_from_position(Vector3.ZERO, Tuning.light_direction)
+	sun.shadow_enabled = false
 	# Portrait: lock the horizontal field of view so the whole grid always fits width-wise.
 	camera.keep_aspect = Camera3D.KEEP_WIDTH
 	camera.fov = Tuning.camera_fov
@@ -52,11 +56,12 @@ func _input(event: InputEvent) -> void:
 func _setup_environment() -> void:
 	var env := Environment.new()
 	env.background_mode = Environment.BG_COLOR
-	env.background_color = Color(0.45, 0.65, 0.9)
+	env.background_color = Tuning.far_color
 	env.ambient_light_source = Environment.AMBIENT_SOURCE_COLOR
-	env.ambient_light_color = Color(0.7, 0.7, 0.8)
+	env.ambient_light_color = Color(0.75, 0.78, 0.9)
+	env.ambient_light_energy = 0.45
 	env.fog_enabled = true
-	env.fog_light_color = Color(0.45, 0.65, 0.9)
+	env.fog_light_color = Tuning.far_color
 	env.fog_density = 0.0
 	# Fog hides rows popping in at the far end.
 	env.fog_depth_begin = 70.0

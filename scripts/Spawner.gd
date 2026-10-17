@@ -9,6 +9,7 @@ var _prev_open: Array[bool] = []   # open flags of previous row, index = gx + 3*
 var _last_row_z := 0.0
 var _obstacle_mesh: BoxMesh
 var _stripe_mesh: BoxMesh
+var _outline_shader: Shader = preload("res://shaders/outline.gdshader")
 
 func _ready() -> void:
 	_obstacle_mesh = BoxMesh.new()  # unit cube; each row supplies its own material (for fading)
@@ -41,7 +42,7 @@ func reset() -> void:
 func advance(dist: float) -> void:
 	for r in _rows:
 		r.position.z += dist
-		_update_fade(r)
+		_update_look(r)
 	_last_row_z += dist
 	while _last_row_z > -Tuning.spawn_distance:
 		_last_row_z -= Tuning.spawn_spacing
@@ -62,11 +63,22 @@ func hits(p: Vector2) -> bool:
 				return true
 	return false
 
-## Fade a row toward fade_alpha as it nears the plane so it doesn't hide the rows behind it.
-func _update_fade(row: Node3D) -> void:
-	var t := clampf(1.0 - (-row.position.z) / Tuning.fade_start_distance, 0.0, 1.0)
+## Per-row look, refreshed every frame: tint by distance from the plane (near = bright,
+## far = pale toward the fog colour) and fade toward fade_alpha as the row nears the plane
+## so it doesn't hide the rows behind it. Outline alpha follows the fade.
+func _update_look(row: Node3D) -> void:
+	var d := maxf(-row.position.z, 0.0)
+	var tint := clampf(inverse_lerp(Tuning.tint_near_distance, Tuning.tint_far_distance, d), 0.0, 1.0)
+	var fade := clampf(1.0 - d / Tuning.fade_start_distance, 0.0, 1.0)
+	var alpha := lerpf(1.0, Tuning.fade_alpha, fade)
 	var mat: StandardMaterial3D = row.get_meta("mat")
-	mat.albedo_color.a = lerpf(1.0, Tuning.fade_alpha, t)
+	var color := Tuning.near_color.lerp(Tuning.far_color, tint)
+	color.a = alpha
+	mat.albedo_color = color
+	var outline: ShaderMaterial = row.get_meta("outline")
+	outline.set_shader_parameter("alpha", alpha)
+	outline.set_shader_parameter("thickness", Tuning.outline_thickness)
+	outline.set_shader_parameter("distance_gain", Tuning.outline_distance_gain)
 
 func _spawn_row(z: float) -> void:
 	var open := _generate_open_cells()
@@ -75,10 +87,15 @@ func _spawn_row(z: float) -> void:
 	row.position.z = z
 	var size := Tuning.cell_size * Tuning.obstacle_scale
 	var mat := StandardMaterial3D.new()
-	mat.albedo_color = Color(0.85, 0.3, 0.3)
+	mat.roughness = 1.0                       # matte: flat, gradient-free face shading
+	mat.metallic_specular = 0.0
 	mat.transparency = BaseMaterial3D.TRANSPARENCY_ALPHA  # always alpha, so no shader switch when fading
 	mat.depth_draw_mode = BaseMaterial3D.DEPTH_DRAW_ALWAYS
+	var outline := ShaderMaterial.new()
+	outline.shader = _outline_shader
+	mat.next_pass = outline  # draws the black hull right after the cube itself
 	row.set_meta("mat", mat)
+	row.set_meta("outline", outline)
 	var cells: Array[Vector2] = []
 	for i in 9:
 		if open[i]:
@@ -98,6 +115,7 @@ func _spawn_row(z: float) -> void:
 	stripe.scale = Vector3(40.0, 0.1, 0.8)
 	stripe.position = Vector3(0, -Tuning.cell_size * 2.5, 0)
 	row.add_child(stripe)
+	_update_look(row)
 	add_child(row)
 	_rows.append(row)
 

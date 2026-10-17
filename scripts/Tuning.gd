@@ -45,6 +45,23 @@ var camera_fov := 60.0
 var camera_follow_x := 0.5
 var camera_follow_y := 0.3
 
+# ---------- Obstacle look: outline, distance tint, light ----------
+## Black outline width around each obstacle, in world units at the camera.
+var outline_thickness := 0.07
+## Extra outline width per unit of camera distance, so outlines stay readable far away.
+var outline_distance_gain := 0.05
+## Obstacle colour of the nearest rows (bright, saturated).
+var near_color := Color(1.0, 0.3, 0.12)
+## Colour far rows fade toward; also used for the sky and fog so distant rows melt into them.
+var far_color := Color(0.45, 0.65, 0.9)
+## Rows closer than this (distance from the plane, units) use the full near colour...
+var tint_near_distance := 20.0
+## ...and rows farther than this use the full far colour; in between it blends.
+var tint_far_distance := 120.0
+## Direction the sun's light travels (x right, y up, z toward the camera). Chosen so the top,
+## front and side faces of a cube get clearly different brightness (flat shading).
+var light_direction := Vector3(0.3, -0.78, -0.55)
+
 # ---------- Near-row fade ----------
 ## An obstacle row starts fading when it is this far ahead of the plane (units).
 var fade_start_distance := 35.0
