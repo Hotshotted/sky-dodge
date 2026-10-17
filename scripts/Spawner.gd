@@ -11,14 +11,21 @@ var _obstacle_mesh: BoxMesh
 var _stripe_mesh: BoxMesh
 
 func _ready() -> void:
-	var mat := StandardMaterial3D.new()
-	mat.albedo_color = Color(0.85, 0.3, 0.3)
-	_obstacle_mesh = BoxMesh.new()
-	_obstacle_mesh.material = mat
+	_obstacle_mesh = BoxMesh.new()  # unit cube; each row supplies its own material (for fading)
 	var stripe_mat := StandardMaterial3D.new()
 	stripe_mat.albedo_color = Color(0.3, 0.38, 0.5)
 	_stripe_mesh = BoxMesh.new()
 	_stripe_mesh.material = stripe_mat
+	# Static ground far below the grid so the camera looking down has something to read depth from.
+	var ground := MeshInstance3D.new()
+	var gm := BoxMesh.new()
+	var gmat := StandardMaterial3D.new()
+	gmat.albedo_color = Color(0.2, 0.26, 0.34)
+	gm.material = gmat
+	ground.mesh = gm
+	ground.scale = Vector3(120.0, 0.1, 400.0)
+	ground.position = Vector3(0, -Tuning.cell_size * 2.5 - 0.2, -150.0)
+	add_child(ground)
 	reset()
 
 func reset() -> void:
@@ -34,6 +41,7 @@ func reset() -> void:
 func advance(dist: float) -> void:
 	for r in _rows:
 		r.position.z += dist
+		_update_fade(r)
 	_last_row_z += dist
 	while _last_row_z > -Tuning.spawn_distance:
 		_last_row_z -= Tuning.spawn_spacing
@@ -43,7 +51,7 @@ func advance(dist: float) -> void:
 
 ## True if a box at plane position `p` (x,y) overlapping z = 0 touches any obstacle.
 func hits(p: Vector2) -> bool:
-	var half_obs := Tuning.cell_size * Tuning.obstacle_size_ratio * 0.5
+	var half_obs := Tuning.cell_size * Tuning.obstacle_scale * 0.5
 	var half_depth := Tuning.obstacle_depth * 0.5 + Tuning.plane_hit_half_z
 	for r in _rows:
 		if absf(r.position.z) > half_depth:
@@ -54,12 +62,23 @@ func hits(p: Vector2) -> bool:
 				return true
 	return false
 
+## Fade a row toward fade_alpha as it nears the plane so it doesn't hide the rows behind it.
+func _update_fade(row: Node3D) -> void:
+	var t := clampf(1.0 - (-row.position.z) / Tuning.fade_start_distance, 0.0, 1.0)
+	var mat: StandardMaterial3D = row.get_meta("mat")
+	mat.albedo_color.a = lerpf(1.0, Tuning.fade_alpha, t)
+
 func _spawn_row(z: float) -> void:
 	var open := _generate_open_cells()
 	_prev_open = open
 	var row := Node3D.new()
 	row.position.z = z
-	var size := Tuning.cell_size * Tuning.obstacle_size_ratio
+	var size := Tuning.cell_size * Tuning.obstacle_scale
+	var mat := StandardMaterial3D.new()
+	mat.albedo_color = Color(0.85, 0.3, 0.3)
+	mat.transparency = BaseMaterial3D.TRANSPARENCY_ALPHA  # always alpha, so no shader switch when fading
+	mat.depth_draw_mode = BaseMaterial3D.DEPTH_DRAW_ALWAYS
+	row.set_meta("mat", mat)
 	var cells: Array[Vector2] = []
 	for i in 9:
 		if open[i]:
@@ -68,6 +87,7 @@ func _spawn_row(z: float) -> void:
 		cells.append(pos)
 		var mi := MeshInstance3D.new()
 		mi.mesh = _obstacle_mesh
+		mi.material_override = mat
 		mi.scale = Vector3(size, size, Tuning.obstacle_depth)  # mesh is a unit cube
 		mi.position = Vector3(pos.x, pos.y, 0)
 		row.add_child(mi)

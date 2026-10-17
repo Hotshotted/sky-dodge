@@ -15,17 +15,18 @@ func _ready() -> void:
 	_setup_environment()
 	# Portrait: lock the horizontal field of view so the whole grid always fits width-wise.
 	camera.keep_aspect = Camera3D.KEEP_WIDTH
-	camera.fov = 75.0
-	camera.far = 200.0
+	camera.fov = Tuning.camera_fov
+	camera.far = 220.0
+	camera.rotation = Vector3(-deg_to_rad(Tuning.camera_tilt_deg), 0, 0)
 
 func _process(delta: float) -> void:
 	delta = minf(delta, 0.05)
 	var px: float = player.position.x
 	var py: float = player.position.y
-	# Camera sits behind/above the plane and drifts slightly with it.
-	var cam_target := Vector3(px * 0.5, py * 0.5 + 3.0, 9.0)
+	# Camera sits high behind the plane, tilted down, and drifts slightly with it.
+	var cam_target := Vector3(px * Tuning.camera_follow_x, py * Tuning.camera_follow_y + Tuning.camera_height, Tuning.camera_distance)
 	camera.position = camera.position.lerp(cam_target, 1.0 - exp(-6.0 * delta))
-	camera.look_at(Vector3(px * 0.3, py * 0.3, -15.0))
+	camera.rotation.x = -deg_to_rad(Tuning.camera_tilt_deg)
 	if not alive:
 		return
 
@@ -58,8 +59,8 @@ func _setup_environment() -> void:
 	env.fog_light_color = Color(0.45, 0.65, 0.9)
 	env.fog_density = 0.0
 	# Fog hides rows popping in at the far end.
-	env.fog_depth_begin = 50.0
-	env.fog_depth_end = 110.0
+	env.fog_depth_begin = 70.0
+	env.fog_depth_end = 140.0
 	var we := WorldEnvironment.new()
 	we.environment = env
 	add_child(we)
