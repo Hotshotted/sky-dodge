@@ -1,0 +1,14 @@
+# Godot
+.godot/
+*.translation
+# Exports
+build/
+export/
+*.apk
+*.aab
+*.exe
+*.pck
+*.zip
+# Editor / OS
+.DS_Store
+*.tmp

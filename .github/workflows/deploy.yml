@@ -1,0 +1,74 @@
+name: Build & Deploy Web
+
+on:
+  push:
+    branches: [main]
+  workflow_dispatch:
+
+permissions:
+  contents: read
+  pages: write
+  id-token: write
+
+concurrency:
+  group: pages
+  cancel-in-progress: true
+
+env:
+  GODOT_VERSION: "4.5-stable"
+  GODOT_TEMPLATE_DIR: "4.5.stable"
+
+jobs:
+  build:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Download Godot (headless editor)
+        run: |
+          BASE=https://github.com/godotengine/godot-builds/releases/download/${GODOT_VERSION}
+          curl -fsSL -o godot.zip $BASE/Godot_v${GODOT_VERSION}_linux.x86_64.zip
+          unzip -q godot.zip
+          sudo mv Godot_v${GODOT_VERSION}_linux.x86_64 /usr/local/bin/godot
+          godot --version
+
+      # Only the single-threaded web templates are kept (cached) - the full .tpz is ~1.3 GB.
+      - name: Cache web export templates
+        id: tpl-cache
+        uses: actions/cache@v4
+        with:
+          path: ~/.local/share/godot/export_templates/${{ env.GODOT_TEMPLATE_DIR }}
+          key: godot-web-templates-${{ env.GODOT_VERSION }}
+
+      - name: Download export templates
+        if: steps.tpl-cache.outputs.cache-hit != 'true'
+        run: |
+          BASE=https://github.com/godotengine/godot-builds/releases/download/${GODOT_VERSION}
+          curl -fsSL -o templates.tpz $BASE/Godot_v${GODOT_VERSION}_export_templates.tpz
+          mkdir -p tpl ~/.local/share/godot/export_templates/${GODOT_TEMPLATE_DIR}
+          unzip -q templates.tpz 'templates/web_nothreads_*' 'templates/version.txt' -d tpl
+          mv tpl/templates/* ~/.local/share/godot/export_templates/${GODOT_TEMPLATE_DIR}/
+          rm -rf tpl templates.tpz
+
+      - name: Import project
+        run: godot --headless --import || true  # first import can exit non-zero; export below is the real check
+
+      - name: Export Web
+        run: |
+          mkdir -p build/web
+          godot --headless --export-release "Web" build/web/index.html
+          ls -la build/web
+
+      - uses: actions/upload-pages-artifact@v3
+        with:
+          path: build/web
+
+  deploy:
+    needs: build
+    runs-on: ubuntu-latest
+    environment:
+      name: github-pages
+      url: ${{ steps.deployment.outputs.page_url }}
+    steps:
+      - id: deployment
+        uses: actions/deploy-pages@v4
