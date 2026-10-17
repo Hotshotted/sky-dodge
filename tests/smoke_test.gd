@@ -5,6 +5,8 @@ extends SceneTree
 ##   2. three consecutive runs, each with near misses, ended by a crash and restarted IN PLACE by a
 ##      tap: the game-over UI shows the reason and score, the run resets, and NO new nodes,
 ##      materials or resources are created after start-up (pooled effects stay alive and warm)
+##   2b. fuel: it drains, a can refills it (with a pooled pop), empty fuel ends the run with "Out of fuel"
+##   2c. fuel can placement: only in open columns, never on the safe path, risk-biased
 ##   3. ?debug flags parse, and switching an effect off really skips it
 ##   4. plane collision capsules: span matches the wings, rounded corners graze past a cube corner
 ##   5. closest-approach near-miss detection reports the right side
@@ -116,6 +118,11 @@ func _initialize() -> void:
 		cubes.append_array(r.cubes)
 	check(cubes.size() == main.spawner.POOL_ROWS * tuning.column_count and count_visible(cubes) == cubes.size(),
 			"every pooled obstacle cube (%d) is drawn during the pre-warm" % cubes.size())
+	var cans: Array = []
+	for r in main.spawner._all_rows:
+		cans.append(r.can)
+	check(count_visible(cans) == main.spawner.POOL_ROWS, "every pooled fuel can (%d) is drawn during the pre-warm" % cans.size())
+	check(count_visible(main.fx._pickup_emitters) == main.fx.PICKUP_EMITTERS, "both fuel-pickup emitters are drawing during the pre-warm")
 	var waited := 0.0
 	while main._warming and waited < 12.0:
 		await real_wait(0.1)
@@ -129,6 +136,10 @@ func _initialize() -> void:
 	var in_play := 0   # cubes legitimately visible: the live game has started spawning its first row(s)
 	for r in main.spawner._rows:
 		in_play += r.xs.size()
+	var cans_in_play := 0
+	for r in main.spawner._rows:
+		cans_in_play += int(r.has_can)
+	check(count_visible(cans) == cans_in_play and count_visible(main.fx._pickup_emitters) == 0, "no pre-warm cans or pickup puffs left behind")
 	check(count_visible(cubes) == in_play and count_visible(main.fx._streak_nodes) == 0 and main.trail._pts.is_empty()
 			and count_visible(main.fx._emitters) == 0, "no pre-warm effects left behind (only the live game's own cubes are showing: %d)" % in_play)
 	check(main.alive, "run starts alive")
@@ -161,27 +172,55 @@ func _initialize() -> void:
 	var first_instance := main
 	for run in [1, 2, 3]:
 		print("  -- run %d --" % run)
-		check(main.score < 100.0 and main.multiplier == 1 and main.alive, "run %d starts fresh (score %d, x%d)" % [run, int(main.score), main.multiplier])
+		check(main.score < 100.0 and main.multiplier == 1 and main.alive and main.fuel > tuning.fuel_start - 5.0,
+				"run %d starts fresh (score %d, x%d, fuel %.0f)" % [run, int(main.score), main.multiplier, main.fuel])
 		check(not main.hud._over.visible, "game-over UI hidden while playing")
 		await do_near_misses(main, 3)
 		check(main.multiplier == 4 and main.hud._mult.text == "x4", "three near misses give x4 (%s)" % main.hud._mult.text)
 		check(count_visible(main.hud._pop_labels) >= 1 and count_visible(main.fx._emitters) >= 1, "popup and sparks are showing")
+		# fuel: drains; a can refills it with a pooled pop
+		var f0: float = main.fuel
+		await real_wait(0.4)
+		check(main.fuel < f0 and absf((f0 - main.fuel) - tuning.fuel_drain * 0.4) < tuning.fuel_drain * 0.25,
+				"fuel drains at about fuel_drain (%.2f in 0.4 s, expect ~%.2f)" % [f0 - main.fuel, tuning.fuel_drain * 0.4])
+		main.fuel = 40.0
+		var can_row = main.spawner._rows_make_for_test(main.player.position.z, [])
+		main.spawner._place_can_for_test(can_row, main.player.position.x)
+		await real_wait(0.1)
+		check(not can_row.has_can and not can_row.can.visible, "driving into a can collects it")
+		check(absf(main.fuel - (40.0 + tuning.fuel_refill)) < 1.5, "a can refills fuel_refill (%.1f -> %.1f)" % [40.0, main.fuel])
+		check(count_visible(main.fx._pickup_emitters) >= 1 and main.hud._fuel_pulse_ms > 0, "the pickup pop (emitter + gauge flash) is showing")
+		main.fuel = tuning.fuel_start - 5.0
+		var cap_row = main.spawner._rows_make_for_test(main.player.position.z, [])
+		main.spawner._place_can_for_test(cap_row, main.player.position.x)
+		await real_wait(0.1)
+		check(main.fuel <= tuning.fuel_start + 0.001, "a refill never goes above a full tank (%.1f)" % main.fuel)
 		var snap := snapshot(main)
 		check(same_world(base, snap), "near misses created nothing new  [%s]" % describe(snap))
 		if run == 3:
 			break
-		force_crash(main)
-		await real_wait(0.2)
-		check(not main.alive, "crash ends the run")
-		check(main.hud._over.visible, "game-over UI is visible after a crash")
+		var reason := "Hit an obstacle"
+		if run == 2:   # this run ends by running dry instead
+			reason = "Out of fuel"
+			main.score = 1234.0
+			main.fuel = 0.05
+			await real_wait(0.3)
+		else:
+			force_crash(main)
+			await real_wait(0.2)
+		check(not main.alive, "run %d ends (%s)" % [run, reason])
+		check(main.hud._over.visible, "game-over UI is visible")
 		var shown: String = main.hud._over.text
-		check(shown.contains("CRASHED") and shown.contains("Hit an obstacle") and shown.contains("Score: 1234"),
-				"game-over shows CRASHED, the reason and the score  (\"%s\")" % shown.replace("\n", " | "))
+		check(shown.contains("CRASHED") and shown.contains(reason) and shown.contains("Score: 1234"),
+				"game-over shows the end reason \"%s\" and the score  (\"%s\")" % [reason, shown.replace("\n", " | ")])
+		check(run != 2 or main.fuel <= 0.0, "out-of-fuel run ended with an empty tank")
 		await real_wait(0.6)   # Main ignores taps for 0.5 s after a crash
 		tap()
 		await real_wait(0.3)
 		check(main == first_instance and current_scene == first_instance, "tap restarted the run IN PLACE (same scene instance)")
 		check(main.alive and main.score < 100.0 and main.multiplier == 1, "restart reset score and multiplier")
+		check(main.fuel > tuning.fuel_start - tuning.fuel_drain, "restart refilled the tank (%.1f / %.0f)" % [main.fuel, tuning.fuel_start])
+		check(absf(main.hud._fuel_frac - main.fuel / tuning.fuel_start) < 0.05, "fuel gauge shows the full tank again")
 		check(not main.hud._over.visible and main.hud._mult.text == "x1", "game-over UI hidden, multiplier label reset")
 		check(count_visible(main.hud._pop_labels) == 0 and main.trail._pts.is_empty(), "old popups and trail cleared")
 		check(main.player.active and absf(main.player.position.x) < 0.01 and main.player.velocity == Vector2.ZERO, "plane is back at the start")
@@ -197,6 +236,81 @@ func _initialize() -> void:
 	await real_wait(1.2)      # let the last popup / streaks / flash expire
 	var sp: Node = main.spawner
 	var pl: Node = main.player
+
+	print("2c. fuel can placement")
+	var saved_chance: float = tuning.fuel_can_chance
+	var saved_bias: float = tuning.fuel_risk_bias
+	var saved_blk_min: int = tuning.blocked_columns_min   # the test's "crowded" rows leave one open column: no risky spot
+	var saved_blk_max: int = tuning.blocked_columns_max
+	tuning.blocked_columns_min = 2
+	tuning.blocked_columns_max = 3
+	tuning.fuel_can_chance = 1.0
+	tuning.fuel_risk_bias = 1.0     # strict: risky spots only
+	var n: int = tuning.column_count
+	var bad_open := 0
+	var on_safe := 0
+	var not_risky := 0
+	var placed := 0
+	var rows := 4000
+	var prev: Array[bool] = []
+	for i in n:
+		prev.append(true)
+	var safe := n / 2
+	for i in rows:
+		var open: Array[bool] = sp._generate_open_columns(prev)
+		var next_open: Array[bool] = sp._generate_open_columns(open)
+		safe = sp._pick_safe_col(open, safe)
+		var c: int = sp._choose_can_column(open, next_open, safe)
+		if c >= 0:
+			placed += 1
+			if not open[c]:
+				bad_open += 1
+			if c == safe:
+				on_safe += 1
+			var beside := (c > 0 and not open[c - 1]) or (c < n - 1 and not open[c + 1])
+			if not (beside or not next_open[c]):
+				not_risky += 1
+		prev = open
+	check(placed > rows * 0.5, "cans are placed in most rows when chance is 1 (%d of %d)" % [placed, rows])
+	check(bad_open == 0, "a can is never inside an obstacle column")
+	check(on_safe == 0, "with risk bias 1 a can is never on the main safe path")
+	check(not_risky == 0, "with risk bias 1 every can is next to an obstacle or in a column that closes next row")
+	# bias 0: any open column, so some cans land on the safe path
+	tuning.fuel_risk_bias = 0.0
+	var any_on_safe := 0
+	var any_placed := 0
+	prev = []
+	for i in n:
+		prev.append(true)
+	for i in rows:
+		var open2: Array[bool] = sp._generate_open_columns(prev)
+		var next2: Array[bool] = sp._generate_open_columns(open2)
+		safe = sp._pick_safe_col(open2, safe)
+		var c2: int = sp._choose_can_column(open2, next2, safe)
+		if c2 >= 0:
+			any_placed += 1
+			if c2 == safe:
+				any_on_safe += 1
+		prev = open2
+	check(any_on_safe > any_placed * 0.15, "with bias 0 cans also land on the safe path (%d of %d)" % [any_on_safe, any_placed])
+	# lookahead: the "next row" the can placement saw is the row that really spawns next
+	tuning.fuel_can_chance = 0.0
+	sp.reset()
+	sp._spawn_row(-30.0)
+	var predicted: Array[bool] = sp._pending_open.duplicate()
+	sp._spawn_row(-40.0)
+	var actual_xs: Array[float] = sp._rows[-1].xs.duplicate()
+	var matches := true
+	for i in n:
+		var blocked_in_row := actual_xs.any(func(x): return absf(x - tuning.column_center(i)) < 0.01)
+		if blocked_in_row == predicted[i]:
+			matches = false
+	check(matches, "can placement looks at the real next row (lookahead matches the row that spawns)")
+	sp.reset()
+	tuning.fuel_can_chance = saved_chance
+	tuning.fuel_risk_bias = saved_bias
+	tuning.blocked_columns_min = saved_blk_min
+	tuning.blocked_columns_max = saved_blk_max
 
 	print("3. debug flags")
 	DebugFlags.parse(["nofx=sparks,bogus", "noprewarm", "perf", "v=abc1234"])
@@ -233,27 +347,61 @@ func _initialize() -> void:
 	main.hud._perf_label.queue_free()
 	main.hud._perf_label = null
 
-	print("4. collision capsules")
-	var caps: Array[PackedFloat32Array] = pl.hit_capsules()
+	print("4. rounded wings: visible model and collision stay in sync")
+	var k: float = tuning.plane_hit_scale
+	var caps: PackedFloat32Array = pl.hit_capsules()
 	var half: Vector2 = sp._obstacle_half()
-	var wing_tip: float = caps[0][2] + caps[0][4]
-	check(absf(wing_tip - pl.WING_HALF.x * tuning.plane_hit_scale) < 0.001, "wing capsule spans the visible wings (%.3f half-span)" % wing_tip)
-	var length: float = caps[1][3] + caps[1][4]
-	check(absf(length - (pl.BODY_Z + pl.BODY_HALF.y * tuning.plane_hit_scale)) < 0.001, "fuselage capsule reaches the visible tail (%.3f)" % length)
+	var wing_tip: float = pl.collision_half_span()
+	check(absf(wing_tip - pl.WING_HALF.x * k) < 0.01, "collision wingspan matches the visible wings (%.3f half-span)" % wing_tip)
+	var fo := caps.size() - 5
+	check(absf(caps[fo + 3] + caps[fo + 4] - (pl.BODY_Z + pl.BODY_HALF.y * k)) < 0.001, "fuselage capsule reaches the visible tail")
+	var wing_mesh: Mesh = pl._model.get_child(1).mesh
+	var aabb := wing_mesh.get_aabb()
+	check(absf(aabb.size.x - 2.0 * pl.WING_HALF.x) < 0.01 and absf(aabb.size.y - pl.WING_THICKNESS) < 0.001,
+			"visible wing mesh is %.2f wide, %.2f thick" % [aabb.size.x, aabb.size.y])
+	# every point of the visible outline (scaled by plane_hit_scale) lies inside the collision circles
+	var outline: PackedVector2Array = pl.wing_outline(tuning.plane_tip_radius)
+	var worst := 0.0
+	for v in outline:
+		var sv := Vector2(v.x * k, pl.WING_Z + (v.y - pl.WING_Z) * k)
+		var best := INF
+		for o in range(0, caps.size() - 5, 5):
+			best = minf(best, Vector2(caps[o], caps[o + 1]).distance_to(sv) - caps[o + 4])
+		worst = maxf(worst, best)
+	check(worst < 0.03, "collision covers the visible wing outline (worst gap %.3f)" % worst)
+	# the wing tapers: the chord at the tip is much narrower than at the root
+	var root_r := 0.0
+	var tip_r := INF
+	for o in range(0, caps.size() - 5, 5):
+		root_r = maxf(root_r, caps[o + 4])
+		tip_r = minf(tip_r, caps[o + 4])
+	check(root_r > 0.3 and tip_r < 0.25 and tip_r < root_r * 0.8, "collision tapers toward the tips (root %.2f, tip %.2f)" % [root_r, tip_r])
 	var p0 := Vector2(0.0, 0.0)
 	sp.reset()
 	var test_row = sp._rows_make_for_test(0.0, [wing_tip + half.x + 0.05])
 	check(not sp.hits(p0, caps), "wingtip 0.05 clear of a cube survives")
 	test_row.xs[0] = wing_tip + half.x - 0.02
 	check(sp.hits(p0, caps), "wingtip 0.02 inside a cube crashes")
-	# corner graze: a cube corner 0.05 inside the OLD box corner, but outside the rounded capsule
-	var cx: float = wing_tip - 0.05
-	var cz: float = caps[0][3] + (pl.WING_HALF.y * tuning.plane_hit_scale) - 0.05
-	test_row.xs[0] = cx + half.x
-	test_row.position.z = cz + half.y
-	var box_would_hit: bool = cx < wing_tip and cz < pl.WING_Z + pl.WING_HALF.y * tuning.plane_hit_scale
-	check(box_would_hit, "(sanity) a box-shaped hitbox would have crashed on that corner graze")
-	check(not sp.hits(p0, caps), "rounded wingtip survives a cube-corner graze")
+	# corner graze: a cube corner 0.05 inside the old BOX corner of the wing, but outside the rounded tip
+	var box_x: float = wing_tip
+	var box_z: float = pl.WING_Z + pl.WING_HALF.y * k
+	test_row.xs[0] = box_x - 0.05 + half.x
+	test_row.position.z = box_z - 0.05 + half.y
+	check(not sp.hits(p0, caps), "rounded wingtip survives a cube-corner graze that a box would have crashed on")
+	# how much of the box's corner zone does the rounded tip give back?
+	var saved := 0
+	var total := 0
+	for ix in 11:
+		for iz in 11:
+			var cx: float = box_x - 0.25 * ix / 10.0
+			var cz: float = box_z - 0.25 * iz / 10.0
+			test_row.xs[0] = cx + half.x
+			test_row.position.z = cz + half.y
+			total += 1
+			if not sp.hits(p0, caps):
+				saved += 1
+	var pct := 100.0 * saved / total
+	check(pct > 40.0, "a cube corner anywhere in the old box's 0.25 x 0.25 tip corner survives %.0f%% of the time (a box: 0%%)" % pct)
 	sp.reset()
 
 	print("5. near-miss closest approach")

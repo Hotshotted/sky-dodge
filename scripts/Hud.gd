@@ -10,6 +10,15 @@ var _pop_labels: Array[Label] = []
 var _pop_born := PackedInt64Array()   # real ms when started; 0 = idle
 var _pop_base_y := PackedFloat32Array()
 var _next_pop := 0
+var _fuel_bg: ColorRect
+var _fuel_fill: ColorRect
+var _fuel_label: Label
+var _fuel_frac := 1.0
+var _fuel_pulse_ms := -10000        # when a pickup last made the gauge flash
+const FUEL_BAR_W := 560.0
+const FUEL_BAR_H := 30.0
+const FUEL_BAR_TOP := 255.0
+const FUEL_PULSE_TIME := 0.35
 var _splash: Control
 var _perf_label: Label
 var _perf_worst := 0.0        # worst frame time (ms) in the current 3 s window
@@ -31,6 +40,7 @@ func _ready() -> void:
 	_mult.set_anchors_and_offsets_preset(Control.PRESET_TOP_WIDE)
 	_mult.offset_top = 170
 	set_multiplier(1, false)
+	_build_fuel_gauge()
 	for i in POPUP_POOL:
 		var l := _make_label(64)
 		l.visible = false
@@ -42,6 +52,60 @@ func _ready() -> void:
 	_over.set_anchors_and_offsets_preset(Control.PRESET_FULL_RECT)
 	_over.vertical_alignment = VERTICAL_ALIGNMENT_CENTER
 	_over.visible = false
+
+## Fuel gauge under the multiplier: dark trough + a fill that shrinks, green -> amber -> red.
+func _build_fuel_gauge() -> void:
+	_fuel_bg = ColorRect.new()
+	_fuel_bg.color = Color(0, 0, 0, 0.45)
+	_fuel_bg.mouse_filter = Control.MOUSE_FILTER_IGNORE
+	_fuel_fill = ColorRect.new()
+	_fuel_fill.mouse_filter = Control.MOUSE_FILTER_IGNORE
+	for r in [_fuel_bg, _fuel_fill]:
+		r.anchor_left = 0.5
+		r.anchor_right = 0.5
+		r.offset_top = FUEL_BAR_TOP
+		r.offset_bottom = FUEL_BAR_TOP + FUEL_BAR_H
+		add_child(r)
+	_fuel_bg.offset_left = -FUEL_BAR_W * 0.5 - 4.0
+	_fuel_bg.offset_right = FUEL_BAR_W * 0.5 + 4.0
+	_fuel_bg.offset_top = FUEL_BAR_TOP - 4.0
+	_fuel_bg.offset_bottom = FUEL_BAR_TOP + FUEL_BAR_H + 4.0
+	_fuel_label = _make_label(26)
+	_fuel_label.text = "FUEL"
+	_fuel_label.horizontal_alignment = HORIZONTAL_ALIGNMENT_RIGHT
+	_fuel_label.anchor_left = 0.5
+	_fuel_label.anchor_right = 0.5
+	_fuel_label.offset_left = -FUEL_BAR_W * 0.5 - 140.0
+	_fuel_label.offset_right = -FUEL_BAR_W * 0.5 - 16.0
+	_fuel_label.offset_top = FUEL_BAR_TOP - 4.0
+	set_fuel(1.0)
+
+## Show the tank level (0..1).
+func set_fuel(frac: float) -> void:
+	_fuel_frac = clampf(frac, 0.0, 1.0)
+	_fuel_fill.offset_left = -FUEL_BAR_W * 0.5
+	_fuel_fill.offset_right = -FUEL_BAR_W * 0.5 + FUEL_BAR_W * _fuel_frac
+
+## A pickup: the gauge flashes bright and swells for a moment.
+func fuel_pulse() -> void:
+	_fuel_pulse_ms = Time.get_ticks_msec()
+
+func _update_fuel_look(now: int) -> void:
+	var c: Color
+	if _fuel_frac > 0.5:
+		c = Color(0.25, 0.9, 0.35)
+	elif _fuel_frac > Tuning.fuel_low_fraction:
+		c = Color(1.0, 0.75, 0.15)
+	else:
+		c = Color(1.0, 0.2, 0.15)
+		if int(now / 180) % 2 == 0:   # low fuel: blink
+			c = c.lightened(0.45)
+	var pt := clampf((now - _fuel_pulse_ms) / 1000.0 / FUEL_PULSE_TIME, 0.0, 1.0)
+	c = c.lerp(Color.WHITE, 0.7 * (1.0 - pt))
+	_fuel_fill.color = c
+	var swell := 5.0 * (1.0 - pt)
+	_fuel_fill.offset_top = FUEL_BAR_TOP - swell
+	_fuel_fill.offset_bottom = FUEL_BAR_TOP + FUEL_BAR_H + swell
 
 func set_score(points: int) -> void:
 	_score.text = "%d" % points
@@ -80,6 +144,7 @@ func popup(text: String, font_size: int, color: Color, pos: Vector2) -> void:
 func _process(delta: float) -> void:
 	_update_perf(delta)
 	var now := Time.get_ticks_msec()
+	_update_fuel_look(now)
 	# Multiplier punch: 1.6x -> 1x with ease-out.
 	var pt := clampf((now - _punch_start_ms) / 1000.0 / PUNCH_TIME, 0.0, 1.0)
 	_mult.scale = Vector2.ONE * lerpf(1.6, 1.0, 1.0 - pow(1.0 - pt, 3.0))
@@ -217,6 +282,8 @@ func reset_for_run() -> void:
 		_pop_labels[i].visible = false
 		_pop_born[i] = 0
 	_nm_frames_left = 0
+	_fuel_pulse_ms = -10000
+	set_fuel(1.0)
 	set_score(0)
 	set_multiplier(1, false)
 

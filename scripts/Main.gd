@@ -7,10 +7,12 @@ extends Node3D
 @onready var sun: DirectionalLight3D = $Sun
 @onready var hud: CanvasLayer = $Hud
 
-const REASON_OBSTACLE := "Hit an obstacle"  # shown on the game-over screen
+const REASON_OBSTACLE := "Hit an obstacle"  # end reasons, shown on the game-over screen
+const REASON_FUEL := "Out of fuel"
 
 var score := 0.0        # accumulates distance flown x multiplier
 var multiplier := 1     # raised by near misses, decays back to 1
+var fuel := 0.0         # drains steadily; fuel cans refill it; empty ends the run
 var _mult_timer := 0.0  # counts down to the next multiplier decay step
 var _warming := false
 static var _haptic_warmed := false  # first-touch haptic warm-up done (once per app session)
@@ -22,6 +24,7 @@ var fx := Fx.new()
 var trail := Trail.new()
 
 func _ready() -> void:
+	fuel = Tuning.fuel_start
 	add_child(fx)
 	add_child(trail)
 	_setup_environment()
@@ -72,6 +75,10 @@ func _prewarm() -> void:
 				fx.sparks(spot + Vector3(1.5, 0, 0), 1)
 			if not DebugFlags.off("popup"):
 				hud.prewarm_popups()
+			if not DebugFlags.off("pickup"):
+				fx.pickup(spot + Vector3(-1.0, 0, -1.5))   # round-robin: warms both pickup emitters
+				fx.pickup(spot + Vector3(1.0, 0, -1.5))
+				hud.fuel_pulse()
 		if not DebugFlags.off("streaks"):
 			fx.show_all_streaks(spot)
 		if not DebugFlags.off("trail"):
@@ -101,6 +108,7 @@ func restart() -> void:
 	_mult_timer = 0.0
 	elapsed = 0.0
 	alive = true
+	fuel = Tuning.fuel_start
 	spawner.reset()
 	fx.clear()
 	trail.clear()
@@ -125,16 +133,37 @@ func _process(delta: float) -> void:
 	trail.advance(step, Vector2(plane.x, plane.y + 0.9), 1 if DebugFlags.off("trail") else multiplier, delta)
 	_decay_multiplier(delta)
 
-	var caps: Array[PackedFloat32Array] = player.hit_capsules()
+	var caps: PackedFloat32Array = player.hit_capsules()
 	if spawner.hits(plane, caps):
-		alive = false
-		_death_time = Time.get_ticks_msec() / 1000.0
-		player.crash()
-		hud.show_game_over(int(score), REASON_OBSTACLE)
+		_end_run(REASON_OBSTACLE)
 		return
 
 	for ev in spawner.update_near_misses(plane, caps):
 		_on_near_miss(ev)
+
+	# Fuel: burn it, then pick up any cans touched (a can grabbed in the last moment still saves you).
+	fuel = maxf(fuel - Tuning.fuel_drain * delta, 0.0)
+	for pos in spawner.collect_cans(plane, caps):
+		_on_pickup(pos)
+	hud.set_fuel(fuel / Tuning.fuel_start)
+	if fuel <= 0.0:
+		_end_run(REASON_FUEL)
+
+## End the run: freeze the plane and show the game-over screen with what ended it.
+func _end_run(reason: String) -> void:
+	alive = false
+	_death_time = Time.get_ticks_msec() / 1000.0
+	player.crash()
+	hud.show_game_over(int(score), reason)
+
+## A fuel can was collected at `pos`: refill (never past a full tank) and pop.
+func _on_pickup(pos: Vector3) -> void:
+	fuel = minf(fuel + Tuning.fuel_refill, Tuning.fuel_start)
+	if not DebugFlags.off("pickup"):
+		fx.pickup(pos)
+		hud.fuel_pulse()
+	if not DebugFlags.off("haptic"):
+		Input.vibrate_handheld(15)
 
 ## Near miss: raise the multiplier and fire every bit of feedback at once. Each effect can be
 ## switched off from the URL (?nofx=sparks,streaks,flash,popup,trail,haptic,punch) to find out

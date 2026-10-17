@@ -6,9 +6,12 @@ extends Node3D
 ## Streak timing uses real time.
 
 const SPARK_EMITTERS := 2    # round-robin, so overlapping bursts don't cut each other off
+const PICKUP_EMITTERS := 2   # fuel-pickup bursts, round-robin
 const STREAK_POOL := 24      # max Tuning.streak_count
 const STREAK_LIFE := 0.35
 
+var _pickup_emitters: Array[CPUParticles3D] = []
+var _next_pickup := 0
 var _emitters: Array[CPUParticles3D] = []
 var _next_emitter := 0
 var _streak_nodes: Array[MeshInstance3D] = []
@@ -48,6 +51,38 @@ func _ready() -> void:
 		p.emitting = false
 		add_child(p)
 		_emitters.append(p)
+	# Fuel pickup bursts: green puffs rising from the can, same kind of emitter as the sparks.
+	var pop_quad := QuadMesh.new()
+	pop_quad.size = Vector2(0.34, 0.34)
+	var pop_mat := StandardMaterial3D.new()
+	pop_mat.shading_mode = BaseMaterial3D.SHADING_MODE_UNSHADED
+	pop_mat.billboard_mode = BaseMaterial3D.BILLBOARD_ENABLED
+	pop_mat.vertex_color_use_as_albedo = true
+	pop_mat.transparency = BaseMaterial3D.TRANSPARENCY_ALPHA
+	pop_quad.material = pop_mat
+	var pop_ramp := Gradient.new()  # bright green -> fresh green -> transparent
+	pop_ramp.colors = PackedColorArray([Color(0.85, 1, 0.8, 1), Color(0.25, 1, 0.5, 1), Color(0.1, 0.8, 0.3, 0)])
+	pop_ramp.offsets = PackedFloat32Array([0.0, 0.4, 1.0])
+	for i in PICKUP_EMITTERS:
+		var p := CPUParticles3D.new()
+		p.mesh = pop_quad
+		p.color_ramp = pop_ramp
+		p.amount = Tuning.fuel_pop_count
+		p.lifetime = 0.5
+		p.one_shot = true
+		p.explosiveness = 1.0
+		p.local_coords = false
+		p.direction = Vector3(0, 1, 0)
+		p.spread = 180.0
+		p.initial_velocity_min = 3.0
+		p.initial_velocity_max = 7.0
+		p.gravity = Vector3.ZERO
+		p.scale_amount_min = 0.6
+		p.scale_amount_max = 1.3
+		p.emitting = false
+		p.visible = false
+		add_child(p)
+		_pickup_emitters.append(p)
 	# Streaks: thin stretched boxes, hidden until used.
 	var box := BoxMesh.new()
 	box.size = Vector3(0.06, 0.04, 3.0)
@@ -76,6 +111,17 @@ func sparks(pos: Vector3, side: int) -> void:
 	if p.lifetime != Tuning.spark_lifetime:
 		p.lifetime = Tuning.spark_lifetime
 	p.direction = Vector3(side, 0.25, 0.9)
+	p.global_position = pos
+	p.visible = true
+	p.restart()
+	p.emitting = true
+
+## Green burst where a fuel can was picked up (pooled emitters; nothing is allocated).
+func pickup(pos: Vector3) -> void:
+	var p := _pickup_emitters[_next_pickup]
+	_next_pickup = (_next_pickup + 1) % PICKUP_EMITTERS
+	if p.amount != Tuning.fuel_pop_count:
+		p.amount = Tuning.fuel_pop_count
 	p.global_position = pos
 	p.visible = true
 	p.restart()
@@ -124,6 +170,11 @@ func clear() -> void:
 		p.restart()
 		p.emitting = false
 		p.visible = false  # emitting=false alone leaves already-spawned particles on screen
+	for p in _pickup_emitters:
+		p.emitting = false
+		p.restart()
+		p.emitting = false
+		p.visible = false
 	for i in STREAK_POOL:
 		_streak_nodes[i].visible = false
 		_streak_born[i] = 0

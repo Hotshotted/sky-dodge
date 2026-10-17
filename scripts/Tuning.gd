@@ -52,6 +52,30 @@ var outline_thickness := 0.07
 ## top brightest and the front a clearly different, darker tone.
 var light_direction := Vector3(0.3, -0.8, -0.5)
 
+# ---------- Fuel ----------
+## Starting fuel, which is also the size of the tank (refills never go above it).
+var fuel_start := 100.0
+## Fuel burned per second. With no cans at all a run lasts fuel_start / fuel_drain seconds (38 s).
+## Balance check (tests/fuel_balance_sim.gd, autopilots): a player who only flies the widest gaps ran
+## dry at a median of 38 s; random gaps about 36 s; a can-chasing player never ran dry.
+var fuel_drain := 2.6
+## Fuel one can gives back.
+var fuel_refill := 25.0
+## Chance (0-1) that a new row gets a fuel can (rows with no risky spot get none).
+var fuel_can_chance := 0.2
+## How strongly cans prefer RISKY spots (0-1). A can is placed in a risky spot with this
+## probability, otherwise in any open column. Risky = off the main safe path AND either next to an
+## obstacle or in a column that closes in the next row. Cans are never put on the main safe path
+## when this is 1, so only taking the safe gaps never refuels.
+var fuel_risk_bias := 0.95
+## Can size (cube edge) and how close the plane must get to its centre to collect it.
+var fuel_can_size := 0.8
+var fuel_pickup_radius := 0.75
+## Pickup burst: particles, and the gauge flashes below this fraction of the tank.
+var fuel_pop_count := 14
+var fuel_low_fraction := 0.25
+var fuel_can_color := Color(0.2, 0.95, 0.45)
+
 # ---------- Near miss & multiplier ----------
 ## A row counts as a near miss if the plane passed it with less than this gap (units) between the
 ## plane's hit box and the closest obstacle edge (0 = touching = crash).
@@ -138,13 +162,17 @@ var yaw_amount := 0.025
 var tilt_smoothing := 10.0
 
 # ---------- Collision ----------
-## The plane's collision is two capsules (rectangles with rounded ends) built from its visible
-## parts: one along the wings, one along the fuselage. The overall span and length match the
-## visible plane, but the corners are rounded off so a wingtip grazing a cube corner usually
-## survives. Obstacles collide as their visible cube + outline.
-## Capsule radius in units. It can't exceed the part's half thickness (wing 0.35, fuselage
-## 0.225), so the wing uses up to this much and the fuselage is capped at its own width.
-## 0 = square ends (like boxes); larger = rounder and more forgiving.
+## The plane's collision is built from its visible parts: the wing (a tapered outline with round
+## tips, as a row of circles that follow the chord) and the fuselage (one rounded capsule). The span
+## and length match the visible plane, but the tips are rounded off so a wingtip grazing a cube
+## corner usually survives. Obstacles collide as their visible cube + outline.
+## Wing tips: radius (units) of the round tip of the tapered wing. The visible wing and its
+## collision are both built from this one outline, so they always match. Small (0.05) = a pointed
+## taper that is easy to clip; large = a blunt, round tip; 0.35 = the full chord (a stadium).
+## A rounder tip also cuts away more of the corner, so a wingtip grazing a cube corner is
+## more likely to slip past.
+var plane_tip_radius := 0.22
+## Fuselage rounding: radius of its rounded nose and tail (capped at the body's half width, 0.225).
 var plane_hit_radius := 0.3
 ## Capsule size as a fraction of the visible parts. 0.95 = a little forgiveness on top.
 var plane_hit_scale := 0.95
