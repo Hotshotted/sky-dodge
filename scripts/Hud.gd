@@ -88,6 +88,14 @@ func _process(_delta: float) -> void:
 		l.position.y = _pop_base_y[i] - 150.0 * (1.0 - pow(1.0 - t, 2.0))  # rise, easing out
 		l.modulate.a = 1.0 if t < 0.5 else 1.0 - (t - 0.5) / 0.5
 
+## Crash screen: what ended the run, the final score, and the restart hint.
+func show_game_over(points: int, reason: String) -> void:
+	_over.text = _game_over_text(points, reason)
+	_over.visible = true
+
+func _game_over_text(points: int, reason: String) -> String:
+	return "CRASHED\n%s\n\nScore: %d\n\nTap to restart" % [reason, points]
+
 func _make_label(font_size: int) -> Label:
 	var l := Label.new()
 	l.horizontal_alignment = HORIZONTAL_ALIGNMENT_CENTER
@@ -117,7 +125,7 @@ func begin_prewarm() -> void:
 	for i in Tuning.near_miss_texts.size():
 		popup(Tuning.near_miss_texts[i], Tuning.near_miss_sizes[mini(i, Tuning.near_miss_sizes.size() - 1)],
 				Tuning.near_miss_colors[mini(i, Tuning.near_miss_colors.size() - 1)], Vector2(vp.x * 0.5, vp.y * (0.3 + 0.12 * i)))
-	_over.text = "CRASHED\n0123456789\n\nTap to restart"
+	_over.text = _game_over_text(1234567890, "Hit an obstacle")  # same glyphs as the real screen
 	_over.visible = true
 	_cover = ColorRect.new()
 	_cover.color = Color.BLACK

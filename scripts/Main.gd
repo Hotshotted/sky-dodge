@@ -7,6 +7,8 @@ extends Node3D
 @onready var sun: DirectionalLight3D = $Sun
 @onready var hud: CanvasLayer = $Hud
 
+const REASON_OBSTACLE := "Hit an obstacle"  # shown on the game-over screen
+
 var score := 0.0        # accumulates distance flown x multiplier
 var multiplier := 1     # raised by near misses, decays back to 1
 var _mult_timer := 0.0  # counts down to the next multiplier decay step
@@ -79,7 +81,7 @@ func _process(delta: float) -> void:
 		alive = false
 		_death_time = Time.get_ticks_msec() / 1000.0
 		player.crash()
-		hud.show_game_over(int(score))
+		hud.show_game_over(int(score), REASON_OBSTACLE)
 		return
 
 	for ev in spawner.update_near_misses(plane, boxes):

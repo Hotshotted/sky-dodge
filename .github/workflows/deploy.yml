@@ -61,6 +61,15 @@ jobs:
       - name: Import project
         run: godot --headless --import || true  # first import can exit non-zero; export below is the real check
 
+      # Headless smoke test: boot, crash -> game-over screen, tap -> restart, near-miss effects.
+      # Fails the build on a failed check or on any GDScript runtime error in the output.
+      - name: Smoke test
+        shell: bash
+        run: |
+          set -o pipefail
+          timeout 180 godot --headless --path . --script res://tests/smoke_test.gd 2>&1 | tee smoke.log
+          ! grep -q "SCRIPT ERROR" smoke.log
+
       # Cache-busting: export under a name containing the commit hash (so .js/.wasm/.pck are new
       # files every deploy), then make that page index.html and add a small stale-page check.
       - name: Export Web
