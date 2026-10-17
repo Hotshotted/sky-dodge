@@ -107,17 +107,34 @@ func update_near_misses(p: Vector2) -> Array[Dictionary]:
 
 ## Flash one obstacle's outline white for near_miss_flash_time real seconds.
 func flash_obstacle(mi: MeshInstance3D) -> void:
-	var mat := _obstacle_mat.duplicate() as StandardMaterial3D
-	var outline := _outline_mat.duplicate() as ShaderMaterial
-	outline.set_shader_parameter("outline_color", Color.WHITE)
-	outline.set_shader_parameter("thickness", Tuning.outline_thickness * 1.8)
-	mat.next_pass = outline
-	mi.material_override = mat
+	mi.material_override = _make_flash_material()
 	# Real-time timer (ignores Engine.time_scale), so hitstop doesn't stretch the flash.
 	get_tree().create_timer(Tuning.near_miss_flash_time, true, false, true).timeout.connect(
 		func() -> void:
 			if is_instance_valid(mi):
 				mi.material_override = _obstacle_mat)
+
+func _make_flash_material() -> StandardMaterial3D:
+	var mat := _obstacle_mat.duplicate() as StandardMaterial3D
+	var outline := _outline_mat.duplicate() as ShaderMaterial
+	outline.set_shader_parameter("outline_color", Color.WHITE)
+	outline.set_shader_parameter("thickness", Tuning.outline_thickness * 1.8)
+	mat.next_pass = outline
+	return mat
+
+## Startup pre-warm: two cubes in view (normal + white-flash look) so both materials and the
+## outline shader get compiled before the first real obstacle / near miss. Caller frees them.
+func prewarm_nodes() -> Array[Node]:
+	var nodes: Array[Node] = []
+	for i in 2:
+		var mi := MeshInstance3D.new()
+		mi.mesh = _obstacle_mesh
+		mi.material_override = _obstacle_mat if i == 0 else _make_flash_material()
+		mi.scale = Vector3(1.0, 1.0, 1.0)
+		mi.position = Vector3(-2.0 + 4.0 * i, 0, 0)
+		add_child(mi)
+		nodes.append(mi)
+	return nodes
 
 func _update_look() -> void:
 	_obstacle_mat.albedo_color = Tuning.obstacle_color

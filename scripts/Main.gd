@@ -11,6 +11,8 @@ var score := 0.0        # accumulates distance flown x multiplier
 var multiplier := 1     # raised by near misses, decays back to 1
 var _mult_timer := 0.0  # counts down to the next multiplier decay step
 var _hitstop_token := 0
+var _warming := false
+static var _warmed := false  # pre-warm only once per app session (survives scene reloads)
 var elapsed := 0.0      # run time, drives the speed ramp
 var alive := true
 var _death_time := 0.0
@@ -33,12 +35,35 @@ func _ready() -> void:
 	camera.far = 100.0
 	_update_camera()
 	_update_plane_zone()
+	if not _warmed:
+		_warmed = true
+		_prewarm()
+
+## First-use stutter fix: GL shaders / particle materials / font glyphs compile the first time
+## they are drawn. Draw every effect once, in view but under a black cover, for a few frames
+## at startup, then remove it all. The game doesn't tick meanwhile.
+func _prewarm() -> void:
+	_warming = true
+	var spot := Vector3(0.0, 1.2, 1.0)
+	hud.begin_prewarm()
+	var temps: Array = spawner.prewarm_nodes()
+	fx.sparks(spot, 1)
+	fx.streaks(spot)
+	for i in 4:
+		trail.advance(0.3, Vector2(spot.x, spot.z), 2, 0.1)  # builds a ribbon (alpha, vertex colour)
+		await get_tree().process_frame
+	fx.clear()
+	trail.clear()
+	for n in temps:
+		n.queue_free()
+	hud.end_prewarm()
+	_warming = false
 
 func _process(delta: float) -> void:
 	delta = minf(delta, 0.05)
 	_update_camera()
 	_update_plane_zone()
-	if not alive:
+	if _warming or not alive:
 		return
 
 	elapsed += delta
@@ -65,7 +90,9 @@ func _process(delta: float) -> void:
 
 ## Near miss: raise the multiplier and fire every bit of feedback at once.
 func _on_near_miss(ev: Dictionary) -> void:
+	var old_tier := _tier_of(multiplier)
 	multiplier = mini(multiplier + 1, Tuning.multiplier_max)
+	var new_tier := _tier_of(multiplier)
 	_mult_timer = Tuning.multiplier_hold_time
 	hud.set_multiplier(multiplier, true)
 	var side: int = ev["side"]
@@ -78,7 +105,12 @@ func _on_near_miss(ev: Dictionary) -> void:
 	hud.popup(Tuning.near_miss_texts[i], Tuning.near_miss_sizes[mini(i, Tuning.near_miss_sizes.size() - 1)],
 			Tuning.near_miss_colors[mini(i, Tuning.near_miss_colors.size() - 1)], pos)
 	Input.vibrate_handheld(Tuning.haptic_ms)  # no-op where unsupported
-	_hitstop()
+	if Tuning.hitstop_enabled and new_tier > old_tier:  # only when reaching a new multiplier tier
+		_hitstop()
+
+## Popup tier of a multiplier: -1 below 2x, else 0 (2x), 1 (3x), 2 (4x and up).
+func _tier_of(m: int) -> int:
+	return -1 if m < 2 else Tuning.tier_index(m, Tuning.near_miss_texts.size())
 
 ## Slow time briefly. The restore timer ignores Engine.time_scale, so it lasts real seconds.
 func _hitstop() -> void:

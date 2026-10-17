@@ -75,3 +75,9 @@ func _process(_delta: float) -> void:
 		mi.position.z = float(s["z0"]) + Tuning.streak_speed * age
 		var mat := s["mat"] as StandardMaterial3D
 		mat.albedo_color.a = 0.8 * (1.0 - age / STREAK_LIFE)
+
+## Remove everything currently alive (used after the startup pre-warm).
+func clear() -> void:
+	for c in get_children():
+		c.queue_free()
+	_streaks.clear()

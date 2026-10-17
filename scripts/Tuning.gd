@@ -65,9 +65,12 @@ var multiplier_decay_step := 1.5
 var score_uses_multiplier := true
 
 # ---------- Near-miss feedback ----------
-## Hitstop: Engine.time_scale during the freeze, and how long it lasts in REAL seconds.
-var hitstop_scale := 0.3
-var hitstop_duration := 0.08
+## Hitstop (a brief slow-down) fires only when a near miss raises the multiplier into a NEW tier
+## (1x->2x, 2x->3x, 3x->4x), not on every near miss. Turn it off entirely with false.
+var hitstop_enabled := true
+## Engine.time_scale during the freeze, and how long it lasts in REAL seconds.
+var hitstop_scale := 0.5
+var hitstop_duration := 0.05
 ## Sparks in the burst from the wingtip nearest the obstacle, and how long each lives (seconds).
 var spark_count := 24
 var spark_lifetime := 0.45

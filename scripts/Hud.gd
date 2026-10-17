@@ -6,6 +6,7 @@ var _over: Label
 var _mult: Label
 var _punch_start_ms := -10000      # when the multiplier label last "punched"
 var _popups: Array[Dictionary] = []  # {label, born_ms, base_y}
+var _cover: ColorRect
 const PUNCH_TIME := 0.28
 const POPUP_TIME := 0.9
 
@@ -94,3 +95,25 @@ func _build_stamp() -> void:
 	l.offset_top = -48
 	l.modulate = Color(1, 1, 1, 0.55)
 	l.add_theme_constant_override("outline_size", 6)
+
+## Startup pre-warm: draw every popup tier and the game-over text once (this builds the font
+## glyph caches), under a black cover so nothing is seen. end_prewarm() undoes all of it.
+func begin_prewarm() -> void:
+	var vp := get_viewport().get_visible_rect().size
+	for i in Tuning.near_miss_texts.size():
+		popup(Tuning.near_miss_texts[i], Tuning.near_miss_sizes[mini(i, Tuning.near_miss_sizes.size() - 1)],
+				Tuning.near_miss_colors[mini(i, Tuning.near_miss_colors.size() - 1)], Vector2(vp.x * 0.5, vp.y * (0.3 + 0.12 * i)))
+	_over.text = "CRASHED\n0123456789\n\nTap to restart"
+	_over.visible = true
+	_cover = ColorRect.new()
+	_cover.color = Color.BLACK
+	_cover.set_anchors_and_offsets_preset(Control.PRESET_FULL_RECT)
+	_cover.mouse_filter = Control.MOUSE_FILTER_IGNORE
+	add_child(_cover)  # last child = drawn on top of the labels
+
+func end_prewarm() -> void:
+	for d in _popups:
+		(d["label"] as Label).queue_free()
+	_popups.clear()
+	_over.visible = false
+	_cover.queue_free()
