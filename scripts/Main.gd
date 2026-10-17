@@ -44,8 +44,9 @@ func _ready() -> void:
 ## First-use stutter fix: GL shaders / particle buffers / font glyphs / the haptic call set
 ## themselves up the first time they are used. So at boot, behind a splash screen, draw EVERY
 ## near-miss effect for real (on screen, in view, nothing hidden or off-screen) for a few frames:
-## both spark emitters, every pooled streak, a trail ribbon, the normal and white-flash outline,
-## every popup tier at every font size, the multiplier label punch and a zero-length haptic.
+## both spark emitters, every pooled streak, a full-length trail ribbon, the normal and white-flash
+## outline, every popup tier at every font size and the multiplier label punch. (The haptic call
+## can't be warmed at boot: browsers only allow it after a touch, see _input.)
 ## Then remove it all. The game doesn't tick meanwhile. Skip with ?noprewarm; effects switched
 ## off with ?nofx= are not warmed either.
 const PREWARM_FRAMES := 6
@@ -61,15 +62,13 @@ func _prewarm() -> void:
 		fx.sparks(spot + Vector3(1.5, 0, 0), 1)
 	if not DebugFlags.off("punch"):
 		hud.set_multiplier(2, true)
-	if not DebugFlags.off("haptic"):
-		Input.vibrate_handheld(0)  # zero length: exercises the call without buzzing
 	var t0 := Time.get_ticks_msec()
 	var frames := 0
 	while frames < PREWARM_FRAMES or (Time.get_ticks_msec() - t0) < PREWARM_MIN_SECONDS * 1000.0:
 		if not DebugFlags.off("streaks"):
 			fx.show_all_streaks(spot)
 		if not DebugFlags.off("trail"):
-			trail.advance(0.3, Vector2(spot.x, spot.z), 2, 0.1)  # ribbon: alpha + vertex colours
+			trail.fill_for_prewarm(Vector2(spot.x, spot.z))  # full-length ribbon: alpha, vertex colours, big buffers
 		await get_tree().process_frame
 		frames += 1
 	fx.clear()
@@ -131,7 +130,7 @@ func _on_near_miss(ev: Dictionary) -> void:
 				Tuning.near_miss_colors[mini(i, Tuning.near_miss_colors.size() - 1)], pos)
 	if not DebugFlags.off("haptic"):
 		Input.vibrate_handheld(Tuning.haptic_ms)  # no-op where unsupported
-	hud.note_handler_ms((Time.get_ticks_usec() - t0) / 1000.0)
+	hud.note_near_miss((Time.get_ticks_usec() - t0) / 1000.0)
 
 ## Without fresh near misses the multiplier holds, then drops one step at a time down to 1x.
 func _decay_multiplier(delta: float) -> void:
@@ -162,12 +161,13 @@ func _update_plane_zone() -> void:
 	player.set_zone(top, bottom)
 
 func _input(event: InputEvent) -> void:
-	# Browsers only allow vibration after a touch, and the first real call has some set-up cost,
-	# so make a harmless zero-length call on the very first touch rather than on the first near miss.
+	# Browsers only allow vibration after a touch, and the first real call connects to the device's
+	# vibration service. A zero-length call is just a "cancel" and does NOT connect, so make an
+	# imperceptible 1 ms pulse on the very first touch instead of on the first near miss.
 	if not _haptic_warmed and (event is InputEventScreenTouch or event is InputEventScreenDrag):
 		_haptic_warmed = true
 		if not DebugFlags.off("haptic"):
-			Input.vibrate_handheld(0)
+			Input.vibrate_handheld(1)
 	# Tap to restart (small delay so the crash-causing drag can't restart instantly).
 	if not alive and event is InputEventScreenTouch and event.pressed \
 			and Time.get_ticks_msec() / 1000.0 - _death_time > 0.5:

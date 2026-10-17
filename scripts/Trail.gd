@@ -18,6 +18,16 @@ func _init() -> void:
 	mat.cull_mode = BaseMaterial3D.CULL_DISABLED
 	material_override = mat
 
+## Pre-warm: fill the ribbon to its FULL length (the size it reaches in real play) so its largest
+## buffers are allocated and drawn before the first real near miss, not during it.
+func fill_for_prewarm(origin: Vector2) -> void:
+	_pts.clear()
+	for i in int(Tuning.trail_length / 0.15):
+		_pts.append(Vector2(origin.x + sin(i * 0.3) * 0.5, origin.y + i * 0.15))
+	_alpha = 1.0
+	_color = Tuning.trail_colors[0]
+	_rebuild(origin.y)
+
 func clear() -> void:
 	_pts.clear()
 	_alpha = 0.0

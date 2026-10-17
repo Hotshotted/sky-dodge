@@ -52,7 +52,7 @@ func _initialize() -> void:
 		if n.visible:
 			streaks_vis += 1
 	check(streaks_vis == main.fx.STREAK_POOL, "every pooled streak is visible during the pre-warm (%d)" % streaks_vis)
-	check(main.trail._pts.size() >= 2 and main.trail._alpha > 0.0, "trail ribbon is drawing during the pre-warm")
+	check(main.trail._pts.size() >= 60 and main.trail._alpha > 0.0, "full-length trail ribbon is drawing during the pre-warm (%d points)" % main.trail._pts.size())
 	var pops := 0
 	for l in main.hud._pop_labels:
 		if l.visible:
@@ -156,6 +156,17 @@ func _initialize() -> void:
 	check(not any_emit and not any_streak and not any_pop and sp._flashes.is_empty(),
 			"no spark / streak / popup / flash with ?nofx (emit %s, streak %s, popup %s, flashes %d)" % [any_emit, any_streak, any_pop, sp._flashes.size()])
 	DebugFlags.parse([])
+
+	print("7b. ?perf near-miss log")
+	main.hud._perf_label = Label.new()
+	main.hud.add_child(main.hud._perf_label)
+	main.hud.note_near_miss(0.4)
+	for i in 5:
+		main.hud._update_perf(0.07 if i == 2 else 0.02)
+	check(main.hud._nm_log.size() == 1 and main.hud._nm_log[0].contains("code 0.4 ms") and main.hud._nm_log[0].contains("worst 70 ms"),
+			"perf readout logs handler time and the worst following frame (%s)" % str(main.hud._nm_log))
+	main.hud._perf_label.queue_free()
+	main.hud._perf_label = null
 
 	print("8. collision capsules")
 	var pl: Node = main.player

@@ -15,7 +15,11 @@ var _perf_label: Label
 var _perf_worst := 0.0        # worst frame time (ms) in the current 3 s window
 var _perf_window_start := 0
 var _perf_shown := 0.0
-var _handler_ms := 0.0        # last near-miss handler time (ms)
+var _nm_count := 0             # near misses seen (for the ?perf log)
+var _nm_handler_ms := 0.0      # time the near-miss code took on the CPU (ms)
+var _nm_frames_left := 0       # frames still being watched after a near miss
+var _nm_worst := 0.0           # slowest of those frames (ms)
+var _nm_log: Array[String] = []  # last few "#n code X ms, next frames worst Y ms" lines
 const PUNCH_TIME := 0.28
 const POPUP_TIME := 0.9
 
@@ -136,20 +140,33 @@ func _build_stamp() -> void:
 		_perf_label.modulate = Color(0.6, 1, 0.6, 0.9)
 		_perf_label.add_theme_constant_override("outline_size", 6)
 
-## ?perf readout: worst frame in the last 3 s and the last near-miss handler time.
-func note_handler_ms(ms: float) -> void:
-	_handler_ms = ms
+## ?perf: called by Main right after a near miss's effects fired. Starts watching the next 4 frames
+## so the readout can say whether a hitch is in the near-miss code itself (CPU) or in the frames
+## that follow (rendering / GPU / driver work triggered by the effects).
+func note_near_miss(handler_ms: float) -> void:
+	_nm_count += 1
+	_nm_handler_ms = handler_ms
+	_nm_frames_left = 4
+	_nm_worst = 0.0
 
 func _update_perf(delta: float) -> void:
 	if _perf_label == null:
 		return
-	_perf_worst = maxf(_perf_worst, delta * 1000.0)
+	var ms := delta * 1000.0
+	_perf_worst = maxf(_perf_worst, ms)
+	if _nm_frames_left > 0:
+		_nm_worst = maxf(_nm_worst, ms)
+		_nm_frames_left -= 1
+		if _nm_frames_left == 0:
+			_nm_log.append("#%d code %.1f ms | next frames worst %.0f ms" % [_nm_count, _nm_handler_ms, _nm_worst])
+			if _nm_log.size() > 5:
+				_nm_log.pop_front()
 	var now := Time.get_ticks_msec()
 	if now - _perf_window_start > 3000:
 		_perf_shown = _perf_worst
 		_perf_worst = 0.0
 		_perf_window_start = now
-	_perf_label.text = "worst frame (3s): %.0f ms\nnear-miss code: %.2f ms" % [_perf_shown, _handler_ms]
+	_perf_label.text = "worst frame (3s): %.0f ms\nnear misses:\n%s" % [_perf_shown, "\n".join(_nm_log)]
 
 ## Startup pre-warm: a splash screen (nearly opaque, so the effects behind it are really drawn
 ## on screen and not skipped) while the game draws every popup tier at every font size and the
