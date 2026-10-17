@@ -89,6 +89,17 @@ var trail_width := 0.5
 var trail_length := 12.0
 var trail_fade_time := 0.6
 
+# ---------- Start-up pre-warm (splash screen) ----------
+## At boot every effect is drawn for real behind a splash screen so shaders, buffers and font
+## glyphs are set up before play. Phones may compile shaders in the background, so it keeps going
+## until frame times settle. It never ends before this many seconds...
+var prewarm_min_seconds := 1.5
+## ...ends when this many frames in a row each took less than this many milliseconds...
+var prewarm_stable_frames := 10
+var prewarm_stable_ms := 45.0
+## ...and never runs longer than this, whatever the frame times are.
+var prewarm_max_seconds := 6.0
+
 # ---------- Plane movement (relative drag) ----------
 ## The plane follows how far the finger MOVES, not where it is. Light momentum: it tracks the
 ## finger closely and carries only a little after the finger stops.

@@ -172,12 +172,8 @@ func _update_perf(delta: float) -> void:
 ## on screen and not skipped) while the game draws every popup tier at every font size and the
 ## game-over text, building the font glyph caches. end_prewarm() removes it all.
 func begin_prewarm(with_popups: bool) -> void:
-	var vp := get_viewport().get_visible_rect().size
 	if with_popups:
-		for i in POPUP_POOL:  # every pooled label, cycling through every tier's text and size
-			var t := i % Tuning.near_miss_texts.size()
-			popup(Tuning.near_miss_texts[t], Tuning.near_miss_sizes[mini(t, Tuning.near_miss_sizes.size() - 1)],
-					Tuning.near_miss_colors[mini(t, Tuning.near_miss_colors.size() - 1)], Vector2(vp.x * 0.5, vp.y * (0.25 + 0.1 * i)))
+		prewarm_popups()
 		# Also draw each tier text at each size, so no (text, size) pair is first seen mid-game.
 		for t in Tuning.near_miss_texts.size():
 			var l := _make_label(Tuning.near_miss_sizes[mini(t, Tuning.near_miss_sizes.size() - 1)])
@@ -203,6 +199,26 @@ func begin_prewarm(with_popups: bool) -> void:
 	title.mouse_filter = Control.MOUSE_FILTER_IGNORE
 	_splash.add_child(title)
 	add_child(_splash)  # last child = drawn on top
+
+## Show every pooled popup label, cycling through every tier's text and size. The pre-warm calls
+## this again every so often because popups fade out after a second.
+func prewarm_popups() -> void:
+	var vp := get_viewport().get_visible_rect().size
+	for i in POPUP_POOL:
+		var t := i % Tuning.near_miss_texts.size()
+		popup(Tuning.near_miss_texts[t], Tuning.near_miss_sizes[mini(t, Tuning.near_miss_sizes.size() - 1)],
+				Tuning.near_miss_colors[mini(t, Tuning.near_miss_colors.size() - 1)], Vector2(vp.x * 0.5, vp.y * (0.25 + 0.1 * i)))
+
+## Back to a fresh run (restart in place): hide the crash screen and popups, zero the score.
+## Every label stays alive; nothing is created or freed.
+func reset_for_run() -> void:
+	_over.visible = false
+	for i in POPUP_POOL:
+		_pop_labels[i].visible = false
+		_pop_born[i] = 0
+	_nm_frames_left = 0
+	set_score(0)
+	set_multiplier(1, false)
 
 func end_prewarm() -> void:
 	for i in POPUP_POOL:

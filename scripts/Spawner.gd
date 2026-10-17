@@ -7,18 +7,34 @@ extends Node3D
 
 const GROUND_Y := -2.0
 const NEAR_RANGE := 4.0   # only rows within this many units (z) of the plane are collision-checked
+const POOL_ROWS := 12     # rows created once at startup and reused forever (about 6 are alive at a time)
 
-## One row of obstacles, plus the bookkeeping for near-miss detection.
+## One row of obstacles: a cube (with its own outline material) per column, created once and
+## reused, plus the bookkeeping for near-miss detection.
 class Row extends Node3D:
-	var xs: Array[float] = []             # x of each obstacle
-	var obs: Array[MeshInstance3D] = []   # the obstacle nodes (same order)
-	var outlines: Array[ShaderMaterial] = []  # each obstacle's own outline material (same order)
-	var entered := false                  # plane has been inside this row's depth window
+	var cubes: Array[MeshInstance3D] = []          # one per column; hidden when that column is open
+	var cube_outlines: Array[ShaderMaterial] = []  # each cube's own outline material
+	var stripe: MeshInstance3D
+	var xs: Array[float] = []             # x of each blocked column this time round
+	var obs: Array[MeshInstance3D] = []   # the cubes in use (same order as xs)
+	var outlines: Array[ShaderMaterial] = []  # their outline materials (same order)
+	var entered := false                  # plane has been near this row
 	var passed := false                   # near-miss check already done
-	var min_clear := INF                  # smallest gap seen while overlapping
-	var min_idx := -1                     # obstacle that gave that gap
+	var min_clear := INF                  # closest approach seen
+	var min_idx := -1                     # obstacle that gave it
 
-var _rows: Array[Row] = []
+	func clear_state() -> void:
+		xs.clear()
+		obs.clear()
+		outlines.clear()
+		entered = false
+		passed = false
+		min_clear = INF
+		min_idx = -1
+
+var _rows: Array[Row] = []       # rows currently in play, nearest the top of the screen last
+var _all_rows: Array[Row] = []   # every row ever created (the pool)
+var _free_rows: Array[Row] = []  # pool rows not in play
 var _prev_open: Array[bool] = []   # open flags of previous row, index = column
 var _last_row_z := 0.0
 var _obstacle_mesh := BoxMesh.new()  # unit cube, scaled per obstacle
@@ -47,12 +63,16 @@ func _ready() -> void:
 	var stripe_mat := StandardMaterial3D.new()
 	stripe_mat.albedo_color = Color(0.3, 0.38, 0.5)
 	_stripe_mesh.material = stripe_mat
+	for i in POOL_ROWS:  # everything is created now, so nothing is allocated while playing
+		_make_row()
 	reset()
 
+## Put every row back in the pool and start the obstacle stream over (restart in place).
 func reset() -> void:
-	for r in _rows:
-		r.queue_free()
+	for r in _rows.duplicate():
+		_release_row(r)
 	_rows.clear()
+	_flashes.clear()
 	_prev_open.clear()
 	for i in Tuning.column_count:
 		_prev_open.append(true)  # first row may use any column
@@ -68,7 +88,7 @@ func advance(dist: float) -> void:
 		_last_row_z -= Tuning.spawn_spacing
 		_spawn_row(_last_row_z)
 	while not _rows.is_empty() and _rows[0].position.z > Tuning.spawn_distance:
-		_rows.pop_front().queue_free()
+		_release_row(_rows.pop_front())
 
 ## Half size (x, z) of an obstacle as you SEE it: the cube plus its black outline rim.
 func _obstacle_half() -> Vector2:
@@ -147,34 +167,34 @@ func _new_outline() -> ShaderMaterial:
 	m.set_shader_parameter("thickness", Tuning.outline_thickness)
 	return m
 
-## Startup pre-warm: two cubes in view (one drawn white-outlined) so the cube material and the
-## outline shader get compiled before the first real obstacle / near miss. Caller frees them.
-func prewarm_nodes(with_flash: bool = true) -> Array[Node]:
-	var nodes: Array[Node] = []
-	for i in 2:
-		var mi := MeshInstance3D.new()
-		mi.mesh = _obstacle_mesh
-		mi.material_override = _obstacle_mat
-		var outline := _new_outline()
-		if i == 1 and with_flash:
-			outline.set_shader_parameter("outline_color", Color.WHITE)
-		mi.material_overlay = outline
-		mi.position = Vector3(-2.0 + 4.0 * i, 0, 0)
-		add_child(mi)
-		nodes.append(mi)
-	return nodes
+## Startup pre-warm: show EVERY pooled cube in view (alternate rows with a white outline) so each
+## cube's outline material, and the cube material and shader, are drawn before real play.
+func prewarm_show(with_flash: bool) -> void:
+	for idx in _all_rows.size():
+		var row := _all_rows[idx]
+		row.position = Vector3(0.0, 0.0, -8.0 + 1.5 * idx)
+		row.visible = true
+		for i in row.cubes.size():
+			var mi := row.cubes[i]
+			mi.visible = true
+			mi.position = Vector3(Tuning.column_center(i), 0.0, 0.0)
+			mi.scale = Vector3.ONE
+			row.cube_outlines[i].set_shader_parameter("outline_color", Color.WHITE if (with_flash and idx % 2 == 1) else Color.BLACK)
 
-## Test helper: add a row at z with obstacles at the given x positions (no randomness).
+## End of the pre-warm: hide the pooled rows again.
+func prewarm_hide() -> void:
+	for row in _all_rows:
+		_hide_row(row)
+
+## Test helper: put a row at z with obstacles at the given x positions (no randomness).
 func _rows_make_for_test(z: float, xs: Array) -> Row:
-	var row := Row.new()
-	row.position.z = z
-	for x in xs:
-		row.xs.append(x)
-		var mi := MeshInstance3D.new()
-		row.add_child(mi)
-		row.obs.append(mi)
-		row.outlines.append(_new_outline())
-	add_child(row)
+	var row := _acquire_row()
+	row.position = Vector3(0.0, 0.0, z)
+	row.visible = true
+	for k in xs.size():
+		row.xs.append(xs[k])
+		row.obs.append(row.cubes[k])
+		row.outlines.append(row.cube_outlines[k])
 	_rows.append(row)
 	return row
 
@@ -182,37 +202,73 @@ func _update_look() -> void:
 	_obstacle_mat.albedo_color = Tuning.obstacle_color
 	if Tuning.outline_thickness != _last_thickness:  # live-tuning: push a changed width to every outline
 		_last_thickness = Tuning.outline_thickness
-		for r in _rows:
-			for m in r.outlines:
+		for r in _all_rows:
+			for m in r.cube_outlines:
 				m.set_shader_parameter("thickness", Tuning.outline_thickness)
 
-func _spawn_row(z: float) -> void:
-	var open := _generate_open_columns()
-	_prev_open = open
+## Create one pooled row (cubes + outline materials + stripe), hidden, and add it to the pool.
+func _make_row() -> Row:
 	var row := Row.new()
-	row.position.z = z
-	var width := Tuning.column_width() * Tuning.obstacle_scale
 	for i in Tuning.column_count:
-		if open[i]:
-			continue
-		var x := Tuning.column_center(i)
-		row.xs.append(x)
 		var mi := MeshInstance3D.new()
 		mi.mesh = _obstacle_mesh
 		mi.material_override = _obstacle_mat
 		var outline := _new_outline()
 		mi.material_overlay = outline  # black inverted-hull outline drawn over the cube
-		mi.scale = Vector3(width, width, Tuning.obstacle_depth)  # mesh is a unit cube
-		mi.position = Vector3(x, 0, 0)
+		mi.visible = false
 		row.add_child(mi)
-		row.obs.append(mi)
-		row.outlines.append(outline)
-	var stripe := MeshInstance3D.new()
-	stripe.mesh = _stripe_mesh
-	stripe.scale = Vector3(Tuning.ortho_size * 2.0, 0.1, 0.4)
-	stripe.position = Vector3(0, GROUND_Y, 0)
-	row.add_child(stripe)
+		row.cubes.append(mi)
+		row.cube_outlines.append(outline)
+	row.stripe = MeshInstance3D.new()
+	row.stripe.mesh = _stripe_mesh
+	row.stripe.position = Vector3(0, GROUND_Y, 0)
+	row.add_child(row.stripe)
+	row.visible = false
 	add_child(row)
+	_all_rows.append(row)
+	_free_rows.append(row)
+	return row
+
+func _acquire_row() -> Row:
+	if _free_rows.is_empty():
+		_make_row()  # only if the pool was too small (live-tuned spacing); normally never
+	var row: Row = _free_rows.pop_back()
+	row.clear_state()
+	return row
+
+func _release_row(row: Row) -> void:
+	_hide_row(row)
+	row.clear_state()
+	_rows.erase(row)
+	if not _free_rows.has(row):
+		_free_rows.append(row)
+
+func _hide_row(row: Row) -> void:
+	row.visible = false
+	for i in row.cubes.size():
+		row.cubes[i].visible = false
+		row.cube_outlines[i].set_shader_parameter("outline_color", Color.BLACK)
+		row.cube_outlines[i].set_shader_parameter("thickness", Tuning.outline_thickness)
+
+func _spawn_row(z: float) -> void:
+	var open := _generate_open_columns()
+	_prev_open = open
+	var row := _acquire_row()
+	row.position = Vector3(0.0, 0.0, z)
+	row.visible = true
+	var width := Tuning.column_width() * Tuning.obstacle_scale
+	for i in mini(Tuning.column_count, row.cubes.size()):
+		if open[i]:
+			continue
+		var x := Tuning.column_center(i)
+		var mi := row.cubes[i]
+		mi.position = Vector3(x, 0, 0)
+		mi.scale = Vector3(width, width, Tuning.obstacle_depth)  # mesh is a unit cube
+		mi.visible = true
+		row.xs.append(x)
+		row.obs.append(mi)
+		row.outlines.append(row.cube_outlines[i])
+	row.stripe.scale = Vector3(Tuning.ortho_size * 2.0, 0.1, 0.4)
 	_rows.append(row)
 
 ## Pick which columns are open: choose one guaranteed-open column that is reachable from the

@@ -113,6 +113,17 @@ func _capsule(a: Vector2, b: Vector2, r: float, c: float, s: float) -> PackedFlo
 	var rb := Vector2(b.x * c + b.y * s, -b.x * s + b.y * c)
 	return PackedFloat32Array([ra.x, ra.y, rb.x, rb.y, r])
 
+## Back to the start of a run (restart in place): centred, stopped, upright, controls live.
+func reset() -> void:
+	active = true
+	velocity = Vector2.ZERO
+	touching = false
+	_pending_drag = Vector2.ZERO
+	_input_vel = Vector2.ZERO
+	_zone_set = false          # set_zone() will put the plane back at its start spot
+	position = Vector3(0.0, PLANE_Y, position.z)
+	_model.rotation = Vector3.ZERO
+
 func crash() -> void:
 	active = false
 

@@ -14,7 +14,7 @@ var multiplier := 1     # raised by near misses, decays back to 1
 var _mult_timer := 0.0  # counts down to the next multiplier decay step
 var _warming := false
 static var _haptic_warmed := false  # first-touch haptic warm-up done (once per app session)
-static var _warmed := false  # pre-warm only once per app session (survives scene reloads)
+static var _warmed := false  # pre-warm only once per app session
 var elapsed := 0.0      # run time, drives the speed ramp
 var alive := true
 var _death_time := 0.0
@@ -41,43 +41,72 @@ func _ready() -> void:
 		if DebugFlags.prewarm_enabled():
 			_prewarm()
 
-## First-use stutter fix: GL shaders / particle buffers / font glyphs / the haptic call set
-## themselves up the first time they are used. So at boot, behind a splash screen, draw EVERY
-## near-miss effect for real (on screen, in view, nothing hidden or off-screen) for a few frames:
-## both spark emitters, every pooled streak, a full-length trail ribbon, the normal and white-flash
-## outline, every popup tier at every font size and the multiplier label punch. (The haptic call
-## can't be warmed at boot: browsers only allow it after a touch, see _input.)
-## Then remove it all. The game doesn't tick meanwhile. Skip with ?noprewarm; effects switched
-## off with ?nofx= are not warmed either.
-const PREWARM_FRAMES := 6
-const PREWARM_MIN_SECONDS := 0.35
-
+## First-use stutter fix: GL shaders / particle buffers / font glyphs set themselves up the first
+## time they are used (and mobile browsers may compile shaders in the background). So at boot,
+## behind a splash screen, draw EVERY near-miss effect for real (on screen, in view, nothing hidden
+## or off-screen) and KEEP drawing until frame times settle (see Tuning.prewarm_*): both spark
+## emitters, every pooled streak, every pooled obstacle cube and outline (some white), a
+## full-length trail ribbon, every popup tier at every font size and the multiplier punch. (The
+## haptic call can't be warmed at boot: browsers only allow it after a touch, see _input.)
+## Then hide it all. The game doesn't tick meanwhile. Everything stays alive for the whole app
+## session (restarts don't reload the scene), so this only ever runs once. Skip with ?noprewarm;
+## effects switched off with ?nofx= are not warmed either.
 func _prewarm() -> void:
 	_warming = true
 	var spot := Vector3(0.0, 1.2, 1.0)
 	hud.begin_prewarm(not DebugFlags.off("popup"))
-	var temps: Array = spawner.prewarm_nodes(not DebugFlags.off("flash"))
-	if not DebugFlags.off("sparks"):
-		fx.sparks(spot + Vector3(-1.5, 0, 0), -1)  # round-robin: this warms both emitters
-		fx.sparks(spot + Vector3(1.5, 0, 0), 1)
+	spawner.prewarm_show(not DebugFlags.off("flash"))
 	if not DebugFlags.off("punch"):
 		hud.set_multiplier(2, true)
-	var t0 := Time.get_ticks_msec()
-	var frames := 0
-	while frames < PREWARM_FRAMES or (Time.get_ticks_msec() - t0) < PREWARM_MIN_SECONDS * 1000.0:
+	var t_start := Time.get_ticks_msec()
+	var t_last := t_start
+	var t_refresh := -100000
+	var calm_frames := 0
+	while true:
+		var now := Time.get_ticks_msec()
+		# Re-trigger the short-lived effects so something is always on screen.
+		if now - t_refresh > 350:
+			t_refresh = now
+			if not DebugFlags.off("sparks"):
+				fx.sparks(spot + Vector3(-1.5, 0, 0), -1)  # round-robin: warms both emitters
+				fx.sparks(spot + Vector3(1.5, 0, 0), 1)
+			if not DebugFlags.off("popup"):
+				hud.prewarm_popups()
 		if not DebugFlags.off("streaks"):
 			fx.show_all_streaks(spot)
 		if not DebugFlags.off("trail"):
 			trail.fill_for_prewarm(Vector2(spot.x, spot.z))  # full-length ribbon: alpha, vertex colours, big buffers
 		await get_tree().process_frame
-		frames += 1
+		# Stop once it has run long enough AND frames have been calm for a while (or at the cap).
+		var t := Time.get_ticks_msec()
+		calm_frames = calm_frames + 1 if (t - t_last) < Tuning.prewarm_stable_ms else 0
+		t_last = t
+		var elapsed_s := (t - t_start) / 1000.0
+		if elapsed_s >= Tuning.prewarm_max_seconds:
+			break
+		if elapsed_s >= Tuning.prewarm_min_seconds and calm_frames >= Tuning.prewarm_stable_frames:
+			break
 	fx.clear()
 	trail.clear()
-	for n in temps:
-		n.queue_free()
+	spawner.prewarm_hide()
 	hud.set_multiplier(1, false)
 	hud.end_prewarm()
 	_warming = false
+
+## Start a fresh run IN PLACE. Nothing is reloaded, created or freed: every pooled effect,
+## material and UI node stays alive (and warm) across runs; only the game state is reset.
+func restart() -> void:
+	score = 0.0
+	multiplier = 1
+	_mult_timer = 0.0
+	elapsed = 0.0
+	alive = true
+	spawner.reset()
+	fx.clear()
+	trail.clear()
+	hud.reset_for_run()
+	player.reset()
+	_update_plane_zone()
 
 func _process(delta: float) -> void:
 	delta = minf(delta, 0.05)
@@ -171,7 +200,7 @@ func _input(event: InputEvent) -> void:
 	# Tap to restart (small delay so the crash-causing drag can't restart instantly).
 	if not alive and event is InputEventScreenTouch and event.pressed \
 			and Time.get_ticks_msec() / 1000.0 - _death_time > 0.5:
-		get_tree().reload_current_scene()
+		restart()
 
 func _setup_environment() -> void:
 	var env := Environment.new()
