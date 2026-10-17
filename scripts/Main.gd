@@ -23,13 +23,13 @@ func _ready() -> void:
 	camera.size = Tuning.ortho_size
 	camera.near = 0.1
 	camera.far = 100.0
-	camera.position = Vector3(0, 30, 0)
-	camera.rotation = Vector3(-PI / 2, 0, 0)  # looks down; screen-up = world -Z
+	_update_camera()
+	player.stick_changed.connect(hud.set_stick)
 	_update_plane_zone()
 
 func _process(delta: float) -> void:
 	delta = minf(delta, 0.05)
-	camera.size = Tuning.ortho_size
+	_update_camera()
 	_update_plane_zone()
 	if not alive:
 		return
@@ -47,11 +47,20 @@ func _process(delta: float) -> void:
 		player.crash()
 		hud.show_game_over(int(distance))
 
+## Camera tilted `camera_tilt_deg` away from straight down (so front faces show), placed so the
+## screen centre always looks at world z = 0. Screen-up = world -Z.
+func _update_camera() -> void:
+	var tilt := deg_to_rad(Tuning.camera_tilt_deg)
+	camera.size = Tuning.ortho_size
+	camera.position = Vector3(0, cos(tilt), sin(tilt)) * 30.0
+	camera.rotation = Vector3(-(PI / 2 - tilt), 0, 0)
+
 ## The plane may use the bottom `plane_zone_fraction` of the screen. The visible height
 ## depends on the device aspect (width is fixed), so work it out from the viewport.
 func _update_plane_zone() -> void:
 	var vp := get_viewport().get_visible_rect().size
-	var half_h := Tuning.ortho_size * 0.5 * vp.y / vp.x  # screen spans z = -half_h .. +half_h
+	# Screen spans z = -half_h .. +half_h (stretched slightly by the camera tilt).
+	var half_h := Tuning.ortho_size * 0.5 * vp.y / vp.x / cos(deg_to_rad(Tuning.camera_tilt_deg))
 	var bottom := half_h - Tuning.plane_bottom_margin
 	var top := half_h - 2.0 * half_h * Tuning.plane_zone_fraction
 	player.set_zone(top, bottom)

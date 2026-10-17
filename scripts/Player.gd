@@ -1,17 +1,20 @@
 extends Node3D
-## The plane, seen from above. Moves freely in 2D (x = sideways, z = forward/back) using
-## RELATIVE drag: it follows how far the finger moves, not where the finger is.
+## The plane, seen from above. A floating virtual stick steers it in 2D
+## (x = sideways, z = forward/back): stick deflection sets the target velocity.
+
+signal stick_changed(active: bool, base: Vector2, knob: Vector2)  # drives the on-screen stick
 
 const PLANE_Y := 1.2  # model height: above the obstacles so it draws on top
 
 var velocity := Vector2.ZERO   # (x, z) velocity in units/s
 var active := true             # false once crashed
-var touching := false          # finger currently down?
 var z_min := 0.0               # forward/back range, set by Main from the screen shape
 var z_max := 0.0
 var _zone_set := false
-var _pending_drag := Vector2.ZERO  # finger pixels accumulated since last frame
-var _input_vel := Vector2.ZERO     # smoothed velocity the finger is asking for
+var _touch_index := -1             # finger that owns the stick (-1 = none)
+var _origin := Vector2.ZERO        # where that finger first touched (stick base), screen px
+var _deflection := Vector2.ZERO    # stick output, length 0..1 (after dead zone)
+var _snapping := false             # released and nearly stopped: easing to a column centre
 var _model: Node3D                 # visual child that banks/yaws
 
 func _ready() -> void:
@@ -28,42 +31,64 @@ func set_zone(top: float, bottom: float) -> void:
 
 func _input(event: InputEvent) -> void:
 	# With "emulate touch from mouse" on, mouse drags also arrive as these touch events.
+	if not active:
+		return
 	if event is InputEventScreenTouch:
-		touching = event.pressed
-	elif event is InputEventScreenDrag and active:
-		touching = true  # also covers a finger that was already down when the run restarted
-		# Screen right = +x, screen down = +z, so no axis flip is needed.
-		_pending_drag += event.relative
+		if event.pressed and _touch_index == -1:
+			_begin(event.index, event.position)
+		elif not event.pressed and event.index == _touch_index:
+			_end()
+	elif event is InputEventScreenDrag:
+		if _touch_index == -1:  # finger already down when the run (re)started
+			_begin(event.index, event.position)
+		elif event.index == _touch_index:
+			_move(event.position)
+
+func _begin(index: int, pos: Vector2) -> void:
+	_touch_index = index
+	_origin = pos
+	_snapping = false
+	_move(pos)
+
+func _end() -> void:
+	_touch_index = -1
+	_deflection = Vector2.ZERO
+	stick_changed.emit(false, _origin, _origin)
+
+func _move(pos: Vector2) -> void:
+	var offset := (pos - _origin).limit_length(Tuning.stick_max_radius)  # knob stays inside the ring
+	var raw := offset.length() / Tuning.stick_max_radius                 # 0..1
+	var dz := Tuning.stick_dead_zone
+	var mag := 0.0 if raw < dz else (raw - dz) / (1.0 - dz)              # dead zone, rescaled to 0..1
+	_deflection = offset.normalized() * mag
+	stick_changed.emit(true, _origin, _origin + offset)
 
 func _process(delta: float) -> void:
 	if not active:
 		return
 	delta = minf(delta, 0.05)  # avoid huge steps after a hitch
 
-	# 1) Turn finger movement into a smoothed target velocity.
-	var raw := _pending_drag * Tuning.drag_sensitivity / delta
-	raw = raw.limit_length(Tuning.max_move_speed)
-	_pending_drag = Vector2.ZERO
-	_input_vel = _input_vel.lerp(raw, 1.0 - exp(-Tuning.input_smoothing * delta))
+	# 1) Target velocity: stick direction x deflection x max speed (screen right = +x, down = +z).
+	var target := _deflection * Tuning.plane_max_speed
 
-	# 2) Update velocity per axis: accelerate, damp, or bleed off on reversal.
+	# 2) After release and a full stop, ease sideways toward the nearest column centre.
+	if _touch_index == -1 and Tuning.snap_strength > 0.0:
+		if velocity.length() < Tuning.snap_start_speed:
+			_snapping = true
+		if _snapping:
+			target.x = (_nearest_column_x(position.x) - position.x) * Tuning.snap_strength
+
+	# 3) Velocity approaches the target (about response_time seconds), per axis.
+	var k := 1.0 - exp(-3.0 * delta / maxf(Tuning.plane_response_time, 0.001))
 	for axis in 2:
-		var want: float = _input_vel[axis]
 		var v: float = velocity[axis]
-		if absf(want) > 0.3:
-			if v * want < 0.0 and absf(v) > 0.4:
-				# Reversal penalty: old velocity dies out first; ~ln(100) decay over reversal_decay_time.
-				v *= exp(-4.6 * delta / maxf(Tuning.reversal_decay_time, 0.01))
-			else:
-				v = move_toward(v, want, Tuning.move_accel * delta)
+		var want: float = target[axis]
+		if Tuning.reversal_decay_time > 0.0 and v * want < 0.0 and absf(v) > 0.4:
+			# Optional reversal penalty: old velocity dies out first (~ln(100) decay).
+			v *= exp(-4.6 * delta / Tuning.reversal_decay_time)
 		else:
-			v *= exp(-Tuning.move_damping * delta)
+			v = lerpf(v, want, k)
 		velocity[axis] = v
-
-	# 3) Soft snap (sideways only) toward the nearest column centre once the finger is lifted.
-	if not touching and Tuning.snap_strength > 0.0:
-		var target := _nearest_column_x(position.x)
-		velocity.x += ((target - position.x) * Tuning.snap_strength - velocity.x * Tuning.snap_damping) * delta
 
 	# 4) Integrate and clamp to the flyable area (full width, lower part of the screen).
 	var x := position.x + velocity.x * delta
@@ -78,12 +103,13 @@ func _process(delta: float) -> void:
 	position = Vector3(x, PLANE_Y, z)
 
 	# 5) Visual banking (roll) and a slight yaw into the movement, smoothed.
-	var k := 1.0 - exp(-Tuning.tilt_smoothing * delta)
-	_model.rotation.z = lerpf(_model.rotation.z, -velocity.x * Tuning.bank_amount, k)
-	_model.rotation.y = lerpf(_model.rotation.y, -velocity.x * Tuning.yaw_amount, k)
+	var tk := 1.0 - exp(-Tuning.tilt_smoothing * delta)
+	_model.rotation.z = lerpf(_model.rotation.z, -velocity.x * Tuning.bank_amount, tk)
+	_model.rotation.y = lerpf(_model.rotation.y, -velocity.x * Tuning.yaw_amount, tk)
 
 func crash() -> void:
 	active = false
+	_end()
 
 func _nearest_column_x(x: float) -> float:
 	var i := roundi(x / Tuning.column_width() + (Tuning.column_count - 1) * 0.5)

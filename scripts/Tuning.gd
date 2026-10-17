@@ -2,10 +2,13 @@ extends Node
 ## Every "feel" value of the game lives here, in one place.
 ## Registered as the autoload `Tuning`, so any script can read `Tuning.some_value`.
 ## They are plain vars (not consts) so a future on-screen tuning panel can edit them live.
-## Distances are world units. The camera looks straight down: screen-right = +x,
+## Distances are world units. The camera looks (almost) straight down: screen-right = +x,
 ## screen-down = +z, and the plane flies toward -z (screen-up).
 
 # ---------- Camera / screen ----------
+## Camera tilt away from straight-down, in degrees, so cube front faces (toward the bottom of
+## the screen) show and shade. 0 = exactly top-down.
+var camera_tilt_deg := 12.0
 ## World units visible across the screen WIDTH (orthographic camera size, width locked).
 ## The visible height follows from the device aspect ratio (about 17.8 units on 9:16).
 var ortho_size := 10.0
@@ -44,36 +47,40 @@ var first_row_distance := 26.0
 var obstacle_color := Color(1.0, 0.3, 0.12)
 ## Black outline width around each obstacle, in world units.
 var outline_thickness := 0.07
-## Direction the sun's light travels. The camera sees mostly top faces, so this is mainly
-## "from above, slightly from the left/front" to give the tops a pleasant tone.
-var light_direction := Vector3(0.3, -0.9, -0.3)
+## Direction the sun's light travels. The camera sees top and front faces; this lights the
+## top brightest and the front a clearly different, darker tone.
+var light_direction := Vector3(0.3, -0.8, -0.5)
 
-# ---------- Plane movement (relative drag) ----------
-## World units the plane is asked to move per pixel of finger movement.
-var drag_sensitivity := 0.014
-## Fastest the plane can slide in either direction (units/second).
-var max_move_speed := 16.0
-## How quickly velocity builds toward the finger's motion (units/second^2). Lower = heavier/floatier.
-var move_accel := 80.0
-## Smoothing of the raw finger speed (higher = snappier, lower = smoother but laggier).
-var input_smoothing := 22.0
-## Exponential velocity damping while the finger is still or lifted (per second). Higher = stops sooner.
-var move_damping := 5.0
-## Reversing direction: old velocity decays to ~nothing over this many seconds
-## before the new direction takes over (0.15-0.25 feels like a short "penalty").
-var reversal_decay_time := 0.2
-## Plane stays this far (units) inside the left/right screen edges.
-var plane_edge_margin := 0.7
+# ---------- Plane movement (floating virtual analog stick) ----------
+## Touch anywhere: a stick appears under the finger; knob offset from that point steers the plane.
+## Distance (screen pixels, in the 1080x1920 base viewport) at which the stick is fully deflected.
+## Smaller = a short thumb movement gives full speed.
+var stick_max_radius := 140.0
+## Deflection (0-1) below which the stick counts as centred; above it, the range is rescaled so
+## movement still starts from 0.
+var stick_dead_zone := 0.12
+## Plane speed at full deflection (units/second). Half deflection = half speed.
+var plane_max_speed := 14.0
+## Roughly how many seconds the plane takes to reach the stick's target velocity (also to stop
+## after release). Lower = snappier / more direct, higher = floatier.
+var plane_response_time := 0.1
+## Reversing direction: old velocity decays to ~nothing over this many seconds before the new
+## direction takes over. 0 = off (reverse as fast as response_time allows).
+var reversal_decay_time := 0.0
+## Plane stays this far (units) inside the left/right screen edges (wing half-width is 1.1).
+var plane_edge_margin := 1.1
 ## Forward/back range: the plane may use the bottom this fraction of the screen height.
 var plane_zone_fraction := 0.4
 ## Gap (units) kept between the plane and the bottom screen edge.
 var plane_bottom_margin := 1.5
 
-# ---------- Soft snap (after finger lifts, sideways only) ----------
-## Spring strength pulling the plane toward the nearest column centre. 0 disables snapping.
-var snap_strength := 7.0
-## Spring damping; roughly 2*sqrt(snap_strength) is critically damped (no overshoot).
-var snap_damping := 5.5
+# ---------- Soft snap (after the finger lifts, sideways only) ----------
+## Once released and (almost) stopped, the plane eases toward the nearest column centre.
+## Strength in 1/seconds: the sideways offset shrinks by about this fraction per second.
+## 0 disables snapping.
+var snap_strength := 6.0
+## Snapping starts once the plane's speed has dropped below this (units/second).
+var snap_start_speed := 1.0
 
 # ---------- Visual banking ----------
 ## Roll (radians) per unit of sideways velocity.

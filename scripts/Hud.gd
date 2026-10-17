@@ -3,8 +3,11 @@ extends CanvasLayer
 
 var _score: Label
 var _over: Label
+var _stick := StickView.new()
 
 func _ready() -> void:
+	_stick.set_anchors_and_offsets_preset(Control.PRESET_FULL_RECT)
+	add_child(_stick)
 	_score = _make_label(72)
 	_score.set_anchors_and_offsets_preset(Control.PRESET_TOP_WIDE)
 	_score.offset_top = 80
@@ -12,6 +15,10 @@ func _ready() -> void:
 	_over.set_anchors_and_offsets_preset(Control.PRESET_FULL_RECT)
 	_over.vertical_alignment = VERTICAL_ALIGNMENT_CENTER
 	_over.visible = false
+
+## Fed by Player.stick_changed: where to draw the floating stick (hidden when inactive).
+func set_stick(active: bool, base: Vector2, knob: Vector2) -> void:
+	_stick.set_stick(active, base, knob)
 
 func set_score(meters: int) -> void:
 	_score.text = "%d m" % meters
