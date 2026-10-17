@@ -1,5 +1,5 @@
 shader_type spatial;
-// Inverted-hull outline for axis-aligned cubes: used as the next_pass of the obstacle material.
+// Inverted-hull outline for axis-aligned cubes: used as each obstacle's material_overlay.
 // Back faces of a slightly enlarged copy are drawn flat black behind the real cube, leaving a
 // silhouette rim. Works in the Compatibility (GL) renderer.
 render_mode unshaded, cull_front;
