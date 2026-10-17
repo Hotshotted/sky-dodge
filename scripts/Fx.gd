@@ -77,6 +77,7 @@ func sparks(pos: Vector3, side: int) -> void:
 		p.lifetime = Tuning.spark_lifetime
 	p.direction = Vector3(side, 0.25, 0.9)
 	p.global_position = pos
+	p.visible = true
 	p.restart()
 	p.emitting = true
 
@@ -106,12 +107,23 @@ func _process(_delta: float) -> void:
 		_streak_nodes[i].position.z = _streak_z0[i] + Tuning.streak_speed * age
 		_streak_mats[i].albedo_color.a = 0.8 * (1.0 - age / STREAK_LIFE)
 
+## Pre-warm: show EVERY pooled streak at once around `origin`, so each one's material is drawn
+## at least once. Call every frame during the pre-warm to keep them from expiring.
+func show_all_streaks(origin: Vector3) -> void:
+	for i in STREAK_POOL:
+		_streak_z0[i] = origin.z - 2.0 - 0.3 * i
+		_streak_born[i] = Time.get_ticks_msec()
+		_streak_nodes[i].position = Vector3(origin.x + (-3.0 if i % 2 == 0 else 3.0) * (0.4 + 0.05 * i), origin.y, _streak_z0[i])
+		_streak_mats[i].albedo_color.a = 0.8
+		_streak_nodes[i].visible = true
+
 ## Stop and hide everything currently alive (used after the startup pre-warm).
 func clear() -> void:
 	for p in _emitters:
 		p.emitting = false
 		p.restart()
 		p.emitting = false
+		p.visible = false  # emitting=false alone leaves already-spawned particles on screen
 	for i in STREAK_POOL:
 		_streak_nodes[i].visible = false
 		_streak_born[i] = 0

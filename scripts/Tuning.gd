@@ -127,10 +127,15 @@ var yaw_amount := 0.025
 var tilt_smoothing := 10.0
 
 # ---------- Collision ----------
-## The plane's collision shape is built from its visible parts (wings, fuselage with nose and
-## tail fin; see Player.PLANE_PARTS) at this fraction of their visible size. 0.95 = slight
-## forgiveness: the 5% on the wingtips (~0.05 units) is less than the obstacle outline width, so
-## a wing can brush an obstacle's black outline but never its coloured face.
+## The plane's collision is two capsules (rectangles with rounded ends) built from its visible
+## parts: one along the wings, one along the fuselage. The overall span and length match the
+## visible plane, but the corners are rounded off so a wingtip grazing a cube corner usually
+## survives. Obstacles collide as their visible cube + outline.
+## Capsule radius in units. It can't exceed the part's half thickness (wing 0.35, fuselage
+## 0.225), so the wing uses up to this much and the fuselage is capped at its own width.
+## 0 = square ends (like boxes); larger = rounder and more forgiving.
+var plane_hit_radius := 0.3
+## Capsule size as a fraction of the visible parts. 0.95 = a little forgiveness on top.
 var plane_hit_scale := 0.95
 
 # ---------- Helpers ----------

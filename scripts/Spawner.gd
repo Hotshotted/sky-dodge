@@ -6,6 +6,7 @@ extends Node3D
 ## column of the previous row, so there is always a path through.
 
 const GROUND_Y := -2.0
+const NEAR_RANGE := 4.0   # only rows within this many units (z) of the plane are collision-checked
 
 ## One row of obstacles, plus the bookkeeping for near-miss detection.
 class Row extends Node3D:
@@ -74,35 +75,43 @@ func _obstacle_half() -> Vector2:
 	return Vector2(Tuning.column_width() * Tuning.obstacle_scale * 0.5 + Tuning.outline_thickness,
 			Tuning.obstacle_depth * 0.5 + Tuning.outline_thickness)
 
-## True if any of the plane's collision boxes (see Player.hit_boxes) overlaps an obstacle.
-## `p` = plane position (x, z).
-func hits(p: Vector2, boxes: Array[Vector4]) -> bool:
+## Gap between a plane capsule and an obstacle (cube + outline) centred at (ox, oz): positive =
+## clear space, negative = overlapping. `p` = plane position (x, z).
+func _gap(p: Vector2, cap: PackedFloat32Array, ox: float, oz: float, half: Vector2) -> float:
+	var a := Vector2(p.x + cap[0] - ox, p.y + cap[1] - oz)
+	var b := Vector2(p.x + cap[2] - ox, p.y + cap[3] - oz)
+	return Collision.segment_rect(a, b, half) - cap[4]
+
+## True if any plane capsule (see Player.hit_capsules) overlaps an obstacle.
+func hits(p: Vector2, caps: Array[PackedFloat32Array]) -> bool:
 	var half := _obstacle_half()
 	for r in _rows:
+		if absf(r.position.z - p.y) > NEAR_RANGE:
+			continue
 		for ox in r.xs:
-			for b in boxes:
-				if absf(r.position.z - (p.y + b.y)) < half.y + b.w and absf(ox - (p.x + b.x)) < half.x + b.z:
+			for cap in caps:
+				if _gap(p, cap, ox, r.position.z, half) < 0.0:
 					return true
 	return false
 
-## Call every frame with the plane position (x, z) and its collision boxes. For each row, tracks
-## the smallest sideways gap between a plane box and an obstacle edge while they overlap in depth,
-## and once the row has fully passed returns a near-miss event if that gap was under
-## near_miss_distance: {"side": -1/+1 (which side the obstacle was), "node": MeshInstance3D}.
-func update_near_misses(p: Vector2, boxes: Array[Vector4]) -> Array[Dictionary]:
+## Call every frame with the plane position (x, z) and its capsules. Each row remembers the
+## closest approach (smallest gap between a plane capsule and an obstacle) while it is near the
+## plane; once the row has fully passed it returns a near-miss event if that closest approach was
+## under near_miss_distance: {"side": -1/+1 (which side the obstacle was), "node", "outline"}.
+func update_near_misses(p: Vector2, caps: Array[PackedFloat32Array]) -> Array[Dictionary]:
 	var events: Array[Dictionary] = []
 	var half := _obstacle_half()
 	var behind := -INF  # how far behind the plane origin its collision shape reaches
-	for b in boxes:
-		behind = maxf(behind, b.y + b.w)
+	for cap in caps:
+		behind = maxf(behind, maxf(cap[1], cap[3]) + cap[4])
 	for r in _rows:
 		if r.passed:
 			continue
-		for b in boxes:
-			if absf(r.position.z - (p.y + b.y)) < half.y + b.w:  # this box overlaps the row in depth
-				r.entered = true
-				for i in r.xs.size():
-					var gap := absf(r.xs[i] - (p.x + b.x)) - (half.x + b.z)
+		if absf(r.position.z - p.y) < NEAR_RANGE:
+			r.entered = true
+			for i in r.xs.size():
+				for cap in caps:
+					var gap := _gap(p, cap, r.xs[i], r.position.z, half)
 					if gap < r.min_clear:
 						r.min_clear = gap
 						r.min_idx = i
@@ -140,20 +149,34 @@ func _new_outline() -> ShaderMaterial:
 
 ## Startup pre-warm: two cubes in view (one drawn white-outlined) so the cube material and the
 ## outline shader get compiled before the first real obstacle / near miss. Caller frees them.
-func prewarm_nodes() -> Array[Node]:
+func prewarm_nodes(with_flash: bool = true) -> Array[Node]:
 	var nodes: Array[Node] = []
 	for i in 2:
 		var mi := MeshInstance3D.new()
 		mi.mesh = _obstacle_mesh
 		mi.material_override = _obstacle_mat
 		var outline := _new_outline()
-		if i == 1:
+		if i == 1 and with_flash:
 			outline.set_shader_parameter("outline_color", Color.WHITE)
 		mi.material_overlay = outline
 		mi.position = Vector3(-2.0 + 4.0 * i, 0, 0)
 		add_child(mi)
 		nodes.append(mi)
 	return nodes
+
+## Test helper: add a row at z with obstacles at the given x positions (no randomness).
+func _rows_make_for_test(z: float, xs: Array) -> Row:
+	var row := Row.new()
+	row.position.z = z
+	for x in xs:
+		row.xs.append(x)
+		var mi := MeshInstance3D.new()
+		row.add_child(mi)
+		row.obs.append(mi)
+		row.outlines.append(_new_outline())
+	add_child(row)
+	_rows.append(row)
+	return row
 
 func _update_look() -> void:
 	_obstacle_mat.albedo_color = Tuning.obstacle_color

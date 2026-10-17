@@ -3,12 +3,11 @@ extends Node3D
 ## RELATIVE drag: it follows how far the finger moves, not where the finger is.
 
 const PLANE_Y := 1.2  # model height: above the obstacles so it draws on top
-## The plane's visible parts, used to build its collision shape: (centre z, half width x, half
-## length z) in model space, matching the boxes in _build_model().
-const PLANE_PARTS := [
-	Vector3(0.1, 1.1, 0.35),     # wings: 2.2 wide, 0.7 deep, centred 0.1 behind the origin
-	Vector3(-0.075, 0.225, 1.125),  # fuselage: body 0.45 wide, nose reaches z -1.2, tail fin z 1.05
-]
+## The plane's visible parts, used to build its collision shape (see hit_capsules). Model space.
+const WING_Z := 0.1                      # wings are centred this far behind the origin
+const WING_HALF := Vector2(1.1, 0.35)    # half span (x), half depth (z)
+const BODY_Z := -0.075                   # fuselage + nose + tail fin, centred here
+const BODY_HALF := Vector2(0.225, 1.125) # half width (x), half length (z): nose z -1.2 .. tail z 1.05
 
 var velocity := Vector2.ZERO   # (x, z) velocity in units/s
 var active := true             # false once crashed
@@ -88,20 +87,31 @@ func _process(delta: float) -> void:
 	_model.rotation.z = lerpf(_model.rotation.z, -velocity.x * Tuning.bank_amount, k)
 	_model.rotation.y = lerpf(_model.rotation.y, -velocity.x * Tuning.yaw_amount, k)
 
-## Collision boxes as Vector4(centre x, centre z, half x, half z), relative to the plane's position.
-## Built from the visible wings and fuselage (scaled by plane_hit_scale) and turned by the model's
-## current yaw, so what overlaps an obstacle is what you see overlap.
-func hit_boxes() -> Array[Vector4]:
-	var boxes: Array[Vector4] = []
+## Collision capsules, each PackedFloat32Array [ax, az, bx, bz, radius]: the centre-line segment
+## a-b relative to the plane's position, plus a radius. One runs along the wings, one along the
+## fuselage, sized from the visible parts (times plane_hit_scale) with the ends rounded off by
+## plane_hit_radius, and turned by the model's current yaw.
+func hit_capsules() -> Array[PackedFloat32Array]:
 	var yaw := _model.rotation.y if _model else 0.0
 	var c := cos(yaw)
 	var s := sin(yaw)
-	for part: Vector3 in PLANE_PARTS:
-		var hx := part.y * Tuning.plane_hit_scale
-		var hz := part.z * Tuning.plane_hit_scale
-		# Axis-aligned box around the yawed rectangle.
-		boxes.append(Vector4(part.x * s, part.x * c, absf(hx * c) + absf(hz * s), absf(hx * s) + absf(hz * c)))
-	return boxes
+	var k := Tuning.plane_hit_scale
+	var caps: Array[PackedFloat32Array] = []
+	# Wings: segment along x. The radius can't exceed the wing's half depth.
+	var wr := minf(Tuning.plane_hit_radius, WING_HALF.y * k)
+	var we := maxf(WING_HALF.x * k - wr, 0.0)
+	caps.append(_capsule(Vector2(-we, WING_Z), Vector2(we, WING_Z), wr, c, s))
+	# Fuselage: segment along z. The radius can't exceed the body's half width.
+	var br := minf(Tuning.plane_hit_radius, BODY_HALF.x * k)
+	var be := maxf(BODY_HALF.y * k - br, 0.0)
+	caps.append(_capsule(Vector2(0.0, BODY_Z - be), Vector2(0.0, BODY_Z + be), br, c, s))
+	return caps
+
+func _capsule(a: Vector2, b: Vector2, r: float, c: float, s: float) -> PackedFloat32Array:
+	# Rotate by yaw about the plane origin (x' = x cos + z sin, z' = -x sin + z cos).
+	var ra := Vector2(a.x * c + a.y * s, -a.x * s + a.y * c)
+	var rb := Vector2(b.x * c + b.y * s, -b.x * s + b.y * c)
+	return PackedFloat32Array([ra.x, ra.y, rb.x, rb.y, r])
 
 func crash() -> void:
 	active = false

@@ -10,7 +10,12 @@ var _pop_labels: Array[Label] = []
 var _pop_born := PackedInt64Array()   # real ms when started; 0 = idle
 var _pop_base_y := PackedFloat32Array()
 var _next_pop := 0
-var _cover: ColorRect
+var _splash: Control
+var _perf_label: Label
+var _perf_worst := 0.0        # worst frame time (ms) in the current 3 s window
+var _perf_window_start := 0
+var _perf_shown := 0.0
+var _handler_ms := 0.0        # last near-miss handler time (ms)
 const PUNCH_TIME := 0.28
 const POPUP_TIME := 0.9
 
@@ -68,7 +73,8 @@ func popup(text: String, font_size: int, color: Color, pos: Vector2) -> void:
 	_pop_base_y[i] = l.position.y
 	_pop_born[i] = Time.get_ticks_msec()
 
-func _process(_delta: float) -> void:
+func _process(delta: float) -> void:
+	_update_perf(delta)
 	var now := Time.get_ticks_msec()
 	# Multiplier punch: 1.6x -> 1x with ease-out.
 	var pt := clampf((now - _punch_start_ms) / 1000.0 / PUNCH_TIME, 0.0, 1.0)
@@ -106,36 +112,88 @@ func _make_label(font_size: int) -> Label:
 	add_child(l)
 	return l
 
-## Small "commit . build time" tag in the bottom-left corner so you can tell which build you're on.
-## BuildInfo.gd is rewritten by the GitHub Actions workflow at export time.
+## Small "commit . build time" tag in the bottom-left corner so you can tell which build you're on,
+## with any active ?debug flags on a second line. BuildInfo.gd is rewritten by the GitHub Actions
+## workflow at export time.
 func _build_stamp() -> void:
 	var l := _make_label(26)
 	l.text = "%s  %s" % [BuildInfo.COMMIT, BuildInfo.TIME]
+	var flags := DebugFlags.summary()
+	if flags != "":
+		l.text += "\n" + flags
 	l.horizontal_alignment = HORIZONTAL_ALIGNMENT_LEFT
 	l.set_anchors_and_offsets_preset(Control.PRESET_BOTTOM_LEFT)
 	l.offset_left = 14
-	l.offset_top = -48
+	l.offset_top = -48 if flags == "" else -84
 	l.modulate = Color(1, 1, 1, 0.55)
 	l.add_theme_constant_override("outline_size", 6)
+	if DebugFlags.perf_enabled():
+		_perf_label = _make_label(26)
+		_perf_label.horizontal_alignment = HORIZONTAL_ALIGNMENT_LEFT
+		_perf_label.set_anchors_and_offsets_preset(Control.PRESET_TOP_LEFT)
+		_perf_label.offset_left = 14
+		_perf_label.offset_top = 14
+		_perf_label.modulate = Color(0.6, 1, 0.6, 0.9)
+		_perf_label.add_theme_constant_override("outline_size", 6)
 
-## Startup pre-warm: draw every popup tier and the game-over text once (this builds the font
-## glyph caches), under a black cover so nothing is seen. end_prewarm() undoes all of it.
-func begin_prewarm() -> void:
+## ?perf readout: worst frame in the last 3 s and the last near-miss handler time.
+func note_handler_ms(ms: float) -> void:
+	_handler_ms = ms
+
+func _update_perf(delta: float) -> void:
+	if _perf_label == null:
+		return
+	_perf_worst = maxf(_perf_worst, delta * 1000.0)
+	var now := Time.get_ticks_msec()
+	if now - _perf_window_start > 3000:
+		_perf_shown = _perf_worst
+		_perf_worst = 0.0
+		_perf_window_start = now
+	_perf_label.text = "worst frame (3s): %.0f ms\nnear-miss code: %.2f ms" % [_perf_shown, _handler_ms]
+
+## Startup pre-warm: a splash screen (nearly opaque, so the effects behind it are really drawn
+## on screen and not skipped) while the game draws every popup tier at every font size and the
+## game-over text, building the font glyph caches. end_prewarm() removes it all.
+func begin_prewarm(with_popups: bool) -> void:
 	var vp := get_viewport().get_visible_rect().size
-	for i in Tuning.near_miss_texts.size():
-		popup(Tuning.near_miss_texts[i], Tuning.near_miss_sizes[mini(i, Tuning.near_miss_sizes.size() - 1)],
-				Tuning.near_miss_colors[mini(i, Tuning.near_miss_colors.size() - 1)], Vector2(vp.x * 0.5, vp.y * (0.3 + 0.12 * i)))
+	if with_popups:
+		for i in POPUP_POOL:  # every pooled label, cycling through every tier's text and size
+			var t := i % Tuning.near_miss_texts.size()
+			popup(Tuning.near_miss_texts[t], Tuning.near_miss_sizes[mini(t, Tuning.near_miss_sizes.size() - 1)],
+					Tuning.near_miss_colors[mini(t, Tuning.near_miss_colors.size() - 1)], Vector2(vp.x * 0.5, vp.y * (0.25 + 0.1 * i)))
+		# Also draw each tier text at each size, so no (text, size) pair is first seen mid-game.
+		for t in Tuning.near_miss_texts.size():
+			var l := _make_label(Tuning.near_miss_sizes[mini(t, Tuning.near_miss_sizes.size() - 1)])
+			l.text = Tuning.near_miss_texts[t]
+			l.position = Vector2(20.0, 120.0 + 90.0 * t)
+			l.set_meta("prewarm", true)
 	_over.text = _game_over_text(1234567890, "Hit an obstacle")  # same glyphs as the real screen
 	_over.visible = true
-	_cover = ColorRect.new()
-	_cover.color = Color.BLACK
-	_cover.set_anchors_and_offsets_preset(Control.PRESET_FULL_RECT)
-	_cover.mouse_filter = Control.MOUSE_FILTER_IGNORE
-	add_child(_cover)  # last child = drawn on top of the labels
+	_splash = Control.new()
+	_splash.set_anchors_and_offsets_preset(Control.PRESET_FULL_RECT)
+	_splash.mouse_filter = Control.MOUSE_FILTER_IGNORE
+	var bg := ColorRect.new()
+	bg.color = Color(0.08, 0.1, 0.16, 0.93)
+	bg.set_anchors_and_offsets_preset(Control.PRESET_FULL_RECT)
+	bg.mouse_filter = Control.MOUSE_FILTER_IGNORE
+	_splash.add_child(bg)
+	var title := Label.new()
+	title.text = "SKY DODGE\nloading..."
+	title.horizontal_alignment = HORIZONTAL_ALIGNMENT_CENTER
+	title.vertical_alignment = VERTICAL_ALIGNMENT_CENTER
+	title.add_theme_font_size_override("font_size", 90)
+	title.set_anchors_and_offsets_preset(Control.PRESET_FULL_RECT)
+	title.mouse_filter = Control.MOUSE_FILTER_IGNORE
+	_splash.add_child(title)
+	add_child(_splash)  # last child = drawn on top
 
 func end_prewarm() -> void:
 	for i in POPUP_POOL:
 		_pop_labels[i].visible = false
 		_pop_born[i] = 0
+	for c in get_children():
+		if c.has_meta("prewarm"):
+			c.queue_free()
 	_over.visible = false
-	_cover.queue_free()
+	if is_instance_valid(_splash):
+		_splash.queue_free()

@@ -13,6 +13,7 @@ var score := 0.0        # accumulates distance flown x multiplier
 var multiplier := 1     # raised by near misses, decays back to 1
 var _mult_timer := 0.0  # counts down to the next multiplier decay step
 var _warming := false
+static var _haptic_warmed := false  # first-touch haptic warm-up done (once per app session)
 static var _warmed := false  # pre-warm only once per app session (survives scene reloads)
 var elapsed := 0.0      # run time, drives the speed ramp
 var alive := true
@@ -37,25 +38,45 @@ func _ready() -> void:
 	_update_plane_zone()
 	if not _warmed:
 		_warmed = true
-		_prewarm()
+		if DebugFlags.prewarm_enabled():
+			_prewarm()
 
-## First-use stutter fix: GL shaders / particle materials / font glyphs compile the first time
-## they are drawn. Draw every effect once, in view but under a black cover, for a few frames
-## at startup, then remove it all. The game doesn't tick meanwhile.
+## First-use stutter fix: GL shaders / particle buffers / font glyphs / the haptic call set
+## themselves up the first time they are used. So at boot, behind a splash screen, draw EVERY
+## near-miss effect for real (on screen, in view, nothing hidden or off-screen) for a few frames:
+## both spark emitters, every pooled streak, a trail ribbon, the normal and white-flash outline,
+## every popup tier at every font size, the multiplier label punch and a zero-length haptic.
+## Then remove it all. The game doesn't tick meanwhile. Skip with ?noprewarm; effects switched
+## off with ?nofx= are not warmed either.
+const PREWARM_FRAMES := 6
+const PREWARM_MIN_SECONDS := 0.35
+
 func _prewarm() -> void:
 	_warming = true
 	var spot := Vector3(0.0, 1.2, 1.0)
-	hud.begin_prewarm()
-	var temps: Array = spawner.prewarm_nodes()
-	fx.sparks(spot, 1)
-	fx.streaks(spot)
-	for i in 4:
-		trail.advance(0.3, Vector2(spot.x, spot.z), 2, 0.1)  # builds a ribbon (alpha, vertex colour)
+	hud.begin_prewarm(not DebugFlags.off("popup"))
+	var temps: Array = spawner.prewarm_nodes(not DebugFlags.off("flash"))
+	if not DebugFlags.off("sparks"):
+		fx.sparks(spot + Vector3(-1.5, 0, 0), -1)  # round-robin: this warms both emitters
+		fx.sparks(spot + Vector3(1.5, 0, 0), 1)
+	if not DebugFlags.off("punch"):
+		hud.set_multiplier(2, true)
+	if not DebugFlags.off("haptic"):
+		Input.vibrate_handheld(0)  # zero length: exercises the call without buzzing
+	var t0 := Time.get_ticks_msec()
+	var frames := 0
+	while frames < PREWARM_FRAMES or (Time.get_ticks_msec() - t0) < PREWARM_MIN_SECONDS * 1000.0:
+		if not DebugFlags.off("streaks"):
+			fx.show_all_streaks(spot)
+		if not DebugFlags.off("trail"):
+			trail.advance(0.3, Vector2(spot.x, spot.z), 2, 0.1)  # ribbon: alpha + vertex colours
 		await get_tree().process_frame
+		frames += 1
 	fx.clear()
 	trail.clear()
 	for n in temps:
 		n.queue_free()
+	hud.set_multiplier(1, false)
 	hud.end_prewarm()
 	_warming = false
 
@@ -73,35 +94,44 @@ func _process(delta: float) -> void:
 	spawner.advance(step)
 	hud.set_score(int(score))
 	var plane := Vector2(player.position.x, player.position.z)
-	trail.advance(step, Vector2(plane.x, plane.y + 0.9), multiplier, delta)
+	trail.advance(step, Vector2(plane.x, plane.y + 0.9), 1 if DebugFlags.off("trail") else multiplier, delta)
 	_decay_multiplier(delta)
 
-	var boxes: Array[Vector4] = player.hit_boxes()
-	if spawner.hits(plane, boxes):
+	var caps: Array[PackedFloat32Array] = player.hit_capsules()
+	if spawner.hits(plane, caps):
 		alive = false
 		_death_time = Time.get_ticks_msec() / 1000.0
 		player.crash()
 		hud.show_game_over(int(score), REASON_OBSTACLE)
 		return
 
-	for ev in spawner.update_near_misses(plane, boxes):
+	for ev in spawner.update_near_misses(plane, caps):
 		_on_near_miss(ev)
 
-## Near miss: raise the multiplier and fire every bit of feedback at once.
+## Near miss: raise the multiplier and fire every bit of feedback at once. Each effect can be
+## switched off from the URL (?nofx=sparks,streaks,flash,popup,trail,haptic,punch) to find out
+## which one causes a hitch.
 func _on_near_miss(ev: Dictionary) -> void:
+	var t0 := Time.get_ticks_usec()
 	multiplier = mini(multiplier + 1, Tuning.multiplier_max)
 	_mult_timer = Tuning.multiplier_hold_time
-	hud.set_multiplier(multiplier, true)
+	hud.set_multiplier(multiplier, not DebugFlags.off("punch"))
 	var side: int = ev["side"]
-	fx.sparks(player.position + Vector3(side * 1.05, 0.0, 0.1), side)  # wingtip nearest the obstacle
-	fx.streaks(player.position)
-	spawner.flash_obstacle(ev["outline"])
-	var n := Tuning.near_miss_texts.size()
-	var i := Tuning.tier_index(multiplier, n)
-	var pos := camera.unproject_position(player.position + Vector3(0, 0, -2.0))
-	hud.popup(Tuning.near_miss_texts[i], Tuning.near_miss_sizes[mini(i, Tuning.near_miss_sizes.size() - 1)],
-			Tuning.near_miss_colors[mini(i, Tuning.near_miss_colors.size() - 1)], pos)
-	Input.vibrate_handheld(Tuning.haptic_ms)  # no-op where unsupported
+	if not DebugFlags.off("sparks"):
+		fx.sparks(player.position + Vector3(side * 1.05, 0.0, 0.1), side)  # wingtip nearest the obstacle
+	if not DebugFlags.off("streaks"):
+		fx.streaks(player.position)
+	if not DebugFlags.off("flash"):
+		spawner.flash_obstacle(ev["outline"])
+	if not DebugFlags.off("popup"):
+		var n := Tuning.near_miss_texts.size()
+		var i := Tuning.tier_index(multiplier, n)
+		var pos := camera.unproject_position(player.position + Vector3(0, 0, -2.0))
+		hud.popup(Tuning.near_miss_texts[i], Tuning.near_miss_sizes[mini(i, Tuning.near_miss_sizes.size() - 1)],
+				Tuning.near_miss_colors[mini(i, Tuning.near_miss_colors.size() - 1)], pos)
+	if not DebugFlags.off("haptic"):
+		Input.vibrate_handheld(Tuning.haptic_ms)  # no-op where unsupported
+	hud.note_handler_ms((Time.get_ticks_usec() - t0) / 1000.0)
 
 ## Without fresh near misses the multiplier holds, then drops one step at a time down to 1x.
 func _decay_multiplier(delta: float) -> void:
@@ -132,6 +162,12 @@ func _update_plane_zone() -> void:
 	player.set_zone(top, bottom)
 
 func _input(event: InputEvent) -> void:
+	# Browsers only allow vibration after a touch, and the first real call has some set-up cost,
+	# so make a harmless zero-length call on the very first touch rather than on the first near miss.
+	if not _haptic_warmed and (event is InputEventScreenTouch or event is InputEventScreenDrag):
+		_haptic_warmed = true
+		if not DebugFlags.off("haptic"):
+			Input.vibrate_handheld(0)
 	# Tap to restart (small delay so the crash-causing drag can't restart instantly).
 	if not alive and event is InputEventScreenTouch and event.pressed \
 			and Time.get_ticks_msec() / 1000.0 - _death_time > 0.5:
