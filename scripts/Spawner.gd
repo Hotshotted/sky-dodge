@@ -11,6 +11,7 @@ const GROUND_Y := -2.0
 class Row extends Node3D:
 	var xs: Array[float] = []             # x of each obstacle
 	var obs: Array[MeshInstance3D] = []   # the obstacle nodes (same order)
+	var outlines: Array[ShaderMaterial] = []  # each obstacle's own outline material (same order)
 	var entered := false                  # plane has been inside this row's depth window
 	var passed := false                   # near-miss check already done
 	var min_clear := INF                  # smallest gap seen while overlapping
@@ -21,15 +22,16 @@ var _prev_open: Array[bool] = []   # open flags of previous row, index = column
 var _last_row_z := 0.0
 var _obstacle_mesh := BoxMesh.new()  # unit cube, scaled per obstacle
 var _obstacle_mat := StandardMaterial3D.new()
-var _outline_mat := ShaderMaterial.new()
+var _outline_shader: Shader = preload("res://shaders/outline.gdshader")
 var _stripe_mesh := BoxMesh.new()
+var _last_thickness := -1.0
+var _flashes: Array[Dictionary] = []   # {mat, end_ms}: outlines currently flashing white
 
 func _ready() -> void:
-	# One shared material (+ black outline pass) for every obstacle.
+	# One shared material for every cube. Each cube gets its OWN outline material (same shader),
+	# so a near miss can flash one outline by changing a uniform, with no material swap.
 	_obstacle_mat.roughness = 1.0          # matte: flat, gradient-free shading
 	_obstacle_mat.metallic_specular = 0.0
-	_outline_mat.shader = preload("res://shaders/outline.gdshader")
-	_obstacle_mat.next_pass = _outline_mat  # draws the black hull right after the cube itself
 	_update_look()
 	# Ground far below the obstacles; the stripes on each row give a sense of scrolling speed.
 	var ground := MeshInstance3D.new()
@@ -67,70 +69,87 @@ func advance(dist: float) -> void:
 	while not _rows.is_empty() and _rows[0].position.z > Tuning.spawn_distance:
 		_rows.pop_front().queue_free()
 
-## True if a box at plane position `p` (x, z) touches any obstacle.
-func hits(p: Vector2) -> bool:
-	var half_w := Tuning.column_width() * Tuning.obstacle_scale * 0.5
-	var half_d := Tuning.obstacle_depth * 0.5 + Tuning.plane_hit_half.y
+## Half size (x, z) of an obstacle as you SEE it: the cube plus its black outline rim.
+func _obstacle_half() -> Vector2:
+	return Vector2(Tuning.column_width() * Tuning.obstacle_scale * 0.5 + Tuning.outline_thickness,
+			Tuning.obstacle_depth * 0.5 + Tuning.outline_thickness)
+
+## True if any of the plane's collision boxes (see Player.hit_boxes) overlaps an obstacle.
+## `p` = plane position (x, z).
+func hits(p: Vector2, boxes: Array[Vector4]) -> bool:
+	var half := _obstacle_half()
 	for r in _rows:
-		if absf(r.position.z - p.y) > half_d:
-			continue
-		for cx in r.xs:
-			if absf(cx - p.x) < half_w + Tuning.plane_hit_half.x:
-				return true
+		for ox in r.xs:
+			for b in boxes:
+				if absf(r.position.z - (p.y + b.y)) < half.y + b.w and absf(ox - (p.x + b.x)) < half.x + b.z:
+					return true
 	return false
 
-## Call every frame with the plane position (x, z). For each row, tracks the smallest gap between
-## the plane's hit box and an obstacle edge while the plane overlaps the row's depth, and when the
-## row has fully passed returns a near-miss event if that gap was under near_miss_distance:
-## {"side": -1/+1 (which side the obstacle was), "node": MeshInstance3D, "clearance": float}.
-func update_near_misses(p: Vector2) -> Array[Dictionary]:
+## Call every frame with the plane position (x, z) and its collision boxes. For each row, tracks
+## the smallest sideways gap between a plane box and an obstacle edge while they overlap in depth,
+## and once the row has fully passed returns a near-miss event if that gap was under
+## near_miss_distance: {"side": -1/+1 (which side the obstacle was), "node": MeshInstance3D}.
+func update_near_misses(p: Vector2, boxes: Array[Vector4]) -> Array[Dictionary]:
 	var events: Array[Dictionary] = []
-	var half_w := Tuning.column_width() * Tuning.obstacle_scale * 0.5
-	var half_d := Tuning.obstacle_depth * 0.5 + Tuning.plane_hit_half.y
+	var half := _obstacle_half()
+	var behind := -INF  # how far behind the plane origin its collision shape reaches
+	for b in boxes:
+		behind = maxf(behind, b.y + b.w)
 	for r in _rows:
 		if r.passed:
 			continue
-		var dz := r.position.z - p.y
-		if absf(dz) < half_d:
-			r.entered = true
-			for i in r.xs.size():
-				var gap := absf(r.xs[i] - p.x) - (half_w + Tuning.plane_hit_half.x)
-				if gap < r.min_clear:
-					r.min_clear = gap
-					r.min_idx = i
-		elif dz >= half_d:  # row has scrolled past the plane
+		for b in boxes:
+			if absf(r.position.z - (p.y + b.y)) < half.y + b.w:  # this box overlaps the row in depth
+				r.entered = true
+				for i in r.xs.size():
+					var gap := absf(r.xs[i] - (p.x + b.x)) - (half.x + b.z)
+					if gap < r.min_clear:
+						r.min_clear = gap
+						r.min_idx = i
+		if r.position.z - p.y > behind + half.y:  # row has fully scrolled past the plane
 			r.passed = true
 			if r.entered and r.min_idx >= 0 and r.min_clear < Tuning.near_miss_distance:
 				var side := 1 if r.xs[r.min_idx] > p.x else -1
-				events.append({"side": side, "node": r.obs[r.min_idx], "clearance": r.min_clear})
+				events.append({"side": side, "node": r.obs[r.min_idx], "outline": r.outlines[r.min_idx]})
 	return events
 
-## Flash one obstacle's outline white for near_miss_flash_time real seconds.
-func flash_obstacle(mi: MeshInstance3D) -> void:
-	mi.material_override = _make_flash_material()
-	# Real-time timer (ignores Engine.time_scale), so hitstop doesn't stretch the flash.
-	get_tree().create_timer(Tuning.near_miss_flash_time, true, false, true).timeout.connect(
-		func() -> void:
-			if is_instance_valid(mi):
-				mi.material_override = _obstacle_mat)
-
-func _make_flash_material() -> StandardMaterial3D:
-	var mat := _obstacle_mat.duplicate() as StandardMaterial3D
-	var outline := _outline_mat.duplicate() as ShaderMaterial
+## Flash one obstacle's outline white for near_miss_flash_time seconds: just uniform changes on
+## the outline material it already has (no new material, no swap).
+func flash_obstacle(outline: ShaderMaterial) -> void:
 	outline.set_shader_parameter("outline_color", Color.WHITE)
 	outline.set_shader_parameter("thickness", Tuning.outline_thickness * 1.8)
-	mat.next_pass = outline
-	return mat
+	_flashes.append({"mat": outline, "end": Time.get_ticks_msec() + int(Tuning.near_miss_flash_time * 1000.0)})
 
-## Startup pre-warm: two cubes in view (normal + white-flash look) so both materials and the
+func _process(_delta: float) -> void:
+	_update_flashes()  # runs even when the world isn't scrolling (e.g. on the crash screen)
+
+func _update_flashes() -> void:
+	var now := Time.get_ticks_msec()
+	for i in range(_flashes.size() - 1, -1, -1):
+		if now >= int(_flashes[i]["end"]):
+			var m := _flashes[i]["mat"] as ShaderMaterial
+			m.set_shader_parameter("outline_color", Color.BLACK)
+			m.set_shader_parameter("thickness", Tuning.outline_thickness)
+			_flashes.remove_at(i)
+
+func _new_outline() -> ShaderMaterial:
+	var m := ShaderMaterial.new()
+	m.shader = _outline_shader
+	m.set_shader_parameter("thickness", Tuning.outline_thickness)
+	return m
+
+## Startup pre-warm: two cubes in view (one drawn white-outlined) so the cube material and the
 ## outline shader get compiled before the first real obstacle / near miss. Caller frees them.
 func prewarm_nodes() -> Array[Node]:
 	var nodes: Array[Node] = []
 	for i in 2:
 		var mi := MeshInstance3D.new()
 		mi.mesh = _obstacle_mesh
-		mi.material_override = _obstacle_mat if i == 0 else _make_flash_material()
-		mi.scale = Vector3(1.0, 1.0, 1.0)
+		mi.material_override = _obstacle_mat
+		var outline := _new_outline()
+		if i == 1:
+			outline.set_shader_parameter("outline_color", Color.WHITE)
+		mi.material_overlay = outline
 		mi.position = Vector3(-2.0 + 4.0 * i, 0, 0)
 		add_child(mi)
 		nodes.append(mi)
@@ -138,7 +157,11 @@ func prewarm_nodes() -> Array[Node]:
 
 func _update_look() -> void:
 	_obstacle_mat.albedo_color = Tuning.obstacle_color
-	_outline_mat.set_shader_parameter("thickness", Tuning.outline_thickness)
+	if Tuning.outline_thickness != _last_thickness:  # live-tuning: push a changed width to every outline
+		_last_thickness = Tuning.outline_thickness
+		for r in _rows:
+			for m in r.outlines:
+				m.set_shader_parameter("thickness", Tuning.outline_thickness)
 
 func _spawn_row(z: float) -> void:
 	var open := _generate_open_columns()
@@ -154,10 +177,13 @@ func _spawn_row(z: float) -> void:
 		var mi := MeshInstance3D.new()
 		mi.mesh = _obstacle_mesh
 		mi.material_override = _obstacle_mat
+		var outline := _new_outline()
+		mi.material_overlay = outline  # black inverted-hull outline drawn over the cube
 		mi.scale = Vector3(width, width, Tuning.obstacle_depth)  # mesh is a unit cube
 		mi.position = Vector3(x, 0, 0)
 		row.add_child(mi)
 		row.obs.append(mi)
+		row.outlines.append(outline)
 	var stripe := MeshInstance3D.new()
 	stripe.mesh = _stripe_mesh
 	stripe.scale = Vector3(Tuning.ortho_size * 2.0, 0.1, 0.4)

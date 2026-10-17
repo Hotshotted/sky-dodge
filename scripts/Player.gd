@@ -3,6 +3,12 @@ extends Node3D
 ## RELATIVE drag: it follows how far the finger moves, not where the finger is.
 
 const PLANE_Y := 1.2  # model height: above the obstacles so it draws on top
+## The plane's visible parts, used to build its collision shape: (centre z, half width x, half
+## length z) in model space, matching the boxes in _build_model().
+const PLANE_PARTS := [
+	Vector3(0.1, 1.1, 0.35),     # wings: 2.2 wide, 0.7 deep, centred 0.1 behind the origin
+	Vector3(-0.075, 0.225, 1.125),  # fuselage: body 0.45 wide, nose reaches z -1.2, tail fin z 1.05
+]
 
 var velocity := Vector2.ZERO   # (x, z) velocity in units/s
 var active := true             # false once crashed
@@ -81,6 +87,21 @@ func _process(delta: float) -> void:
 	var k := 1.0 - exp(-Tuning.tilt_smoothing * delta)
 	_model.rotation.z = lerpf(_model.rotation.z, -velocity.x * Tuning.bank_amount, k)
 	_model.rotation.y = lerpf(_model.rotation.y, -velocity.x * Tuning.yaw_amount, k)
+
+## Collision boxes as Vector4(centre x, centre z, half x, half z), relative to the plane's position.
+## Built from the visible wings and fuselage (scaled by plane_hit_scale) and turned by the model's
+## current yaw, so what overlaps an obstacle is what you see overlap.
+func hit_boxes() -> Array[Vector4]:
+	var boxes: Array[Vector4] = []
+	var yaw := _model.rotation.y if _model else 0.0
+	var c := cos(yaw)
+	var s := sin(yaw)
+	for part: Vector3 in PLANE_PARTS:
+		var hx := part.y * Tuning.plane_hit_scale
+		var hz := part.z * Tuning.plane_hit_scale
+		# Axis-aligned box around the yawed rectangle.
+		boxes.append(Vector4(part.x * s, part.x * c, absf(hx * c) + absf(hz * s), absf(hx * s) + absf(hz * c)))
+	return boxes
 
 func crash() -> void:
 	active = false

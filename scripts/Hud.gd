@@ -5,7 +5,11 @@ var _score: Label
 var _over: Label
 var _mult: Label
 var _punch_start_ms := -10000      # when the multiplier label last "punched"
-var _popups: Array[Dictionary] = []  # {label, born_ms, base_y}
+const POPUP_POOL := 4            # labels reused for "Close!" popups
+var _pop_labels: Array[Label] = []
+var _pop_born := PackedInt64Array()   # real ms when started; 0 = idle
+var _pop_base_y := PackedFloat32Array()
+var _next_pop := 0
 var _cover: ColorRect
 const PUNCH_TIME := 0.28
 const POPUP_TIME := 0.9
@@ -18,6 +22,12 @@ func _ready() -> void:
 	_mult.set_anchors_and_offsets_preset(Control.PRESET_TOP_WIDE)
 	_mult.offset_top = 170
 	set_multiplier(1, false)
+	for i in POPUP_POOL:
+		var l := _make_label(64)
+		l.visible = false
+		_pop_labels.append(l)
+	_pop_born.resize(POPUP_POOL)
+	_pop_base_y.resize(POPUP_POOL)
 	_build_stamp()
 	_over = _make_label(80)
 	_over.set_anchors_and_offsets_preset(Control.PRESET_FULL_RECT)
@@ -38,10 +48,14 @@ func set_multiplier(m: int, punch: bool) -> void:
 	if punch:
 		_punch_start_ms = Time.get_ticks_msec()
 
-## Floating text ("Close!") that pops in at `pos` (screen px), rises and fades. Real-time animated.
+## Floating text ("Close!") that pops in at `pos` (screen px), rises and fades. Reuses a pooled
+## label; real-time animated.
 func popup(text: String, font_size: int, color: Color, pos: Vector2) -> void:
-	var l := _make_label(font_size)
+	var i := _next_pop
+	_next_pop = (_next_pop + 1) % POPUP_POOL
+	var l := _pop_labels[i]
 	l.text = text
+	l.add_theme_font_size_override("font_size", font_size)
 	l.add_theme_color_override("font_color", color)
 	l.reset_size()
 	l.pivot_offset = l.size * 0.5
@@ -49,7 +63,10 @@ func popup(text: String, font_size: int, color: Color, pos: Vector2) -> void:
 	var vp_w := get_viewport().get_visible_rect().size.x
 	pos.x = clampf(pos.x, half_w + 16.0, vp_w - half_w - 16.0)  # keep long text on screen
 	l.position = pos - l.size * 0.5
-	_popups.append({"label": l, "born": Time.get_ticks_msec(), "base_y": l.position.y})
+	l.modulate.a = 1.0
+	l.visible = true
+	_pop_base_y[i] = l.position.y
+	_pop_born[i] = Time.get_ticks_msec()
 
 func _process(_delta: float) -> void:
 	var now := Time.get_ticks_msec()
@@ -57,22 +74,19 @@ func _process(_delta: float) -> void:
 	var pt := clampf((now - _punch_start_ms) / 1000.0 / PUNCH_TIME, 0.0, 1.0)
 	_mult.scale = Vector2.ONE * lerpf(1.6, 1.0, 1.0 - pow(1.0 - pt, 3.0))
 	# Popups.
-	for i in range(_popups.size() - 1, -1, -1):
-		var d: Dictionary = _popups[i]
-		var l := d["label"] as Label
-		var t := (now - int(d["born"])) / 1000.0 / POPUP_TIME
+	for i in POPUP_POOL:
+		if _pop_born[i] == 0:
+			continue
+		var l := _pop_labels[i]
+		var t := (now - _pop_born[i]) / 1000.0 / POPUP_TIME
 		if t >= 1.0:
-			l.queue_free()
-			_popups.remove_at(i)
+			l.visible = false
+			_pop_born[i] = 0
 			continue
 		var pop := 0.5 + 0.75 * minf(t / 0.15, 1.0) if t < 0.15 else lerpf(1.25, 1.0, minf((t - 0.15) / 0.2, 1.0))
 		l.scale = Vector2.ONE * pop
-		l.position.y = float(d["base_y"]) - 150.0 * (1.0 - pow(1.0 - t, 2.0))  # rise, easing out
+		l.position.y = _pop_base_y[i] - 150.0 * (1.0 - pow(1.0 - t, 2.0))  # rise, easing out
 		l.modulate.a = 1.0 if t < 0.5 else 1.0 - (t - 0.5) / 0.5
-
-func show_game_over(points: int) -> void:
-	_over.text = "CRASHED\n%d\n\nTap to restart" % points
-	_over.visible = true
 
 func _make_label(font_size: int) -> Label:
 	var l := Label.new()
@@ -112,8 +126,8 @@ func begin_prewarm() -> void:
 	add_child(_cover)  # last child = drawn on top of the labels
 
 func end_prewarm() -> void:
-	for d in _popups:
-		(d["label"] as Label).queue_free()
-	_popups.clear()
+	for i in POPUP_POOL:
+		_pop_labels[i].visible = false
+		_pop_born[i] = 0
 	_over.visible = false
 	_cover.queue_free()

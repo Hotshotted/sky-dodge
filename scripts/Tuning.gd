@@ -16,8 +16,9 @@ var ortho_size := 10.0
 # ---------- Hidden columns ----------
 ## Number of hidden columns across the screen width (never shown to the player).
 var column_count := 5
-## Obstacle width as a fraction of a column (visual AND collision). Smaller = clearer gaps.
-var obstacle_scale := 0.7
+## Obstacle width as a fraction of a column. Collision uses the visible size (cube + outline), so
+## smaller = wider gaps. 0.6 keeps one-column corridors passable now the hitbox matches the wings.
+var obstacle_scale := 0.6
 ## Obstacle length along the flight direction (z).
 var obstacle_depth := 1.4
 
@@ -65,17 +66,12 @@ var multiplier_decay_step := 1.5
 var score_uses_multiplier := true
 
 # ---------- Near-miss feedback ----------
-## Hitstop (a brief slow-down) fires only when a near miss raises the multiplier into a NEW tier
-## (1x->2x, 2x->3x, 3x->4x), not on every near miss. Turn it off entirely with false.
-var hitstop_enabled := true
-## Engine.time_scale during the freeze, and how long it lasts in REAL seconds.
-var hitstop_scale := 0.5
-var hitstop_duration := 0.05
-## Sparks in the burst from the wingtip nearest the obstacle, and how long each lives (seconds).
-var spark_count := 24
+## Sparks in the burst from the wingtip nearest the obstacle (kept small: cheap on phones),
+## and how long each lives (seconds).
+var spark_count := 14
 var spark_lifetime := 0.45
-## Speed streaks flashed past the plane, and their speed (units/second).
-var streak_count := 10
+## Speed streaks flashed past the plane (max 24), and their speed (units/second).
+var streak_count := 6
 var streak_speed := 70.0
 ## How long the passed obstacle's outline stays white (seconds).
 var near_miss_flash_time := 0.25
@@ -131,8 +127,11 @@ var yaw_amount := 0.025
 var tilt_smoothing := 10.0
 
 # ---------- Collision ----------
-## Half-size of the plane's hit box in x/z (smaller than the model = more forgiving).
-var plane_hit_half := Vector2(0.6, 0.6)
+## The plane's collision shape is built from its visible parts (wings, fuselage with nose and
+## tail fin; see Player.PLANE_PARTS) at this fraction of their visible size. 0.95 = slight
+## forgiveness: the 5% on the wingtips (~0.05 units) is less than the obstacle outline width, so
+## a wing can brush an obstacle's black outline but never its coloured face.
+var plane_hit_scale := 0.95
 
 # ---------- Helpers ----------
 ## Index into a per-tier array for a multiplier: 2x -> 0, 3x -> 1, ... clamped to the array.
