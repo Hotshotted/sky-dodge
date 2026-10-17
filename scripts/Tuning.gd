@@ -2,77 +2,56 @@ extends Node
 ## Every "feel" value of the game lives here, in one place.
 ## Registered as the autoload `Tuning`, so any script can read `Tuning.some_value`.
 ## They are plain vars (not consts) so a future on-screen tuning panel can edit them live.
-## Distances are world units (1 unit ~ 1 metre); the hidden lane grid is cell_size wide.
+## Distances are world units. The camera looks straight down: screen-right = +x,
+## screen-down = +z, and the plane flies toward -z (screen-up).
 
-# ---------- Hidden lane grid ----------
-## Width/height of one grid cell. The 3x3 grid is centred on the plane's start position.
-var cell_size := 2.0
-## Obstacle edge length as a fraction of a cell (visual AND collision). Smaller = clearer gaps.
+# ---------- Camera / screen ----------
+## World units visible across the screen WIDTH (orthographic camera size, width locked).
+## The visible height follows from the device aspect ratio (about 17.8 units on 9:16).
+var ortho_size := 10.0
+
+# ---------- Hidden columns ----------
+## Number of hidden columns across the screen width (never shown to the player).
+var column_count := 5
+## Obstacle width as a fraction of a column (visual AND collision). Smaller = clearer gaps.
 var obstacle_scale := 0.7
-## Obstacle depth along the flight direction.
-var obstacle_depth := 1.5
+## Obstacle length along the flight direction (z).
+var obstacle_depth := 1.4
 
 # ---------- Forward speed ----------
-## Forward speed at the start of a run (units/second).
-var base_speed := 22.0
-## How much forward speed grows each second.
-var speed_ramp := 0.35
-## Forward speed never exceeds this.
-var max_speed := 60.0
+## Scroll speed at the start of a run (units/second).
+var base_speed := 10.0
+## How much scroll speed grows each second.
+var speed_ramp := 0.2
+## Scroll speed never exceeds this.
+var max_speed := 26.0
 
 # ---------- Obstacle spawning ----------
-## Distance between spawn rows (units). Bigger = more time to react and more clearly separated rows.
-var spawn_spacing := 26.0
-## How many of the 9 cells each row blocks (random between min and max, inclusive).
-## A row always keeps at least one open cell, so max is clamped to 8.
-var blocked_cells_min := 3
-var blocked_cells_max := 5
-## Distance ahead of the plane where a row first appears / where the first row of a run sits.
-var spawn_distance := 130.0
-var first_row_distance := 50.0
+## Distance between spawn rows (units). Bigger = more time to react.
+var spawn_spacing := 10.0
+## How many columns each row blocks (random between min and max, inclusive).
+## A row always keeps at least one open column, so max is clamped to column_count - 1.
+var blocked_columns_min := 2
+var blocked_columns_max := 3
+## A new row is created once the last one has scrolled past -spawn_distance (must be above the
+## top of the screen, ~9-11 units on phones).
+var spawn_distance := 24.0
+## Where the very first row of a run sits (above the screen, so you get a moment to settle).
+var first_row_distance := 26.0
 
-# ---------- Camera ----------
-## Camera height above the plane's centre line (units). Higher = see over near rows into the corridor.
-var camera_height := 9.5
-## Camera distance behind the plane (units).
-var camera_distance := 9.0
-## How far the camera pitches down, in degrees. Together with height this decides where the
-## plane sits on screen (aim: lower third) - raise tilt to push the plane lower.
-var camera_tilt_deg := 15.0
-## Horizontal field of view in degrees (portrait: width is locked, height follows).
-var camera_fov := 60.0
-## How much the camera follows the plane's x / y movement (0 = fixed, 1 = locked to plane).
-var camera_follow_x := 0.5
-var camera_follow_y := 0.3
-
-# ---------- Obstacle look: outline, distance tint, light ----------
-## Black outline width around each obstacle, in world units at the camera.
+# ---------- Obstacle look ----------
+## Obstacle colour (single colour; outlines separate overlapping shapes).
+var obstacle_color := Color(1.0, 0.3, 0.12)
+## Black outline width around each obstacle, in world units.
 var outline_thickness := 0.07
-## Extra outline width per unit of camera distance, so outlines stay readable far away.
-var outline_distance_gain := 0.05
-## Obstacle colour of the nearest rows (bright, saturated).
-var near_color := Color(1.0, 0.3, 0.12)
-## Colour far rows fade toward; also used for the sky and fog so distant rows melt into them.
-var far_color := Color(0.45, 0.65, 0.9)
-## Rows closer than this (distance from the plane, units) use the full near colour...
-var tint_near_distance := 20.0
-## ...and rows farther than this use the full far colour; in between it blends.
-var tint_far_distance := 120.0
-## Direction the sun's light travels (x right, y up, z toward the camera). Chosen so the top,
-## front and side faces of a cube get clearly different brightness (flat shading).
-var light_direction := Vector3(0.3, -0.78, -0.55)
-
-# ---------- Near-row fade ----------
-## An obstacle row starts fading when it is this far ahead of the plane (units).
-var fade_start_distance := 35.0
-## Opacity (0 = invisible, 1 = solid) a row reaches at the plane and keeps while passing the camera.
-## Collision is unaffected.
-var fade_alpha := 0.25
+## Direction the sun's light travels. The camera sees mostly top faces, so this is mainly
+## "from above, slightly from the left/front" to give the tops a pleasant tone.
+var light_direction := Vector3(0.3, -0.9, -0.3)
 
 # ---------- Plane movement (relative drag) ----------
 ## World units the plane is asked to move per pixel of finger movement.
 var drag_sensitivity := 0.014
-## Fastest the plane can slide sideways/vertically (units/second).
+## Fastest the plane can slide in either direction (units/second).
 var max_move_speed := 16.0
 ## How quickly velocity builds toward the finger's motion (units/second^2). Lower = heavier/floatier.
 var move_accel := 80.0
@@ -83,25 +62,35 @@ var move_damping := 5.0
 ## Reversing direction: old velocity decays to ~nothing over this many seconds
 ## before the new direction takes over (0.15-0.25 feels like a short "penalty").
 var reversal_decay_time := 0.2
-## Plane stays inside +/- (cell_size * this) on each axis.
-var bounds_cells := 1.5
+## Plane stays this far (units) inside the left/right screen edges.
+var plane_edge_margin := 0.7
+## Forward/back range: the plane may use the bottom this fraction of the screen height.
+var plane_zone_fraction := 0.4
+## Gap (units) kept between the plane and the bottom screen edge.
+var plane_bottom_margin := 1.5
 
-# ---------- Soft snap (after finger lifts) ----------
-## Spring strength pulling the plane toward the nearest hidden grid point. 0 disables snapping.
+# ---------- Soft snap (after finger lifts, sideways only) ----------
+## Spring strength pulling the plane toward the nearest column centre. 0 disables snapping.
 var snap_strength := 7.0
 ## Spring damping; roughly 2*sqrt(snap_strength) is critically damped (no overshoot).
 var snap_damping := 5.5
 
-# ---------- Visual banking / pitching ----------
+# ---------- Visual banking ----------
 ## Roll (radians) per unit of sideways velocity.
 var bank_amount := 0.06
-## Pitch (radians) per unit of vertical velocity.
-var pitch_amount := 0.04
+## Yaw (radians): nose turns toward the sideways motion, so banking reads from above.
+var yaw_amount := 0.025
 ## How quickly the visual tilt follows (higher = snappier).
 var tilt_smoothing := 10.0
 
 # ---------- Collision ----------
-## Half-size of the plane's hit box in x/y (smaller than the model = more forgiving).
-var plane_hit_half := Vector2(0.6, 0.25)
-## Half-depth of the plane's hit box along z.
-var plane_hit_half_z := 0.6
+## Half-size of the plane's hit box in x/z (smaller than the model = more forgiving).
+var plane_hit_half := Vector2(0.6, 0.6)
+
+# ---------- Helpers ----------
+func column_width() -> float:
+	return ortho_size / column_count
+
+## World x of the centre of column i (0 = leftmost).
+func column_center(i: int) -> float:
+	return (i - (column_count - 1) * 0.5) * column_width()

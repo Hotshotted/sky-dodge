@@ -1,24 +1,39 @@
 extends Node3D
-## The plane. Moves freely in 2D (x = right, y = up) using RELATIVE drag:
-## it follows how far the finger moves, not where the finger is.
+## The plane, seen from above. Moves freely in 2D (x = sideways, z = forward/back) using
+## RELATIVE drag: it follows how far the finger moves, not where the finger is.
 
-var velocity := Vector2.ZERO   # current plane velocity (units/s)
+const PLANE_Y := 1.2  # model height: above the obstacles so it draws on top
+
+var velocity := Vector2.ZERO   # (x, z) velocity in units/s
 var active := true             # false once crashed
 var touching := false          # finger currently down?
-var _pending_drag := Vector2.ZERO  # finger pixels accumulated since last frame (world-oriented: y up)
+var z_min := 0.0               # forward/back range, set by Main from the screen shape
+var z_max := 0.0
+var _zone_set := false
+var _pending_drag := Vector2.ZERO  # finger pixels accumulated since last frame
 var _input_vel := Vector2.ZERO     # smoothed velocity the finger is asking for
-var _model: Node3D                 # visual child that banks/pitches
+var _model: Node3D                 # visual child that banks/yaws
 
 func _ready() -> void:
+	position = Vector3(0, PLANE_Y, 0)
 	_build_model()
+
+## Main calls this every frame: the lower part of the screen the plane may use.
+func set_zone(top: float, bottom: float) -> void:
+	z_min = top
+	z_max = bottom
+	if not _zone_set:  # first call: start low in the zone, centred
+		_zone_set = true
+		position.z = lerpf(z_max, z_min, 0.25)
 
 func _input(event: InputEvent) -> void:
 	# With "emulate touch from mouse" on, mouse drags also arrive as these touch events.
 	if event is InputEventScreenTouch:
 		touching = event.pressed
 	elif event is InputEventScreenDrag and active:
-		# Screen y grows downward; world y grows upward.
-		_pending_drag += Vector2(event.relative.x, -event.relative.y)
+		touching = true  # also covers a finger that was already down when the run restarted
+		# Screen right = +x, screen down = +z, so no axis flip is needed.
+		_pending_drag += event.relative
 
 func _process(delta: float) -> void:
 	if not active:
@@ -45,34 +60,36 @@ func _process(delta: float) -> void:
 			v *= exp(-Tuning.move_damping * delta)
 		velocity[axis] = v
 
-	# 3) Soft snap toward the nearest hidden grid point once the finger is lifted.
-	var pos := Vector2(position.x, position.y)
+	# 3) Soft snap (sideways only) toward the nearest column centre once the finger is lifted.
 	if not touching and Tuning.snap_strength > 0.0:
-		var target := _nearest_grid_point(pos)
-		velocity += ((target - pos) * Tuning.snap_strength - velocity * Tuning.snap_damping) * delta
+		var target := _nearest_column_x(position.x)
+		velocity.x += ((target - position.x) * Tuning.snap_strength - velocity.x * Tuning.snap_damping) * delta
 
-	# 4) Integrate and clamp to the flyable area.
-	pos += velocity * delta
-	var limit := Tuning.cell_size * Tuning.bounds_cells
-	for axis in 2:
-		if absf(pos[axis]) > limit:
-			pos[axis] = signf(pos[axis]) * limit
-			velocity[axis] = 0.0
-	position = Vector3(pos.x, pos.y, 0.0)
+	# 4) Integrate and clamp to the flyable area (full width, lower part of the screen).
+	var x := position.x + velocity.x * delta
+	var z := position.z + velocity.y * delta
+	var x_limit := Tuning.ortho_size * 0.5 - Tuning.plane_edge_margin
+	if absf(x) > x_limit:
+		x = signf(x) * x_limit
+		velocity.x = 0.0
+	if z < z_min or z > z_max:
+		z = clampf(z, z_min, z_max)
+		velocity.y = 0.0
+	position = Vector3(x, PLANE_Y, z)
 
-	# 5) Visual banking (roll) and pitching, smoothed.
+	# 5) Visual banking (roll) and a slight yaw into the movement, smoothed.
 	var k := 1.0 - exp(-Tuning.tilt_smoothing * delta)
 	_model.rotation.z = lerpf(_model.rotation.z, -velocity.x * Tuning.bank_amount, k)
-	_model.rotation.x = lerpf(_model.rotation.x, velocity.y * Tuning.pitch_amount, k)
+	_model.rotation.y = lerpf(_model.rotation.y, -velocity.x * Tuning.yaw_amount, k)
 
 func crash() -> void:
 	active = false
 
-func _nearest_grid_point(p: Vector2) -> Vector2:
-	var c := Tuning.cell_size
-	return Vector2(clampf(roundf(p.x / c), -1.0, 1.0), clampf(roundf(p.y / c), -1.0, 1.0)) * c
+func _nearest_column_x(x: float) -> float:
+	var i := roundi(x / Tuning.column_width() + (Tuning.column_count - 1) * 0.5)
+	return Tuning.column_center(clampi(i, 0, Tuning.column_count - 1))
 
-## Greybox plane from primitives; nose points toward -Z.
+## Greybox plane from primitives; nose points toward -Z (screen up).
 func _build_model() -> void:
 	_model = Node3D.new()
 	add_child(_model)
