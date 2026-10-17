@@ -32,7 +32,6 @@ func _ready() -> void:
 	camera.near = 0.1
 	camera.far = 100.0
 	_update_camera()
-	player.stick_changed.connect(hud.set_stick)
 	_update_plane_zone()
 
 func _process(delta: float) -> void:

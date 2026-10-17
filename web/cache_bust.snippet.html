@@ -1,0 +1,17 @@
+<script>
+/* Injected at build time. index.html is the only unversioned file (the .js/.wasm/.pck names
+   contain the commit hash). If a cached copy of this page is older than the newest deploy,
+   hop to a URL with ?v=<newest> so the browser fetches the fresh page instead. */
+(function () {
+  var BUILD = "__BUILD__";
+  fetch("version.txt?t=" + Date.now(), { cache: "no-store" })
+    .then(function (r) { return r.ok ? r.text() : ""; })
+    .then(function (t) {
+      t = (t || "").trim();
+      if (t && t !== BUILD && location.search !== "?v=" + t) {
+        location.replace(location.pathname + "?v=" + t);
+      }
+    })
+    .catch(function () {});
+})();
+</script>

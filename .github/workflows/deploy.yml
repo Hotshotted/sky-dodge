@@ -50,13 +50,29 @@ jobs:
           mv tpl/templates/* ~/.local/share/godot/export_templates/${GODOT_TEMPLATE_DIR}/
           rm -rf tpl templates.tpz
 
+      # Short commit hash + UTC build time, shown as a stamp in the game's corner.
+      - name: Stamp build info
+        run: |
+          SHORT=${GITHUB_SHA::7}
+          printf 'class_name BuildInfo\nextends RefCounted\nconst COMMIT := "%s"\nconst TIME := "%s"\n' \
+            "$SHORT" "$(date -u +'%Y-%m-%d %H:%M UTC')" > scripts/BuildInfo.gd
+          cat scripts/BuildInfo.gd
+
       - name: Import project
         run: godot --headless --import || true  # first import can exit non-zero; export below is the real check
 
+      # Cache-busting: export under a name containing the commit hash (so .js/.wasm/.pck are new
+      # files every deploy), then make that page index.html and add a small stale-page check.
       - name: Export Web
         run: |
+          SHORT=${GITHUB_SHA::7}
           mkdir -p build/web
-          godot --headless --export-release "Web" build/web/index.html
+          godot --headless --export-release "Web" build/web/g-$SHORT.html
+          mv build/web/g-$SHORT.html build/web/index.html
+          echo "$SHORT" > build/web/version.txt
+          sed "s/__BUILD__/$SHORT/" web/cache_bust.snippet.html > build/cache_bust.html
+          sed -i '/<head>/r build/cache_bust.html' build/web/index.html
+          grep -c "version.txt" build/web/index.html
           ls -la build/web
 
       - uses: actions/upload-pages-artifact@v3

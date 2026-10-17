@@ -3,7 +3,6 @@ extends CanvasLayer
 
 var _score: Label
 var _over: Label
-var _stick := StickView.new()
 var _mult: Label
 var _punch_start_ms := -10000      # when the multiplier label last "punched"
 var _popups: Array[Dictionary] = []  # {label, born_ms, base_y}
@@ -11,8 +10,6 @@ const PUNCH_TIME := 0.28
 const POPUP_TIME := 0.9
 
 func _ready() -> void:
-	_stick.set_anchors_and_offsets_preset(Control.PRESET_FULL_RECT)
-	add_child(_stick)
 	_score = _make_label(72)
 	_score.set_anchors_and_offsets_preset(Control.PRESET_TOP_WIDE)
 	_score.offset_top = 80
@@ -20,14 +17,11 @@ func _ready() -> void:
 	_mult.set_anchors_and_offsets_preset(Control.PRESET_TOP_WIDE)
 	_mult.offset_top = 170
 	set_multiplier(1, false)
+	_build_stamp()
 	_over = _make_label(80)
 	_over.set_anchors_and_offsets_preset(Control.PRESET_FULL_RECT)
 	_over.vertical_alignment = VERTICAL_ALIGNMENT_CENTER
 	_over.visible = false
-
-## Fed by Player.stick_changed: where to draw the floating stick (hidden when inactive).
-func set_stick(active: bool, base: Vector2, knob: Vector2) -> void:
-	_stick.set_stick(active, base, knob)
 
 func set_score(points: int) -> void:
 	_score.text = "%d" % points
@@ -88,3 +82,15 @@ func _make_label(font_size: int) -> Label:
 	l.mouse_filter = Control.MOUSE_FILTER_IGNORE
 	add_child(l)
 	return l
+
+## Small "commit . build time" tag in the bottom-left corner so you can tell which build you're on.
+## BuildInfo.gd is rewritten by the GitHub Actions workflow at export time.
+func _build_stamp() -> void:
+	var l := _make_label(26)
+	l.text = "%s  %s" % [BuildInfo.COMMIT, BuildInfo.TIME]
+	l.horizontal_alignment = HORIZONTAL_ALIGNMENT_LEFT
+	l.set_anchors_and_offsets_preset(Control.PRESET_BOTTOM_LEFT)
+	l.offset_left = 14
+	l.offset_top = -48
+	l.modulate = Color(1, 1, 1, 0.55)
+	l.add_theme_constant_override("outline_size", 6)
