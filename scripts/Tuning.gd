@@ -51,6 +51,45 @@ var outline_thickness := 0.07
 ## top brightest and the front a clearly different, darker tone.
 var light_direction := Vector3(0.3, -0.8, -0.5)
 
+# ---------- Near miss & multiplier ----------
+## A row counts as a near miss if the plane passed it with less than this gap (units) between the
+## plane's hit box and the closest obstacle edge (0 = touching = crash).
+var near_miss_distance := 0.5
+## Highest score multiplier reachable.
+var multiplier_max := 5
+## Seconds after a near miss before the multiplier starts to decay.
+var multiplier_hold_time := 4.0
+## Once decaying, the multiplier drops one step every this many seconds (down to 1x).
+var multiplier_decay_step := 1.5
+## If true, score accrues at (distance x multiplier); if false, the multiplier is cosmetic.
+var score_uses_multiplier := true
+
+# ---------- Near-miss feedback ----------
+## Hitstop: Engine.time_scale during the freeze, and how long it lasts in REAL seconds.
+var hitstop_scale := 0.3
+var hitstop_duration := 0.08
+## Sparks in the burst from the wingtip nearest the obstacle, and how long each lives (seconds).
+var spark_count := 24
+var spark_lifetime := 0.45
+## Speed streaks flashed past the plane, and their speed (units/second).
+var streak_count := 10
+var streak_speed := 70.0
+## How long the passed obstacle's outline stays white (seconds).
+var near_miss_flash_time := 0.25
+## Haptic pulse length in milliseconds (ignored where unsupported).
+var haptic_ms := 25
+## "Close!" popup tiers, indexed by multiplier: 2x = first entry, 3x = second, 4x+ = last.
+## Text, colour (warmer each tier) and font size (px in the 1080-wide base viewport).
+var near_miss_texts: Array[String] = ["Close!", "Closer!", "Whisker Close!"]
+var near_miss_colors: Array[Color] = [Color(1.0, 0.95, 0.55), Color(1.0, 0.62, 0.2), Color(1.0, 0.28, 0.12)]
+var near_miss_sizes: Array[int] = [64, 84, 108]
+## Trail ribbon colour per multiplier tier (2x, 3x, 4x, 5x+); it appears at 2x and fades at 1x.
+var trail_colors: Array[Color] = [Color(0.5, 0.9, 1.0), Color(0.5, 1.0, 0.6), Color(1.0, 0.85, 0.3), Color(1.0, 0.4, 0.7)]
+var trail_width := 0.5
+## How far behind the plane the trail reaches (units), and how long it takes to fade out.
+var trail_length := 12.0
+var trail_fade_time := 0.6
+
 # ---------- Plane movement (floating virtual analog stick) ----------
 ## Touch anywhere: a stick appears under the finger; knob offset from that point steers the plane.
 ## Distance (screen pixels, in the 1080x1920 base viewport) at which the stick is fully deflected.
@@ -95,6 +134,10 @@ var tilt_smoothing := 10.0
 var plane_hit_half := Vector2(0.6, 0.6)
 
 # ---------- Helpers ----------
+## Index into a per-tier array for a multiplier: 2x -> 0, 3x -> 1, ... clamped to the array.
+func tier_index(multiplier: int, count: int) -> int:
+	return clampi(multiplier - 2, 0, count - 1)
+
 func column_width() -> float:
 	return ortho_size / column_count
 

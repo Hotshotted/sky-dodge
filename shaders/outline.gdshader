@@ -4,6 +4,7 @@ shader_type spatial;
 // silhouette rim. Works in the Compatibility (GL) renderer.
 render_mode unshaded, cull_front;
 
+uniform vec4 outline_color : source_color = vec4(0.0, 0.0, 0.0, 1.0);  // white while flashing
 uniform float thickness = 0.07;  // rim width in world units (camera is orthographic: constant on screen)
 
 void vertex() {
@@ -14,5 +15,5 @@ void vertex() {
 }
 
 void fragment() {
-	ALBEDO = vec3(0.0);
+	ALBEDO = outline_color.rgb;
 }

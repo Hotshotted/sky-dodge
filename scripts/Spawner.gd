@@ -7,7 +7,16 @@ extends Node3D
 
 const GROUND_Y := -2.0
 
-var _rows: Array[Node3D] = []
+## One row of obstacles, plus the bookkeeping for near-miss detection.
+class Row extends Node3D:
+	var xs: Array[float] = []             # x of each obstacle
+	var obs: Array[MeshInstance3D] = []   # the obstacle nodes (same order)
+	var entered := false                  # plane has been inside this row's depth window
+	var passed := false                   # near-miss check already done
+	var min_clear := INF                  # smallest gap seen while overlapping
+	var min_idx := -1                     # obstacle that gave that gap
+
+var _rows: Array[Row] = []
 var _prev_open: Array[bool] = []   # open flags of previous row, index = column
 var _last_row_z := 0.0
 var _obstacle_mesh := BoxMesh.new()  # unit cube, scaled per obstacle
@@ -65,10 +74,50 @@ func hits(p: Vector2) -> bool:
 	for r in _rows:
 		if absf(r.position.z - p.y) > half_d:
 			continue
-		for cx: float in r.get_meta("xs"):
+		for cx in r.xs:
 			if absf(cx - p.x) < half_w + Tuning.plane_hit_half.x:
 				return true
 	return false
+
+## Call every frame with the plane position (x, z). For each row, tracks the smallest gap between
+## the plane's hit box and an obstacle edge while the plane overlaps the row's depth, and when the
+## row has fully passed returns a near-miss event if that gap was under near_miss_distance:
+## {"side": -1/+1 (which side the obstacle was), "node": MeshInstance3D, "clearance": float}.
+func update_near_misses(p: Vector2) -> Array[Dictionary]:
+	var events: Array[Dictionary] = []
+	var half_w := Tuning.column_width() * Tuning.obstacle_scale * 0.5
+	var half_d := Tuning.obstacle_depth * 0.5 + Tuning.plane_hit_half.y
+	for r in _rows:
+		if r.passed:
+			continue
+		var dz := r.position.z - p.y
+		if absf(dz) < half_d:
+			r.entered = true
+			for i in r.xs.size():
+				var gap := absf(r.xs[i] - p.x) - (half_w + Tuning.plane_hit_half.x)
+				if gap < r.min_clear:
+					r.min_clear = gap
+					r.min_idx = i
+		elif dz >= half_d:  # row has scrolled past the plane
+			r.passed = true
+			if r.entered and r.min_idx >= 0 and r.min_clear < Tuning.near_miss_distance:
+				var side := 1 if r.xs[r.min_idx] > p.x else -1
+				events.append({"side": side, "node": r.obs[r.min_idx], "clearance": r.min_clear})
+	return events
+
+## Flash one obstacle's outline white for near_miss_flash_time real seconds.
+func flash_obstacle(mi: MeshInstance3D) -> void:
+	var mat := _obstacle_mat.duplicate() as StandardMaterial3D
+	var outline := _outline_mat.duplicate() as ShaderMaterial
+	outline.set_shader_parameter("outline_color", Color.WHITE)
+	outline.set_shader_parameter("thickness", Tuning.outline_thickness * 1.8)
+	mat.next_pass = outline
+	mi.material_override = mat
+	# Real-time timer (ignores Engine.time_scale), so hitstop doesn't stretch the flash.
+	get_tree().create_timer(Tuning.near_miss_flash_time, true, false, true).timeout.connect(
+		func() -> void:
+			if is_instance_valid(mi):
+				mi.material_override = _obstacle_mat)
 
 func _update_look() -> void:
 	_obstacle_mat.albedo_color = Tuning.obstacle_color
@@ -77,22 +126,21 @@ func _update_look() -> void:
 func _spawn_row(z: float) -> void:
 	var open := _generate_open_columns()
 	_prev_open = open
-	var row := Node3D.new()
+	var row := Row.new()
 	row.position.z = z
 	var width := Tuning.column_width() * Tuning.obstacle_scale
-	var xs: Array[float] = []
 	for i in Tuning.column_count:
 		if open[i]:
 			continue
 		var x := Tuning.column_center(i)
-		xs.append(x)
+		row.xs.append(x)
 		var mi := MeshInstance3D.new()
 		mi.mesh = _obstacle_mesh
 		mi.material_override = _obstacle_mat
 		mi.scale = Vector3(width, width, Tuning.obstacle_depth)  # mesh is a unit cube
 		mi.position = Vector3(x, 0, 0)
 		row.add_child(mi)
-	row.set_meta("xs", xs)
+		row.obs.append(mi)
 	var stripe := MeshInstance3D.new()
 	stripe.mesh = _stripe_mesh
 	stripe.scale = Vector3(Tuning.ortho_size * 2.0, 0.1, 0.4)
