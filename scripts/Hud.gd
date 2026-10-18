@@ -29,6 +29,8 @@ var _map_dots: Array = []                  # per card: its three medal dots
 var _distance_label: Label
 var _next_label: Label                    # "Next: 1.5K" (the score of the next pick)
 const PERK_ICONS := 12
+var _perk_ids: Array[String] = []           # the perk id shown in each icon slot (set_perks)
+var _perk_pulse_ms := PackedInt64Array()    # per slot: when its icon last pulsed
 var _perk_icons: Array[Dictionary] = []   # pooled small icons for the perks held this run: panel, glyph, level
 const EFFECT_LABELS := 6
 var _effect_labels: Array[Label] = []     # active boosts (and Glide) with seconds left
@@ -143,6 +145,9 @@ func _ready() -> void:
 		lv.mouse_filter = Control.MOUSE_FILTER_IGNORE
 		panel.add_child(lv)
 		_perk_icons.append({"panel": panel, "style": sb, "glyph": gl, "level": lv})
+		_perk_ids.append("")
+		_perk_pulse_ms.append(-100000)
+		panel.pivot_offset = Vector2(26.0, 26.0)
 	for i in EFFECT_LABELS:
 		var el := _make_label(34)
 		el.horizontal_alignment = HORIZONTAL_ALIGNMENT_LEFT
@@ -636,11 +641,18 @@ func set_perks(levels: Dictionary) -> void:
 		var ic := _perk_icons[i]
 		var panel := ic["panel"] as Panel
 		panel.visible = i < held.size()
+		_perk_ids[i] = held[i]["id"] if i < held.size() else ""
 		if i < held.size():
 			(ic["style"] as StyleBoxFlat).bg_color = held[i]["color"]
 			(ic["glyph"] as Label).text = held[i]["glyph"]
 			(ic["level"] as Label).text = str(int(levels[held[i]["id"]]))
 			panel.position = Vector2(540.0 + 58.0 * (i - (held.size() - 1) * 0.5) - 26.0, 384)
+
+## A held perk's icon pulses briefly (the perk just did something: Tailwind paid, sped the plane up ...).
+func pulse_perk(id: String) -> void:
+	var i := _perk_ids.find(id)
+	if i >= 0:
+		_perk_pulse_ms[i] = Time.get_ticks_msec()
 
 ## Boosts running (and Glide): one line each with the seconds left. `boosts` = boost id -> seconds left.
 func refresh_effects(boosts: Dictionary, glide_left: float) -> void:
@@ -869,6 +881,11 @@ func _update_bonus_look(now: int) -> void:
 	_score.scale = Vector2.ONE * swell
 
 func _process(delta: float) -> void:
+	var pulse_now := Time.get_ticks_msec()
+	for pi in PERK_ICONS:   # a pulsing perk icon: grows and settles back
+		var pt := (pulse_now - _perk_pulse_ms[pi]) / 1000.0
+		var ps := 1.0 + 0.7 * sin(PI * pt / Tuning.perk_pulse_seconds) if pt < Tuning.perk_pulse_seconds else 1.0
+		(_perk_icons[pi]["panel"] as Panel).scale = Vector2(ps, ps)
 	_update_perf(delta)
 	var now := Time.get_ticks_msec()
 	_update_fuel_look(now)

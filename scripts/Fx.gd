@@ -9,11 +9,18 @@ const SPARK_EMITTERS := 2    # round-robin, so overlapping bursts don't cut each
 const PICKUP_EMITTERS := 2   # fuel-pickup bursts, round-robin
 const STREAK_POOL := 24      # max Tuning.streak_count
 const STREAK_LIFE := 0.35
+const WIND_POOL := 20        # wind streaks: Tailwind's flow past the plane, and the whoosh of a speed step
 
 var _pickup_emitters: Array[CPUParticles3D] = []
 var _next_pickup := 0
 var _emitters: Array[CPUParticles3D] = []
 var _next_emitter := 0
+var _wind_nodes: Array[MeshInstance3D] = []
+var _wind_mat := StandardMaterial3D.new()
+var _wind_x := PackedFloat32Array()
+var _wind_z := PackedFloat32Array()
+var _wind_v := PackedFloat32Array()
+var _whoosh_left := 0.0
 var _streak_nodes: Array[MeshInstance3D] = []
 var _streak_mats: Array[StandardMaterial3D] = []
 var _streak_z0 := PackedFloat32Array()
@@ -205,6 +212,23 @@ func _ready() -> void:
 		_streak_mats.append(m)
 	_streak_z0.resize(STREAK_POOL)
 	_streak_born.resize(STREAK_POOL)
+	# Wind streaks: long, thin, pale boxes that flow past the plane (Tailwind, the whoosh of a speed step).
+	_wind_mat.shading_mode = BaseMaterial3D.SHADING_MODE_UNSHADED
+	_wind_mat.albedo_color = Color(0.85, 0.95, 1.0, 0.4)
+	_wind_mat.transparency = BaseMaterial3D.TRANSPARENCY_ALPHA
+	var wbox := BoxMesh.new()
+	wbox.size = Vector3(0.05, 0.02, 3.6)
+	for i in WIND_POOL:
+		var wi := MeshInstance3D.new()
+		wi.mesh = wbox
+		wi.material_override = _wind_mat
+		wi.cast_shadow = GeometryInstance3D.SHADOW_CASTING_SETTING_OFF
+		wi.visible = false
+		add_child(wi)
+		_wind_nodes.append(wi)
+	_wind_x.resize(WIND_POOL)
+	_wind_z.resize(WIND_POOL)
+	_wind_v.resize(WIND_POOL)
 
 ## Burst of sparks at `pos` (a wingtip), flying outward toward `side` (-1 left / +1 right)
 ## and backward (+z) because the world scrolls past the plane.
@@ -259,6 +283,48 @@ func pickup(pos: Vector3) -> void:
 	p.visible = true
 	p.restart()
 	p.emitting = true
+
+## The wind rush of a speed step: every wind streak flows past for whoosh_seconds, faster and brighter.
+func whoosh() -> void:
+	_whoosh_left = Tuning.whoosh_seconds
+
+## Call every frame: `held` = Tailwind is held (a steady flow of Tuning.wind_streaks streaks) and `plane` is where the
+## plane is. Streaks run down the screen (+z) past the plane, never through its middle; a whoosh adds all of them.
+func wind_update(delta: float, plane: Vector3, held: bool) -> void:
+	_whoosh_left = maxf(_whoosh_left - delta, 0.0)
+	var count := WIND_POOL if _whoosh_left > 0.0 else (mini(Tuning.wind_streaks, WIND_POOL) if held else 0)
+	var fast := 1.7 if _whoosh_left > 0.0 else 1.0
+	_wind_mat.albedo_color.a = 0.65 if _whoosh_left > 0.0 else 0.4
+	for i in WIND_POOL:
+		var node := _wind_nodes[i]
+		if i >= count:
+			node.visible = false
+			_wind_v[i] = 0.0
+			continue
+		if _wind_v[i] == 0.0:   # (re)start this streak somewhere above the plane, to either side of it
+			_wind_v[i] = randf_range(34.0, 46.0)
+			_wind_x[i] = plane.x + (1.0 if randf() < 0.5 else -1.0) * randf_range(1.6, 4.4)
+			_wind_z[i] = plane.z - randf_range(2.0, 18.0)
+		_wind_z[i] += _wind_v[i] * fast * delta
+		if _wind_z[i] > plane.z + 12.0:
+			_wind_v[i] = 0.0
+			node.visible = false
+			continue
+		node.position = Vector3(_wind_x[i], plane.y, _wind_z[i])
+		node.visible = true
+
+## Hide the wind (the run ended).
+func stop_wind() -> void:
+	_whoosh_left = 0.0
+	for i in WIND_POOL:
+		_wind_nodes[i].visible = false
+		_wind_v[i] = 0.0
+
+## Pre-warm: show every wind streak once.
+func show_all_wind(origin: Vector3) -> void:
+	for i in WIND_POOL:
+		_wind_nodes[i].position = Vector3(origin.x + (-3.0 if i % 2 == 0 else 3.0), origin.y, origin.z - 1.0 - 0.4 * i)
+		_wind_nodes[i].visible = true
 
 ## Brief streaks that start ahead of the plane and rush past it (screen-down).
 func streaks(origin: Vector3) -> void:
@@ -323,6 +389,10 @@ func clear() -> void:
 		p.restart()
 		p.emitting = false
 		p.visible = false
+	for i in WIND_POOL:
+		_wind_nodes[i].visible = false
+		_wind_v[i] = 0.0
+	_whoosh_left = 0.0
 	for i in STREAK_POOL:
 		_streak_nodes[i].visible = false
 		_streak_born[i] = 0

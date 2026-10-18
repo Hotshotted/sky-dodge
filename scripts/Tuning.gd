@@ -162,6 +162,19 @@ var wave_rise := 0.5
 var wave_can: Array[float] = [1.8, 1.0, 0.6, 2.5]
 var wave_hay: Array[float] = [1.8, 1.0, 0.5, 2.5]
 
+# ---------- Speed cues ----------
+## Every source of a speed change shows itself on screen. The audit (see the smoke test): Tailwind (perk), the BREATHER
+## steps of the Countryside, the continuous ramp of the other maps (cued in tiers of speed_step), and each map's speed
+## multiplier (cued when the run starts). Boosts, supplies, combos and gear change no speed; the test fails if one ever
+## mentions speed without being listed here.
+var speed_cue_sources: Array[String] = ["tailwind", "breather_step", "map_ramp", "map_multiplier"]
+var speed_up_text := "SPEED UP"
+var speed_up_color := Color(0.55, 0.9, 1.0)
+var tailwind_color := Color(0.5, 0.8, 1.0)
+var whoosh_seconds := 1.2          # the wind rush when a speed step begins
+var wind_streaks := 10             # streaks flowing past the plane while Tailwind is held (pool: Fx.WIND_POOL)
+var perk_pulse_seconds := 0.45     # a held perk's HUD icon pulses this long when it applies
+
 # ---------- Maps ----------
 ## Four maps, each a separate run chosen on the start screen. Fields: id, name, unlock_from (the map whose
 ## best distance unlocks it, -1 = open) and unlock_meters, coin multiplier (map_coin_mult, below), the
@@ -294,7 +307,7 @@ var perks: Array[Dictionary] = [
 	{"id": "scavenger", "name": "Scavenger", "glyph": "S", "color": Color(1.0, 0.85, 0.3), "unlock": "", "vals": [10, 25, 60],
 			"line": "Each fuel can pays {v} extra coins."},
 	{"id": "tailwind", "name": "Tailwind", "glyph": "T", "color": Color(0.5, 0.8, 1.0), "unlock": "", "vals": [10, 20, 30],
-			"line": "+{v}% speed and +{v}% coins."},
+			"line": "Fly faster, earn more: +{v}% speed and +{v}% coins."},
 	{"id": "daredevil", "name": "Daredevil", "glyph": "!", "color": Color(1.0, 0.35, 0.35), "unlock": "", "vals": [10, 20, 30],
 			"line": "Close calls count from {v}% farther away."},
 	{"id": "second_wind", "name": "Second Wind", "glyph": "2", "color": Color(0.5, 1.0, 0.8), "unlock": "second_wind", "vals": [25, 50, 75],
@@ -386,7 +399,7 @@ var milestones: Array[Dictionary] = [
 var pick_short := {
 	"glide": "Glide {v} s when empty", "cloud_diver": "+{v} fuel/s under clouds", "lucky_whiskers": "{v}% can on Whisker closes",
 	"prop_wash": "Bumped obstacles pay {v}", "battering_ram": "Crates break on touch", "fuel_miser": "{v}% less fuel burn",
-	"hot_streak": "Bonus fades {v}% slower", "scavenger": "+{v} coins per can", "tailwind": "+{v}% speed and coins",
+	"hot_streak": "Bonus fades {v}% slower", "scavenger": "+{v} coins per can", "tailwind": "Fly faster, earn more",
 	"daredevil": "Close calls from {v}% farther", "second_wind": "Refill {v}% once when low", "golden_touch": "Crates pay x{v}",
 	"double_coins": "Double coins, 20 s", "shield": "One free hit, 20 s", "magnet_storm": "Cans fly to you, 20 s",
 	"whisker_window": "Every close call Whisker", "fuel_freeze": "No fuel burn, 20 s",

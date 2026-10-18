@@ -46,6 +46,9 @@ var _decay_acc := 0.0   # fractional steps accumulated towards the next one comi
 var _warming := false
 static var _haptic_warmed := false  # first-touch haptic warm-up done (once per app session)
 static var _warmed := false  # pre-warm only once per app session
+var last_cue := ""           # the latest speed cue shown on screen (the tests read it)
+var _seen_steps := 0       # Countryside speed steps already announced
+var _ramp_tier := 0        # other maps: speed tiers already announced
 var _kit_speed := 0.0      # Countryside stepped scroll speed (eased)
 var elapsed := 0.0      # run time, drives the speed ramp
 var alive := true
@@ -160,6 +163,7 @@ func _prewarm() -> void:
 				hud.fuel_pulse()
 		if not DebugFlags.off("streaks"):
 			fx.show_all_streaks(spot)
+			fx.show_all_wind(spot)
 		if not DebugFlags.off("trail"):
 			trail.fill_for_prewarm(Vector2(spot.x, spot.z))  # full-length ribbon: alpha, vertex colours, big buffers
 		await get_tree().process_frame
@@ -229,6 +233,12 @@ func restart() -> void:
 		_decay_acc = 1.0
 	elapsed = 0.0
 	_kit_speed = Tuning.base_speed
+	var map_mult: float = Tuning.map_def(map)["speed_mult"]
+	if map_mult > 1.001:   # a faster map says so when the run starts
+		last_cue = "%s: +%d%% speed" % [Tuning.map_def(map)["name"], int(round((map_mult - 1.0) * 100.0))]
+		hud.show_combo("FASTER MAP", Tuning.speed_up_color, "+%d%% speed" % int(round((map_mult - 1.0) * 100.0)))
+	_seen_steps = 0
+	_ramp_tier = 0
 	alive = true
 	spawner.run_time = 0.0
 	fuel = Tuning.fuel_max()
@@ -346,6 +356,7 @@ func _process(raw_delta: float) -> void:
 	spawner.run_time = elapsed            # start late in the run,
 	spawner.scroll_speed = speed          # and come more often the faster it goes
 	spawner.plane_x = player.position.x
+	_speed_cues(speed / tail, delta)
 	spawner.advance(step)
 	spawner.update_hazards(delta)
 	run_distance += step
@@ -510,9 +521,43 @@ func _on_pick_chosen(i: int) -> void:
 	hud.set_next(picks.next_pick)
 	_check_combos()
 
+## Every speed change is explained on screen. Called each frame with the speed before Tailwind (`base`): a Countryside
+## step (a BREATHER passing) and a tier of the other maps' ramp show a SPEED UP banner and the wind rush.
+func _speed_cues(base: float, delta: float) -> void:
+	if spawner.kit_on:
+		if spawner.speed_steps != _seen_steps:
+			var before: float = spawner.stepped_speed(_seen_steps)
+			_seen_steps = spawner.speed_steps
+			var after: float = spawner.stepped_speed(_seen_steps)
+			if after > before + 0.01:
+				_speed_up_cue(after / before - 1.0)
+	else:
+		var m := Tuning.map_def(map)
+		var tier := int((base - Tuning.base_speed * m["speed_mult"]) / maxf(Tuning.speed_step, 0.1))
+		if tier > _ramp_tier:
+			_ramp_tier = tier
+			_speed_up_cue(Tuning.speed_step / maxf(base, 1.0))
+	fx.wind_update(delta, player.position, picks.value("tailwind") > 0.0 and alive and not DebugFlags.off("streaks"))
+
+## The SPEED UP banner with its whoosh (and a nudge on the Tailwind icon, which speeds the plane up too).
+func _speed_up_cue(fraction: float) -> void:
+	last_cue = Tuning.speed_up_text
+	hud.show_combo(Tuning.speed_up_text, Tuning.speed_up_color, "+%d%% speed" % int(round(fraction * 100.0)))
+	if not DebugFlags.off("streaks"):
+		fx.whoosh()
+	if not DebugFlags.off("haptic"):
+		Input.vibrate_handheld(40)
+	if picks.value("tailwind") > 0.0:
+		hud.pulse_perk("tailwind")
+
 ## Take a card: a perk levels up, a boost starts, a supply happens at once.
 func _apply_card(card: Dictionary) -> void:
 	picks.take(card)
+	if card["kind"] == "perk" and card["id"] == "tailwind":   # Tailwind, picked or levelled: say what it does
+		last_cue = "Tailwind! +%d%% speed" % int(Tuning.perk_value("tailwind", card["level"]))
+		if not DebugFlags.off("popup"):
+			hud.popup(last_cue, 64, Tuning.tailwind_color, camera.unproject_position(player.position + Vector3(0, 0, -3.0)))
+		hud.pulse_perk("tailwind")
 	if card["kind"] != "supply":
 		return
 	match card["id"]:
@@ -569,6 +614,7 @@ func _add_fuel(amount: float) -> void:
 func _on_crate_break(kind: int, pos: Vector3) -> void:
 	_note_event("crate broke")
 	Save.add_stat("crates")
+	hud.pulse_perk("tailwind")
 	var ram := picks.level("battering_ram")
 	var gold_touch := maxf(picks.value("golden_touch"), 1.0)   # Golden Touch: crates pay x2 / x3 / x4
 	if not DebugFlags.off("sparks"):
@@ -622,6 +668,7 @@ func _absorb_hit(p: Vector2, caps: PackedFloat32Array) -> void:
 ## End the run: freeze the plane and show the game-over screen with what ended it.
 func _end_run(header: String, reason: String) -> void:
 	alive = false
+	fx.stop_wind()
 	_death_time = Time.get_ticks_msec() / 1000.0
 	player.crash()
 	player.set_flicker(false)
@@ -663,6 +710,7 @@ func _apply_palette() -> void:
 ## A fuel can was collected at `pos`: refill (never past a full tank) and pop.
 func _on_pickup(pos: Vector3, golden: bool = false) -> void:
 	run_cans += 1
+	hud.pulse_perk("tailwind")   # (Tailwind boosts what this can earns)
 	if combo_on("deadstick") and _gliding:   # Deadstick: a can extends the glide instead of refuelling
 		_glide_left += Tuning.deadstick_extend
 	else:
@@ -693,6 +741,7 @@ func _on_near_miss(ev: Dictionary) -> void:
 	if combo_on("cloud_surfer") and spawner._cloud_over(player.position.x, player.position.z):   # Cloud Surfer: under a cloud counts too
 		whisker = true
 	_add_step(whisker)
+	hud.pulse_perk("tailwind")
 	if whisker and randf() * 100.0 < picks.value("lucky_whiskers"):   # Lucky Whiskers: a can drops ahead
 		spawner.drop_can_ahead(player.position.x, combo_on("golden_whiskers"))
 	var wash := picks.level("prop_wash")      # Prop Wash: the obstacle you just passed gets shoved aside

@@ -3094,6 +3094,102 @@ func _initialize() -> void:
 	pz_gsp.reset()
 	pz_gsp.kit_enabled = false
 
+	print("9. speed changes are always explained on screen")
+	var sc_main = main
+	var sc_tun = tuning
+	# the audit: only the listed sources may change the speed; any other effect that mentions speed must be added to the cues
+	var sc_bad: Array[String] = []
+	var sc_all: Array = []
+	sc_all.append_array(sc_tun.perks)
+	sc_all.append_array(sc_tun.boosts)
+	sc_all.append_array(sc_tun.supplies)
+	sc_all.append_array(sc_tun.combos)
+	sc_all.append_array(sc_tun.upgrades)
+	for d9 in sc_all:
+		var txt9: String = (String(d9.get("line", "")) + " " + String(d9.get("name", ""))).to_lower()
+		if txt9.contains("speed") and not sc_tun.speed_cue_sources.has(d9["id"]):
+			sc_bad.append(d9["id"])
+	check(sc_bad.is_empty(), "no effect changes speed without an on-screen cue (uncued: %s)" % str(sc_bad))
+	check(sc_tun.speed_cue_sources.has("tailwind") and sc_tun.speed_cue_sources.has("breather_step") and sc_tun.speed_cue_sources.has("map_ramp") and sc_tun.speed_cue_sources.has("map_multiplier"), "cued sources: Tailwind, BREATHER steps, map ramp, map multiplier")
+	# Tailwind's card
+	check(sc_tun.pick_short["tailwind"] == "Fly faster, earn more", "the Tailwind card says \"Fly faster, earn more\"")
+	var tw_card := {"kind": "perk", "id": "tailwind", "name": "Tailwind", "glyph": "T", "color": Color.WHITE, "line": "", "level": 1, "owned": false}
+	sc_main.last_cue = ""
+	sc_main._apply_card(tw_card)
+	check(sc_main.last_cue == "Tailwind! +10% speed", "picking Tailwind shows \"%s\"" % sc_main.last_cue)
+	tw_card["level"] = 2
+	sc_main._apply_card(tw_card)
+	check(sc_main.last_cue == "Tailwind! +20% speed", "levelling it shows \"%s\"" % sc_main.last_cue)
+	# while it is held the wind flows past the plane; without it there is none
+	var sc_fx = sc_main.fx
+	for i in 5:
+		sc_fx.wind_update(0.05, sc_main.player.position, true)
+	var wind_vis := 0
+	for wn in sc_fx._wind_nodes:
+		wind_vis += int(wn.visible)
+	check(wind_vis == sc_tun.wind_streaks, "wind streaks flow past the plane while Tailwind is held (%d)" % wind_vis)
+	var wind_moves := true
+	var wz0: float = sc_fx._wind_nodes[0].position.z
+	sc_fx.wind_update(0.05, sc_main.player.position, true)
+	wind_moves = sc_fx._wind_nodes[0].position.z > wz0 or not sc_fx._wind_nodes[0].visible
+	check(wind_moves, "...flowing down the screen, past the plane")
+	for i in 3:
+		sc_fx.wind_update(0.05, sc_main.player.position, false)
+	wind_vis = 0
+	for wn in sc_fx._wind_nodes:
+		wind_vis += int(wn.visible)
+	check(wind_vis == 0, "...and gone without it")
+	# the HUD icon pulses when Tailwind applies
+	sc_main.picks.set_perk("tailwind", 1)
+	sc_main.hud.set_perks(sc_main.picks.levels)
+	var pulse_i: int = sc_main.hud._perk_ids.find("tailwind")
+	sc_main.hud.pulse_perk("tailwind")
+	sc_main.hud._perk_pulse_ms[pulse_i] -= 150   # (a moment into the pulse)
+	sc_main.hud._process(0.016)
+	var pulse_scale: float = (sc_main.hud._perk_icons[pulse_i]["panel"] as Panel).scale.x
+	check(pulse_i >= 0 and pulse_scale > 1.05, "the Tailwind icon pulses when it applies (scale %.2f)" % pulse_scale)
+	sc_main.picks.set_perk("tailwind", 0)
+	sc_main.hud.set_perks(sc_main.picks.levels)
+	# a Countryside speed step: banner, whoosh (every streak), haptic path
+	var sp9 = sc_main.spawner
+	sp9.kit_enabled = true
+	sp9.apply_map(0)
+	sc_main.last_cue = ""
+	sc_main._seen_steps = 0
+	sp9.speed_steps = 1
+	sc_main._speed_cues(7.0, 0.016)
+	check(sc_main.last_cue == "SPEED UP", "a BREATHER speed step shows the SPEED UP banner")
+	sc_fx.wind_update(0.016, sc_main.player.position, false)
+	wind_vis = 0
+	for wn in sc_fx._wind_nodes:
+		wind_vis += int(wn.visible)
+	check(wind_vis == sc_fx.WIND_POOL, "...with a whoosh of wind streaks (%d)" % wind_vis)
+	sc_main.last_cue = ""
+	sc_main._speed_cues(7.0, 0.016)
+	check(sc_main.last_cue == "", "...once per step")
+	sc_fx.stop_wind()
+	sp9.speed_steps = 0
+	sp9.kit_enabled = false
+	sp9.apply_map(0)
+	# the other maps: the ramp is announced in tiers, a faster map when the run starts
+	sc_main.map = 1
+	sp9.apply_map(1)
+	sc_main.last_cue = ""
+	sc_main._ramp_tier = 0
+	sc_main._speed_cues(sc_tun.base_speed * 1.1 + sc_tun.speed_step + 0.1, 0.016)
+	check(sc_main.last_cue == "SPEED UP", "on the other maps each tier of the ramp shows SPEED UP too")
+	sc_fx.stop_wind()
+	sc_main.map = 0
+	sp9.apply_map(0)
+	sc_main.last_cue = ""
+	var wind_sig := snapshot(sc_main)
+	for i in 300:
+		sc_fx.wind_update(0.016, sc_main.player.position, true)
+		if i % 50 == 0:
+			sc_fx.whoosh()
+	sc_fx.stop_wind()
+	check(same_world(wind_sig, snapshot(sc_main)), "wind, whooshes and pulses created nothing new  [%s]" % describe(snapshot(sc_main)))
+
 	DirAccess.remove_absolute(ProjectSettings.globalize_path("user://smoke_test_save.json"))
 	print("")
 	if failures.is_empty():
