@@ -84,10 +84,9 @@ var fuel_can_color := Color(0.2, 0.95, 0.45)
 ## No clouds until the run has lasted this many seconds (the first rows with clouds then appear a
 ## few seconds later, since rows are made ahead of the screen).
 var cloud_start_time := 25.0
-## Chance per row that a new cloud bank starts (when none is in progress), measured at the speed the
-## run has when clouds begin. It grows with speed (about 2x at top speed). At 0.07, about 17% of rows
-## have cloud over them when clouds begin and about 31% at top speed.
-var cloud_frequency := 0.07
+## Free-floating cloud bundles created per row, measured at the speed the run has when clouds begin
+## (they come up to 3x as often at top speed). Sizes run from small wisps to large banks.
+var cloud_frequency := 0.4
 ## Reveal: a cloud is nearly opaque (cloud_max_opacity) while it is farther than this many units
 ## above the plane, then fades as it approaches, so what is under it shows up late...
 var cloud_reveal_distance := 12.0
@@ -95,27 +94,25 @@ var cloud_reveal_distance := 12.0
 ## faint as it passes.
 var cloud_min_opacity := 0.2
 var cloud_max_opacity := 0.95
-## A bank covers 1..cloud_max_columns columns (3 at most) for cloud_min_rows..cloud_max_rows rows.
-var cloud_max_columns := 3
-var cloud_min_rows := 2
-var cloud_max_rows := 4
+## Sideways drift of a bundle: up to this many units sideways per unit it scrolls (either direction).
+var cloud_max_drift := 0.12
 ## Chance that a row with cloud over some of its open columns gets a fuel can UNDER the cloud (off the
 ## safe path), on top of the normal fuel_can_chance. Entering a cloud blind can pay off.
 var fuel_can_under_cloud_chance := 0.45
 var cloud_color := Color(1.0, 1.0, 1.0)
 
-# ---------- Near miss & multiplier ----------
+# ---------- Near miss & bonus ----------
 ## A row counts as a near miss if the plane passed it with less than this gap (units) between the
 ## plane's hit box and the closest obstacle edge (0 = touching = crash).
 var near_miss_distance := 0.5
-## Highest score multiplier reachable.
-var multiplier_max := 5
-## Seconds after a near miss before the multiplier starts to decay.
-var multiplier_hold_time := 4.0
-## Once decaying, the multiplier drops one step every this many seconds (down to 1x).
-var multiplier_decay_step := 1.5
-## If true, score accrues at (distance x multiplier); if false, the multiplier is cosmetic.
-var score_uses_multiplier := true
+## Highest points bonus reachable (x5 = five points for every point of distance).
+var bonus_max := 5
+## Seconds after a near miss before the bonus starts to fade.
+var bonus_hold_time := 4.0
+## Once fading, the bonus drops one step every this many seconds (down to x1, which is no bonus).
+var bonus_decay_step := 1.5
+## If true, score accrues at (distance x bonus); if false, the bonus is cosmetic.
+var score_uses_bonus := true
 
 # ---------- Near-miss feedback ----------
 ## Sparks in the burst from the wingtip nearest the obstacle (kept small: cheap on phones),
@@ -129,12 +126,13 @@ var streak_speed := 70.0
 var near_miss_flash_time := 0.25
 ## Haptic pulse length in milliseconds (ignored where unsupported).
 var haptic_ms := 25
-## "Close!" popup tiers, indexed by multiplier: 2x = first entry, 3x = second, 4x+ = last.
-## Text, colour (warmer each tier) and font size (px in the 1080-wide base viewport).
-var near_miss_texts: Array[String] = ["Close!", "Closer!", "Whisker Close!"]
+## Near-miss popup tiers, indexed by bonus: x2 = first entry, x3 = second, x4 and up = last. Each text
+## says what happened (first line) and what you earned (second line); %d is the points bonus you now
+## have. Then colour (warmer each tier) and font size (px in the 1080-wide base viewport).
+var near_miss_texts: Array[String] = ["Close call!\nx%d points", "Closer!\nx%d points", "Whisker close!\nx%d points"]
 var near_miss_colors: Array[Color] = [Color(1.0, 0.95, 0.55), Color(1.0, 0.62, 0.2), Color(1.0, 0.28, 0.12)]
 var near_miss_sizes: Array[int] = [64, 84, 108]
-## Trail ribbon colour per multiplier tier (2x, 3x, 4x, 5x+); it appears at 2x and fades at 1x.
+## Trail ribbon colour per bonus tier (2x, 3x, 4x, 5x+); it appears at 2x and fades at 1x.
 var trail_colors: Array[Color] = [Color(0.5, 0.9, 1.0), Color(0.5, 1.0, 0.6), Color(1.0, 0.85, 0.3), Color(1.0, 0.4, 0.7)]
 var trail_width := 0.5
 ## How far behind the plane the trail reaches (units), and how long it takes to fade out.
@@ -201,9 +199,9 @@ var plane_hit_radius := 0.3
 var plane_hit_scale := 0.95
 
 # ---------- Helpers ----------
-## Index into a per-tier array for a multiplier: 2x -> 0, 3x -> 1, ... clamped to the array.
-func tier_index(multiplier: int, count: int) -> int:
-	return clampi(multiplier - 2, 0, count - 1)
+## Index into a per-tier array for a bonus: 2x -> 0, 3x -> 1, ... clamped to the array.
+func tier_index(bonus: int, count: int) -> int:
+	return clampi(bonus - 2, 0, count - 1)
 
 func column_width() -> float:
 	return ortho_size / column_count

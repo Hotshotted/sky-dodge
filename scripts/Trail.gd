@@ -1,7 +1,7 @@
 class_name Trail
 extends MeshInstance3D
-## Ribbon behind the plane. Visible while the multiplier is 2x or more, its colour follows the
-## multiplier tier, and it fades out once the multiplier is back to 1x.
+## Ribbon behind the plane. Visible while the bonus is 2x or more, its colour follows the
+## bonus tier, and it fades out once the bonus is back to 1x.
 ## Points are stored in world space and scroll with the world (+z) like the obstacles.
 
 var _pts: Array[Vector2] = []   # (x, z) of each ribbon point, newest first
@@ -34,15 +34,15 @@ func clear() -> void:
 	_mesh.clear_surfaces()
 
 ## `step` = how far the world scrolled this frame, `origin` = (x, z) where the ribbon starts
-## (the plane's tail), `multiplier` = current score multiplier.
-func advance(step: float, origin: Vector2, multiplier: int, delta: float) -> void:
+## (the plane's tail), `bonus` = current score bonus.
+func advance(step: float, origin: Vector2, bonus: int, delta: float) -> void:
 	for i in _pts.size():
 		_pts[i].y += step
-	var on := multiplier >= 2
+	var on := bonus >= 2
 	if on:
 		if _pts.is_empty() or _pts[0].distance_to(origin) >= 0.15:  # keep the point count bounded
 			_pts.push_front(origin)
-		var target := Tuning.trail_colors[Tuning.tier_index(multiplier, Tuning.trail_colors.size())]
+		var target := Tuning.trail_colors[Tuning.tier_index(bonus, Tuning.trail_colors.size())]
 		_color = target if _alpha <= 0.0 else _color.lerp(target, 1.0 - exp(-8.0 * delta))
 	_alpha = move_toward(_alpha, 1.0 if on else 0.0, delta / maxf(Tuning.trail_fade_time, 0.01))
 	while _pts.size() > 0 and _pts.back().y - origin.y > Tuning.trail_length:

@@ -18,10 +18,10 @@ const REASON_OBSTACLE := "Hit an obstacle"
 const HEADER_FUEL := "OUT OF FUEL"
 const REASON_FUEL := "The tank ran dry"
 
-var score := 0.0        # accumulates distance flown x multiplier
-var multiplier := 1     # raised by near misses, decays back to 1
+var score := 0.0        # accumulates distance flown x bonus
+var bonus := 1     # raised by near misses, decays back to 1
 var fuel := 0.0         # drains steadily; fuel cans refill it; empty ends the run
-var _mult_timer := 0.0  # counts down to the next multiplier decay step
+var _bonus_timer := 0.0  # counts down to the next bonus decay step
 var _warming := false
 static var _haptic_warmed := false  # first-touch haptic warm-up done (once per app session)
 static var _warmed := false  # pre-warm only once per app session
@@ -66,7 +66,7 @@ func _ready() -> void:
 ## behind a splash screen, draw EVERY near-miss effect for real (on screen, in view, nothing hidden
 ## or off-screen) and KEEP drawing until frame times settle (see Tuning.prewarm_*): both spark
 ## emitters, every pooled streak, every pooled obstacle cube and outline (some white), a
-## full-length trail ribbon, every popup tier at every font size and the multiplier punch. (The
+## full-length trail ribbon, every popup tier at every font size and the bonus punch. (The
 ## haptic call can't be warmed at boot: browsers only allow it after a touch, see _input.)
 ## Then hide it all. The game doesn't tick meanwhile. Everything stays alive for the whole app
 ## session (restarts don't reload the scene), so this only ever runs once. Skip with ?noprewarm;
@@ -79,7 +79,7 @@ func _prewarm() -> void:
 	if tune_panel:
 		tune_panel.prewarm_show(true)   # drawn under the splash like everything else
 	if not DebugFlags.off("punch"):
-		hud.set_multiplier(2, true)
+		hud.set_bonus(2, hud.BONUS_PUNCH)
 	var t_start := Time.get_ticks_msec()
 	var t_last := t_start
 	var t_refresh := -100000
@@ -115,7 +115,7 @@ func _prewarm() -> void:
 	fx.clear()
 	trail.clear()
 	spawner.prewarm_hide()
-	hud.set_multiplier(1, false)
+	hud.set_bonus(1)
 	hud.end_prewarm()
 	if tune_panel:
 		tune_panel.prewarm_show(false)
@@ -126,8 +126,8 @@ func _prewarm() -> void:
 ## material and UI node stays alive (and warm) across runs; only the game state is reset.
 func restart() -> void:
 	score = 0.0
-	multiplier = 1
-	_mult_timer = 0.0
+	bonus = 1
+	_bonus_timer = 0.0
 	elapsed = 0.0
 	alive = true
 	spawner.run_time = 0.0
@@ -150,15 +150,15 @@ func _process(delta: float) -> void:
 	player.step(delta)   # 1:1 finger movement this frame (the path from prev_xz to here is swept below)
 	var speed := minf(Tuning.base_speed + Tuning.speed_ramp * elapsed, Tuning.max_speed)
 	var step := speed * delta
-	score += step * (multiplier if Tuning.score_uses_multiplier else 1)
+	score += step * (bonus if Tuning.score_uses_bonus else 1)
 	spawner.plane_z = player.position.z   # clouds fade as they near the plane,
 	spawner.run_time = elapsed            # start late in the run,
 	spawner.scroll_speed = speed          # and come more often the faster it goes
 	spawner.advance(step)
-	hud.set_score(int(score))
+	hud.set_score(int(score), bonus)
 	var plane := Vector2(player.position.x, player.position.z)
-	trail.advance(step, Vector2(plane.x, plane.y + 0.9), 1 if DebugFlags.off("trail") else multiplier, delta)
-	_decay_multiplier(delta)
+	trail.advance(step, Vector2(plane.x, plane.y + 0.9), 1 if DebugFlags.off("trail") else bonus, delta)
+	_decay_bonus(delta)
 	fuel = maxf(fuel - Tuning.fuel_drain * delta, 0.0)
 
 	# Swept collision: the plane can move any distance in one frame (a fast flick), so test the whole
@@ -208,14 +208,14 @@ func _on_pickup(pos: Vector3) -> void:
 	if not DebugFlags.off("haptic"):
 		Input.vibrate_handheld(15)
 
-## Near miss: raise the multiplier and fire every bit of feedback at once. Each effect can be
+## Near miss: raise the bonus and fire every bit of feedback at once. Each effect can be
 ## switched off from the URL (?nofx=sparks,streaks,flash,popup,trail,haptic,punch) to find out
 ## which one causes a hitch.
 func _on_near_miss(ev: Dictionary) -> void:
 	var t0 := Time.get_ticks_usec()
-	multiplier = mini(multiplier + 1, Tuning.multiplier_max)
-	_mult_timer = Tuning.multiplier_hold_time
-	hud.set_multiplier(multiplier, not DebugFlags.off("punch"))
+	bonus = mini(bonus + 1, Tuning.bonus_max)
+	_bonus_timer = Tuning.bonus_hold_time
+	hud.set_bonus(bonus, hud.BONUS_NONE if DebugFlags.off("punch") else hud.BONUS_PUNCH)
 	var side: int = ev["side"]
 	if not DebugFlags.off("sparks"):
 		fx.sparks(player.position + Vector3(side * 1.05, 0.0, 0.1), side)  # wingtip nearest the obstacle
@@ -225,9 +225,9 @@ func _on_near_miss(ev: Dictionary) -> void:
 		spawner.flash_obstacle(ev["outline"])
 	if not DebugFlags.off("popup"):
 		var n := Tuning.near_miss_texts.size()
-		var i := Tuning.tier_index(multiplier, n)
+		var i := Tuning.tier_index(bonus, n)
 		var pos := camera.unproject_position(player.position + Vector3(0, 0, -2.0))
-		hud.popup(Tuning.near_miss_texts[i], Tuning.near_miss_sizes[mini(i, Tuning.near_miss_sizes.size() - 1)],
+		hud.popup(Tuning.near_miss_texts[i] % bonus, Tuning.near_miss_sizes[mini(i, Tuning.near_miss_sizes.size() - 1)],
 				Tuning.near_miss_colors[mini(i, Tuning.near_miss_colors.size() - 1)], pos)
 	if not DebugFlags.off("haptic"):
 		Input.vibrate_handheld(Tuning.haptic_ms)  # no-op where unsupported
@@ -238,15 +238,15 @@ func _on_tuning_changed(property: String) -> void:
 	if property == "obstacle_scale":
 		spawner.refresh_obstacles()   # rows already on screen change size now
 
-## Without fresh near misses the multiplier holds, then drops one step at a time down to 1x.
-func _decay_multiplier(delta: float) -> void:
-	if multiplier <= 1:
+## Without fresh near misses the bonus holds, then drops one step at a time down to 1x.
+func _decay_bonus(delta: float) -> void:
+	if bonus <= 1:
 		return
-	_mult_timer -= delta
-	if _mult_timer <= 0.0:
-		multiplier -= 1
-		_mult_timer = Tuning.multiplier_decay_step
-		hud.set_multiplier(multiplier, false)
+	_bonus_timer -= delta
+	if _bonus_timer <= 0.0:
+		bonus -= 1
+		_bonus_timer = Tuning.bonus_decay_step
+		hud.set_bonus(bonus, hud.BONUS_SHRINK)   # show it shrinking: the bonus fades if you play safe
 
 ## Camera tilted `camera_tilt_deg` away from straight down (so front faces show), placed so the
 ## screen centre always looks at world z = 0. Screen-up = world -Z.

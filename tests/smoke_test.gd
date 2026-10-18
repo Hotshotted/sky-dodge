@@ -14,8 +14,9 @@ extends SceneTree
 ##   2g. controls: the plane moves 1:1 with the finger (no momentum), clamps to the play area, banks from
 ##       its real velocity, snap and visual smoothing work; a fast flick through a cube still crashes and
 ##       through a can still collects it (swept collision)
-##   2h. clouds: none before cloud_start_time, more of them with speed, never cover every open column of a
-##       row (thousands of generated rows), fade in late, sit above obstacles/cans but below the plane,
+##   2h. clouds (free-floating bundles): none before cloud_start_time, more of them with speed, varied
+##       sizes, off the column grid, drifting; never cover every open column's centre line (thousands of
+##       generated rows, checked every step), fade in late, sit above obstacles/cans but below the plane,
 ##       hide cans more often, ?nofx=clouds disables them, restart clears them, nothing new is allocated
 ##   3. ?debug flags parse, and switching an effect off really skips it
 ##   4. plane collision capsules: span matches the wings, rounded corners graze past a cube corner
@@ -144,9 +145,9 @@ func _initialize() -> void:
 		cans.append(r.can)
 	check(count_visible(cans) == main.spawner.POOL_ROWS, "every pooled fuel can (%d) is drawn during the pre-warm" % cans.size())
 	var blobs: Array = []
-	for r in main.spawner._all_rows:
-		blobs.append_array(r.cloud_blobs)
-	check(blobs.size() == main.spawner.POOL_ROWS * main.spawner.BLOBS_PER_ROW and count_visible(blobs) == blobs.size(),
+	for cl in main.spawner._all_clouds:
+		blobs.append_array(cl.puffs)
+	check(blobs.size() == main.spawner.CLOUD_POOL * main.spawner.PUFFS_PER_CLOUD and count_visible(blobs) == blobs.size(),
 			"every pooled cloud puff (%d) is drawn during the pre-warm" % blobs.size())
 	check(count_visible(main.fx._pickup_emitters) == main.fx.PICKUP_EMITTERS, "both fuel-pickup emitters are drawing during the pre-warm")
 	var waited := 0.0
@@ -158,7 +159,7 @@ func _initialize() -> void:
 	check(boot_s >= tuning.prewarm_min_seconds, "pre-warm ran at least prewarm_min_seconds (%.1f s >= %.1f s)" % [boot_s, tuning.prewarm_min_seconds])
 	await process_frame
 	check(not is_instance_valid(main.hud._splash) or main.hud._splash.is_queued_for_deletion(), "splash removed afterwards")
-	check(main.hud._mult.text == "x1" and not main.hud._over.visible, "HUD back to normal (x1, no game-over text)")
+	check(main.hud._bonus_label.text == "" and not main.hud._over.visible, "HUD back to normal (x1, no game-over text)")
 	var in_play := 0   # cubes legitimately visible: the live game has started spawning its first row(s)
 	for r in main.spawner._rows:
 		in_play += r.xs.size()
@@ -200,11 +201,11 @@ func _initialize() -> void:
 	var first_instance := main
 	for run in [1, 2, 3]:
 		print("  -- run %d --" % run)
-		check(main.score < 100.0 and main.multiplier == 1 and main.alive and main.fuel > tuning.fuel_start - 5.0,
-				"run %d starts fresh (score %d, x%d, fuel %.0f)" % [run, int(main.score), main.multiplier, main.fuel])
+		check(main.score < 100.0 and main.bonus == 1 and main.alive and main.fuel > tuning.fuel_start - 5.0,
+				"run %d starts fresh (score %d, x%d, fuel %.0f)" % [run, int(main.score), main.bonus, main.fuel])
 		check(not main.hud._over.visible, "game-over UI hidden while playing")
 		await do_near_misses(main, 3)
-		check(main.multiplier == 4 and main.hud._mult.text == "x4", "three near misses give x4 (%s)" % main.hud._mult.text)
+		check(main.bonus == 4 and main.hud._bonus_label.text == "x4 POINTS", "three near misses give x4 (%s)" % main.hud._bonus_label.text)
 		check(count_visible(main.hud._pop_labels) >= 1 and count_visible(main.fx._emitters) >= 1, "popup and sparks are showing")
 		# fuel: drains; a can refills it with a pooled pop
 		var f0: float = main.fuel
@@ -249,10 +250,10 @@ func _initialize() -> void:
 		tap()
 		await real_wait(0.3)
 		check(main == first_instance and current_scene == first_instance, "tap restarted the run IN PLACE (same scene instance)")
-		check(main.alive and main.score < 100.0 and main.multiplier == 1, "restart reset score and multiplier")
+		check(main.alive and main.score < 100.0 and main.bonus == 1, "restart reset score and bonus")
 		check(main.fuel > tuning.fuel_start - tuning.fuel_drain, "restart refilled the tank (%.1f / %.0f)" % [main.fuel, tuning.fuel_start])
 		check(absf(main.hud._fuel_frac - main.fuel / tuning.fuel_start) < 0.05, "fuel gauge shows the full tank again")
-		check(not main.hud._over.visible and main.hud._mult.text == "x1", "game-over UI hidden, multiplier label reset")
+		check(not main.hud._over.visible and main.hud._bonus_label.text == "", "game-over UI hidden, bonus label reset")
 		check(count_visible(main.hud._pop_labels) == 0 and main.trail._pts.is_empty(), "old popups and trail cleared")
 		check(main.player.active and absf(main.player.position.x) < 0.01 and main.player.velocity == Vector2.ZERO, "plane is back at the start")
 		var stale_rows := 0   # anything near the plane would be left over from the previous run
@@ -270,7 +271,7 @@ func _initialize() -> void:
 		defaults[e[0]] = tuning.get(e[0])
 	for t in panel.TOGGLES:
 		defaults[t[0]] = tuning.get(t[0])
-	check(panel.ENTRIES.size() == 16 and panel._sliders.size() == 16 and panel._toggles.size() == 1, "16 sliders and 1 on/off switch for the tuned values")
+	check(panel.ENTRIES.size() == 17 and panel._sliders.size() == 17 and panel._toggles.size() == 1, "17 sliders and 1 on/off switch for the tuned values")
 	var all_match := true
 	for e in panel.ENTRIES:
 		if not is_equal_approx(panel._sliders[e[0]].value, tuning.get(e[0])):
@@ -596,125 +597,168 @@ func _initialize() -> void:
 	tuning.blocked_columns_max = 3
 	var ncol: int = tuning.column_count
 	sp.reset()
+	var step := 1.5
+	sp.plane_z = 4.0
 	# (a) nothing before cloud_start_time
 	tuning.cloud_start_time = 25.0
-	tuning.cloud_frequency = 0.9
+	tuning.cloud_frequency = 1.0
 	sp.run_time = 5.0
 	sp.scroll_speed = 12.0
 	var early := 0
-	for i in 600:
-		sp._spawn_row(-30.0)
-		var er = sp._rows[-1]
-		early += int(er.cloud_on)
-		sp._release_row(er)
-	check(early == 0, "no clouds before cloud_start_time (%d of 600 rows)" % early)
-	# (b) the frequency grows with speed
-	tuning.cloud_frequency = 0.10
+	for i in 400:
+		sp.advance(step)
+		early += sp._clouds.size()
+	check(early == 0, "no clouds before cloud_start_time (%d bundle-steps in 400 steps)" % early)
+	# (b) the frequency grows with speed (average bundles alive over the same distance)
+	tuning.cloud_frequency = 0.3
 	sp.run_time = 30.0
 	var at_start_speed: float = tuning.base_speed + tuning.speed_ramp * tuning.cloud_start_time
-	var frac := []
+	var alive := []
 	for spd in [at_start_speed, tuning.max_speed]:
 		sp.scroll_speed = spd
-		sp._cloud_rows_left = 0
-		var with_cloud := 0
-		for i in 6000:
-			sp._spawn_row(-30.0)
-			var br = sp._rows[-1]
-			with_cloud += int(br.cloud_on)
-			sp._release_row(br)
-		frac.append(float(with_cloud) / 6000.0)
-	check(frac[0] > 0.05 and frac[1] > frac[0] * 1.4, "clouds come more often at speed: %.0f%% of rows at start speed, %.0f%% at top speed" % [frac[0] * 100.0, frac[1] * 100.0])
-	# (c) fairness over thousands of rows, with clouds as frequent as possible
-	tuning.cloud_frequency = 0.6
+		sp.reset()
+		var total := 0
+		for i in 3000:
+			sp.advance(step)
+			total += sp._clouds.size()
+		alive.append(float(total) / 3000.0)
+	check(alive[0] > 0.5 and alive[1] > alive[0] * 1.4, "clouds come more often at speed: %.1f bundles alive at start speed, %.1f at top speed" % [alive[0], alive[1]])
+	# (c) fairness over thousands of rows, with clouds as frequent as possible, checked at EVERY step:
+	# every row ahead of the plane keeps an open column whose centre line no visible puff covers now
+	# or while it drifts to the plane.
+	tuning.cloud_frequency = 1.5
 	sp.scroll_speed = tuning.max_speed
 	sp.run_time = 100.0
 	tuning.fuel_can_chance = 0.18
 	tuning.fuel_can_under_cloud_chance = 0.45
 	tuning.fuel_risk_bias = 1.0
-	var rows_n := 8000
+	sp.reset()
+	sp.puffs_removed = 0
+	var rows_n := 3000
+	var seen_rows := 0
 	var cloud_rows := 0
-	var hid_obstacle := 0
-	var hid_open := 0
+	var covered_gaps := 0
+	var covered_cubes := 0
 	var unfair := 0
-	var bad_blobs := 0
-	var widest := 0
 	var eligible := 0
 	var can_under := 0
 	var can_on_safe := 0
-	sp._cloud_rows_left = 0
-	for i in rows_n:
-		sp._spawn_row(-30.0)
+	var last_row = null
+	var rmin := INF
+	var rmax := 0.0
+	var off_grid := 0
+	var bundles := 0
+	var sizes := {}
+	var max_alive := 0
+	var st := {"bundles": 0, "rmin": INF, "rmax": 0.0, "off": 0}
+	var on_spawn := func(cl):
+		st["bundles"] += 1
+		var used := 0
+		for k in cl.puffs.size():
+			used += int(cl.on[k])
+			if cl.on[k]:
+				st["rmin"] = minf(st["rmin"], cl.rad[k])
+				st["rmax"] = maxf(st["rmax"], cl.rad[k])
+		sizes[clampi(used, 1, 7)] = true
+		var nearest := INF
+		for c in ncol:
+			nearest = minf(nearest, absf(cl.position.x - tuning.column_center(c)))
+		st["off"] += int(nearest > 0.3)
+	sp.cloud_spawned.connect(on_spawn)
+	while seen_rows < rows_n:
+		sp.advance(step)
+		max_alive = maxi(max_alive, sp._clouds.size())
+		for r in sp._rows:
+			if r.open.is_empty() or r.position.z > sp.plane_z:
+				continue
+			if sp._clear_column(r) < 0:
+				unfair += 1
 		var fr = sp._rows[-1]
-		var safe_c: int = sp._safe_col
-		var open_cols: Array[bool] = []
-		for c in ncol:
-			open_cols.append(not fr.xs.any(func(x): return absf(x - tuning.column_center(c)) < 0.01))
-		var any_open_uncovered := false
-		var covered_n := 0
-		var covered_open_not_safe := false
-		for c in ncol:
-			if open_cols[c] and not fr.cloud_cov[c]:
-				any_open_uncovered = true
-			if fr.cloud_cov[c]:
-				covered_n += 1
-				if open_cols[c]:
-					hid_open += 1
+		if fr != last_row:
+			last_row = fr
+			seen_rows += 1
+			var safe_c: int = sp._safe_col
+			var any_cov := false
+			var cov_open_not_safe := false
+			for c in ncol:
+				if fr.cloud_cov[c]:
+					any_cov = true
+					covered_gaps += 1
 					if c != safe_c:
-						covered_open_not_safe = true
-				else:
-					hid_obstacle += 1
-		if not any_open_uncovered:
-			unfair += 1
-		if fr.cloud_on:
-			cloud_rows += 1
-			widest = maxi(widest, covered_n)
-			var visible_blobs := 0
-			for b in fr.cloud_blobs:
-				visible_blobs += int(b.visible)
-			if visible_blobs != covered_n * sp.BLOBS_PER_COLUMN or covered_n < 1 or covered_n > 3:
-				bad_blobs += 1
-			if covered_open_not_safe:
+						cov_open_not_safe = true
+				elif fr.open[c] == false and sp._covered(fr.position.z, tuning.column_center(c)):
+					covered_cubes += 1
+			cloud_rows += int(any_cov)
+			if cov_open_not_safe:
 				eligible += 1
 				if fr.has_can:
 					for c in ncol:
-						if fr.cloud_cov[c] and open_cols[c] and absf(fr.can_x - tuning.column_center(c)) < 0.01:
+						if fr.cloud_cov[c] and absf(fr.can_x - tuning.column_center(c)) < 0.01:
 							can_under += 1
-		elif covered_n > 0:
-			bad_blobs += 1
-		if fr.has_can and absf(fr.can_x - tuning.column_center(safe_c)) < 0.01:
-			can_on_safe += 1
-		sp._release_row(fr)
-	check(unfair == 0, "FAIRNESS: in %d generated rows (%d with cloud) every row keeps at least one open column uncovered" % [rows_n, cloud_rows])
-	check(cloud_rows > rows_n * 0.3 and hid_obstacle > 500 and hid_open > 500,
-			"(not vacuous) clouds covered %d obstacles and %d open gaps across %d cloud rows" % [hid_obstacle, hid_open, cloud_rows])
-	check(bad_blobs == 0 and widest <= 3, "every cloud row shows exactly 3 puffs per covered column, 1-3 columns (widest %d)" % widest)
-	check(eligible > 500 and float(can_under) / eligible > 0.4, "cans are placed under clouds %.0f%% of the time they can be (chance %.2f) (%d of %d rows)" % [100.0 * can_under / maxf(eligible, 1.0), tuning.fuel_can_under_cloud_chance, can_under, eligible])
+			if fr.has_can and absf(fr.can_x - tuning.column_center(safe_c)) < 0.01:
+				can_on_safe += 1
+	sp.cloud_spawned.disconnect(on_spawn)
+	bundles = st["bundles"]
+	rmin = st["rmin"]
+	rmax = st["rmax"]
+	off_grid = st["off"]
+	check(unfair == 0, "FAIRNESS: over %d generated rows (%d with open gaps under cloud) no row ever lost every open column's centre line to cloud" % [seen_rows, cloud_rows])
+	check(covered_gaps > 500 and covered_cubes > 300 and sp.puffs_removed > 50,
+			"(not vacuous) clouds covered %d open gaps and %d cubes, and the rule had to remove %d puffs" % [covered_gaps, covered_cubes, sp.puffs_removed])
+	check(bundles > 300 and rmin < 1.2 and rmax > 2.0 and sizes.size() >= 5,
+			"bundles vary: %d of them, puff radius %.1f to %.1f, %d different puff counts" % [bundles, rmin, rmax, sizes.size()])
+	check(float(off_grid) / bundles > 0.5, "they are not snapped to the columns (%.0f%% sit more than 0.3 from a column centre)" % (100.0 * off_grid / bundles))
+	check(max_alive <= sp.CLOUD_POOL, "never more bundles than the pool (%d <= %d)" % [max_alive, sp.CLOUD_POOL])
+	check(eligible > 300 and float(can_under) / eligible > 0.35, "cans are placed under clouds %.0f%% of the time they can be (chance %.2f) (%d of %d rows)" % [100.0 * can_under / maxf(eligible, 1.0), tuning.fuel_can_under_cloud_chance, can_under, eligible])
 	check(can_on_safe == 0, "...and still never on the safe path")
+	# (c2) coverage at the normal tuning, for the record
+	tuning.cloud_frequency = cl_saved["freq"]
+	var cov_report := []
+	for spd in [at_start_speed, tuning.max_speed]:
+		sp.scroll_speed = spd
+		sp.reset()
+		var any_rows := 0
+		var n_rows := 0
+		var lr = null
+		while n_rows < 1500:
+			sp.advance(step)
+			var cr2 = sp._rows[-1]
+			if cr2 != lr:
+				lr = cr2
+				n_rows += 1
+				any_rows += int(cr2.cloud_cov.has(true))
+		cov_report.append(100.0 * any_rows / n_rows)
+	print("   (coverage at default tuning: %.0f%% of rows have a gap under cloud at start speed, %.0f%% at top speed)" % [cov_report[0], cov_report[1]])
+	# (c3) drift: a bundle moves with the scroll (z) and sideways by slope per unit scrolled
+	sp.reset()
+	sp._spawn_cloud(-10.0)
+	var dc = sp._clouds[-1]
+	dc.slope = 0.1
+	var x_before: float = dc.position.x
+	var z_before: float = dc.position.z
+	sp._advance_clouds(10.0)
+	check(is_equal_approx(dc.position.z, z_before + 10.0) and is_equal_approx(dc.position.x, x_before + 1.0), "a bundle scrolls with the world and drifts sideways (slope 0.1 x 10 units = 1.0)")
 	# (d) late reveal
-	tuning.cloud_frequency = 0.9
+	sp.reset()
 	sp.plane_z = 3.0
-	var cr = null
-	while cr == null or not cr.cloud_on:
-		if cr != null:
-			sp._release_row(cr)
-		sp._spawn_row(-30.0)
-		cr = sp._rows[-1]
+	sp._spawn_cloud(-10.0)
+	var cr = sp._clouds[-1]
 	var reveal: float = tuning.cloud_reveal_distance
 	var alphas := []
 	for z in [sp.plane_z - reveal - 10.0, sp.plane_z - reveal, sp.plane_z - reveal * 0.5, sp.plane_z, sp.plane_z + 8.0]:
-		cr.position.z = z
+		cr.position.z = z - cr.oz[0]
 		sp._update_cloud_alpha(cr)
-		alphas.append(cr.cloud_mat.albedo_color.a)
+		alphas.append(cr.mats[0].albedo_color.a)
 	check(is_equal_approx(alphas[0], tuning.cloud_max_opacity) and is_equal_approx(alphas[1], tuning.cloud_max_opacity),
 			"far from the plane a cloud is nearly opaque (%.2f)" % alphas[0])
 	check(alphas[2] < alphas[1] and alphas[2] > alphas[3], "it fades as it approaches (%.2f at half the reveal distance)" % alphas[2])
 	check(is_equal_approx(alphas[3], tuning.cloud_min_opacity) and is_equal_approx(alphas[4], tuning.cloud_min_opacity),
 			"at the plane (and after passing it) it is at cloud_min_opacity (%.2f)" % alphas[3])
-	sp._release_row(cr)
+	sp.reset()
 	# (e) vertical layering: above obstacles and cans, below the plane
 	var puff_aabb: AABB = sp._cloud_mesh.get_aabb()
 	var cloud_bottom: float = sp.CLOUD_Y + puff_aabb.position.y
-	var cloud_top: float = sp.CLOUD_Y + puff_aabb.end.y
+	var cloud_top: float = sp.CLOUD_Y + 0.03 + puff_aabb.end.y   # (+0.03: each puff sits a hair higher or lower)
 	var obstacle_top: float = tuning.column_width() * tuning.obstacle_scale * 0.5 + tuning.outline_thickness
 	var can_top: float = 0.25 + 0.12 + tuning.fuel_can_size * 0.5
 	var plane_bottom := INF
@@ -725,25 +769,26 @@ func _initialize() -> void:
 	check(cloud_top < plane_bottom, "...and below the plane (cloud top %.2f < plane bottom %.2f), so the plane always draws on top" % [cloud_top, plane_bottom])
 	# (f) ?nofx=clouds
 	DebugFlags.parse(["nofx=clouds"])
+	sp.reset()
 	var none := 0
-	sp._cloud_rows_left = 0
 	for i in 600:
-		sp._spawn_row(-30.0)
-		var nr = sp._rows[-1]
-		none += int(nr.cloud_on)
-		sp._release_row(nr)
+		sp.advance(step)
+		none += sp._clouds.size()
 	DebugFlags.parse([])
 	check(none == 0, "?nofx=clouds: no clouds at all")
 	# (g) restart clears them and nothing new was allocated by any of that
-	sp._cloud_rows_left = 0
-	for i in 5:
-		sp._spawn_row(-30.0 + i)
+	sp.scroll_speed = tuning.max_speed
+	tuning.cloud_frequency = 1.5
+	for i in 200:
+		sp.advance(step)
+	check(sp._clouds.size() > 0, "clouds exist before the restart")
 	main.restart()
 	var shown := 0
-	for r in sp._all_rows:
-		for b in r.cloud_blobs:
-			shown += int(b.visible)
-	check(shown == 0, "an in-place restart clears every cloud")
+	for cl in sp._all_clouds:
+		shown += int(cl.visible)
+		for pf in cl.puffs:
+			shown += int(pf.visible)
+	check(shown == 0 and sp._clouds.is_empty(), "an in-place restart clears every cloud")
 	tuning.cloud_start_time = cl_saved["start"]
 	tuning.cloud_frequency = cl_saved["freq"]
 	tuning.fuel_can_chance = cl_saved["chance"]
@@ -767,13 +812,13 @@ func _initialize() -> void:
 	DebugFlags.parse(["nofx=Sparks%2CPopup"])   # URL-encoded comma, upper case
 	check(DebugFlags.off("sparks") and DebugFlags.off("popup") and not DebugFlags.off("flash"), "names are case-insensitive and URL-decoded")
 	DebugFlags.parse(["nofx=sparks,streaks,popup,flash,trail,haptic"])
-	main.multiplier = 1
+	main.bonus = 1
 	for e in main.fx._emitters:
 		e.emitting = false
 		e.visible = false
 	var row = sp._rows_make_for_test(-5.0, [1.0])
 	main._on_near_miss({"side": 1, "node": row.obs[0], "outline": row.outlines[0]})
-	check(main.multiplier == 2, "multiplier still rises with every effect off")
+	check(main.bonus == 2, "bonus still rises with every effect off")
 	check(count_visible(main.fx._emitters) == 0 and count_visible(main.fx._streak_nodes) == 0
 			and count_visible(main.hud._pop_labels) == 0 and sp._flashes.is_empty(),
 			"no spark / streak / popup / flash with ?nofx")

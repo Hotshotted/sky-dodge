@@ -3,8 +3,17 @@ extends CanvasLayer
 
 var _score: Label
 var _over: Label
-var _mult: Label
-var _punch_start_ms := -10000      # when the multiplier label last "punched"
+var _bonus_label: Label
+const BONUS_NONE := 0     # set_bonus() animations: just show the new value...
+const BONUS_PUNCH := 1    # ...pop up bigger and settle (the bonus went UP)...
+const BONUS_SHRINK := 2   # ...or shrink and settle (the bonus faded one step)
+var _bonus_anim := BONUS_NONE
+var _bonus_anim_ms := -10000         # when the bonus label's animation started
+var _bonus_fading_out := false       # the bonus is back to x1: shrink the old label away, then clear it
+var _bonus_shown := 1                # the bonus the label currently shows
+var _score_bonus := 1                # drives the score label's tint, size and ticking
+var _last_points := 0
+var _score_tick_ms := -10000         # when the score number last ticked up while a bonus was active
 const POPUP_POOL := 4            # labels reused for "Close!" popups
 var _pop_labels: Array[Label] = []
 var _pop_born := PackedInt64Array()   # real ms when started; 0 = idle
@@ -30,16 +39,18 @@ var _nm_frames_left := 0       # frames still being watched after a near miss
 var _nm_worst := 0.0           # slowest of those frames (ms)
 var _nm_log: Array[String] = []  # last few "#n code X ms, next frames worst Y ms" lines
 const PUNCH_TIME := 0.28
+const SHRINK_TIME := 0.6
+const TICK_TIME := 0.12
 const POPUP_TIME := 0.9
 
 func _ready() -> void:
 	_score = _make_label(72)
 	_score.set_anchors_and_offsets_preset(Control.PRESET_TOP_WIDE)
 	_score.offset_top = 80
-	_mult = _make_label(64)
-	_mult.set_anchors_and_offsets_preset(Control.PRESET_TOP_WIDE)
-	_mult.offset_top = 170
-	set_multiplier(1, false)
+	_bonus_label = _make_label(64)
+	_bonus_label.set_anchors_and_offsets_preset(Control.PRESET_TOP_WIDE)
+	_bonus_label.offset_top = 170
+	set_bonus(1, false)
 	_build_fuel_gauge()
 	for i in POPUP_POOL:
 		var l := _make_label(64)
@@ -53,7 +64,7 @@ func _ready() -> void:
 	_over.vertical_alignment = VERTICAL_ALIGNMENT_CENTER
 	_over.visible = false
 
-## Fuel gauge under the multiplier: dark trough + a fill that shrinks, green -> amber -> red.
+## Fuel gauge under the bonus: dark trough + a fill that shrinks, green -> amber -> red.
 func _build_fuel_gauge() -> void:
 	_fuel_bg = ColorRect.new()
 	_fuel_bg.color = Color(0, 0, 0, 0.45)
@@ -107,19 +118,36 @@ func _update_fuel_look(now: int) -> void:
 	_fuel_fill.offset_top = FUEL_BAR_TOP - swell
 	_fuel_fill.offset_bottom = FUEL_BAR_TOP + FUEL_BAR_H + swell
 
-func set_score(points: int) -> void:
+## The score. While a points bonus is active it takes the bonus tier's colour, swells with the bonus,
+## and gives a little pulse every time the number ticks up, so the faster scoring is easy to see.
+func set_score(points: int, bonus: int = 1) -> void:
+	if bonus >= 2 and points != _last_points:
+		_score_tick_ms = Time.get_ticks_msec()
+	_last_points = points
+	if bonus != _score_bonus:
+		_score_bonus = bonus
+		var c := Color.WHITE
+		if bonus >= 2:
+			c = Tuning.near_miss_colors[Tuning.tier_index(bonus, Tuning.near_miss_colors.size())]
+		_score.add_theme_color_override("font_color", c)
 	_score.text = "%d" % points
 
-## Show "x2" etc. in the tier colour; `punch` = pop the label bigger and settle back.
-func set_multiplier(m: int, punch: bool) -> void:
-	_mult.text = "x%d" % m
-	var c := Color(1, 1, 1, 0.6)
+## The points bonus under the score: "x2 POINTS" etc. in the tier colour, empty at x1. `anim` says how
+## it changed: BONUS_PUNCH = went up (pops bigger), BONUS_SHRINK = faded a step (shrinks, then settles;
+## back to x1 it shrinks away), BONUS_NONE = no animation.
+func set_bonus(m: int, anim: int = BONUS_NONE) -> void:
+	var old := _bonus_shown
+	_bonus_shown = m
+	_bonus_fading_out = false
 	if m >= 2:
-		c = Tuning.near_miss_colors[Tuning.tier_index(m, Tuning.near_miss_colors.size())]
-	_mult.add_theme_color_override("font_color", c)
-	_mult.pivot_offset = Vector2(_mult.size.x * 0.5, 32.0)
-	if punch:
-		_punch_start_ms = Time.get_ticks_msec()
+		_bonus_label.text = "x%d POINTS" % m
+		_bonus_label.add_theme_color_override("font_color", Tuning.near_miss_colors[Tuning.tier_index(m, Tuning.near_miss_colors.size())])
+	elif anim == BONUS_SHRINK and old >= 2:
+		_bonus_fading_out = true   # keep the old text on screen while it shrinks away (see _process)
+	else:
+		_bonus_label.text = ""
+	_bonus_anim = anim
+	_bonus_anim_ms = Time.get_ticks_msec()
 
 ## Floating text ("Close!") that pops in at `pos` (screen px), rises and fades. Reuses a pooled
 ## label; real-time animated.
@@ -141,13 +169,42 @@ func popup(text: String, font_size: int, color: Color, pos: Vector2) -> void:
 	_pop_base_y[i] = l.position.y
 	_pop_born[i] = Time.get_ticks_msec()
 
+## Animate the bonus label (punch up / shrink on a fade) and the score label (swell + tick).
+func _update_bonus_look(now: int) -> void:
+	var t := (now - _bonus_anim_ms) / 1000.0
+	var s := 1.0
+	var alpha := 1.0
+	_bonus_label.pivot_offset = Vector2(_bonus_label.size.x * 0.5, 32.0)
+	if _bonus_anim == BONUS_PUNCH:
+		var pt := clampf(t / PUNCH_TIME, 0.0, 1.0)
+		s = lerpf(1.6, 1.0, 1.0 - pow(1.0 - pt, 3.0))
+	elif _bonus_anim == BONUS_SHRINK:
+		var st := clampf(t / SHRINK_TIME, 0.0, 1.0)
+		if _bonus_fading_out:   # back to x1: shrink the old label right away, fading as it goes
+			s = lerpf(1.0, 0.15, st)
+			alpha = 1.0 - st
+			if st >= 1.0:
+				_bonus_label.text = ""
+				_bonus_fading_out = false
+				_bonus_anim = BONUS_NONE
+		else:                   # a step down: from the old, bigger size to smaller than normal, then settle
+			s = lerpf(1.35, 0.72, 1.0 - pow(1.0 - minf(st / 0.5, 1.0), 2.0)) if st < 0.5 else lerpf(0.72, 1.0, (st - 0.5) / 0.5)
+			alpha = 0.55 + 0.45 * st
+	_bonus_label.scale = Vector2.ONE * s
+	_bonus_label.modulate.a = alpha
+	# Score: swells with the bonus and pulses on each tick while a bonus is active.
+	_score.pivot_offset = _score.size * 0.5
+	var swell := 1.0
+	if _score_bonus >= 2:
+		var pulse := clampf(1.0 - (now - _score_tick_ms) / 1000.0 / TICK_TIME, 0.0, 1.0)
+		swell = 1.0 + 0.06 * (_score_bonus - 1) + 0.10 * pulse
+	_score.scale = Vector2.ONE * swell
+
 func _process(delta: float) -> void:
 	_update_perf(delta)
 	var now := Time.get_ticks_msec()
 	_update_fuel_look(now)
-	# Multiplier punch: 1.6x -> 1x with ease-out.
-	var pt := clampf((now - _punch_start_ms) / 1000.0 / PUNCH_TIME, 0.0, 1.0)
-	_mult.scale = Vector2.ONE * lerpf(1.6, 1.0, 1.0 - pow(1.0 - pt, 3.0))
+	_update_bonus_look(now)
 	# Popups.
 	for i in POPUP_POOL:
 		if _pop_born[i] == 0:
@@ -243,7 +300,7 @@ func begin_prewarm(with_popups: bool) -> void:
 		# Also draw each tier text at each size, so no (text, size) pair is first seen mid-game.
 		for t in Tuning.near_miss_texts.size():
 			var l := _make_label(Tuning.near_miss_sizes[mini(t, Tuning.near_miss_sizes.size() - 1)])
-			l.text = Tuning.near_miss_texts[t]
+			l.text = Tuning.near_miss_texts[t] % (t + 2) + "\n0123456789"   # (digits too: every bonus value shows up as popup text)
 			l.position = Vector2(20.0, 120.0 + 90.0 * t)
 			l.set_meta("prewarm", true)
 	# Both end screens' glyphs, so neither is first drawn when a run ends.
@@ -274,7 +331,7 @@ func prewarm_popups() -> void:
 	var vp := get_viewport().get_visible_rect().size
 	for i in POPUP_POOL:
 		var t := i % Tuning.near_miss_texts.size()
-		popup(Tuning.near_miss_texts[t], Tuning.near_miss_sizes[mini(t, Tuning.near_miss_sizes.size() - 1)],
+		popup(Tuning.near_miss_texts[t] % (t + 2), Tuning.near_miss_sizes[mini(t, Tuning.near_miss_sizes.size() - 1)],
 				Tuning.near_miss_colors[mini(t, Tuning.near_miss_colors.size() - 1)], Vector2(vp.x * 0.5, vp.y * (0.25 + 0.1 * i)))
 
 ## Back to a fresh run (restart in place): hide the crash screen and popups, zero the score.
@@ -287,8 +344,10 @@ func reset_for_run() -> void:
 	_nm_frames_left = 0
 	_fuel_pulse_ms = -10000
 	set_fuel(1.0)
+	_score_bonus = 1
+	_score.add_theme_color_override("font_color", Color.WHITE)
 	set_score(0)
-	set_multiplier(1, false)
+	set_bonus(1)
 
 func end_prewarm() -> void:
 	for i in POPUP_POOL:

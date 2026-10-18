@@ -14,9 +14,10 @@ const POOL_ROWS := 12     # rows created once at startup and reused forever (abo
 ## the plane drawn on top and fully visible.
 const CLOUD_Y := 0.78
 const CLOUD_HEIGHT := 0.2           # puff top = 0.98
-const CLOUD_COLUMNS := 3            # most columns one row's cloud can cover
-const BLOBS_PER_COLUMN := 3         # puffs along the row's length for each covered column
-const BLOBS_PER_ROW := CLOUD_COLUMNS * BLOBS_PER_COLUMN
+const CLOUD_POOL := 12              # cloud bundles created once at startup (about 6 are alive at a time)
+const PUFFS_PER_CLOUD := 7          # most puffs one bundle holds
+const PUFF_EDGE := 1.07             # the puff's lumpy outline reaches this far past its scale
+const CLOUD_PATH_HALF := 1.0        # half the depth (z) of a row's path that the fairness check protects
 
 ## One row of obstacles: a cube (with its own outline material) per column, created once and
 ## reused, plus the bookkeeping for near-miss detection.
@@ -28,10 +29,8 @@ class Row extends Node3D:
 	var can_outline: ShaderMaterial
 	var has_can := false
 	var can_x := 0.0
-	var cloud_blobs: Array[MeshInstance3D] = []   # pooled cloud puffs for this row (hidden unless cloud_on)
-	var cloud_mat: StandardMaterial3D             # shared by the row's puffs: its alpha is the reveal fade
-	var cloud_on := false                         # this row has cloud over some columns
-	var cloud_cov: Array[bool] = []               # per column: covered by cloud
+	var open: Array[bool] = []            # per column: open (no cube); the fairness check reads this
+	var cloud_cov: Array[bool] = []       # per column: cloud will cover that column's centre line (for can placement)
 	var xs: Array[float] = []             # x of each blocked column this time round
 	var obs: Array[MeshInstance3D] = []   # the cubes in use (same order as xs)
 	var outlines: Array[ShaderMaterial] = []  # their outline materials (same order)
@@ -42,7 +41,7 @@ class Row extends Node3D:
 
 	func clear_state() -> void:
 		has_can = false
-		cloud_on = false
+		open.clear()
 		for i in cloud_cov.size():
 			cloud_cov[i] = false
 		xs.clear()
@@ -52,6 +51,18 @@ class Row extends Node3D:
 		passed = false
 		min_clear = INF
 		min_idx = -1
+
+## A free-floating cloud bundle: a few puffs around a centre, created once and reused. It lives in world
+## space (scrolls with the rows) and drifts sideways by `slope` units per unit of scroll.
+class Cloud extends Node3D:
+	var puffs: Array[MeshInstance3D] = []
+	var mats: Array[StandardMaterial3D] = []   # one per puff: its alpha is the reveal fade
+	var ox: Array[float] = []                  # puff offsets from the bundle centre (x, z) and radius
+	var oz: Array[float] = []
+	var rad: Array[float] = []
+	var on: Array[bool] = []                   # puff in use (and not removed by the fairness rule)
+	var slope := 0.0
+	var in_use := false
 
 var _rows: Array[Row] = []       # rows currently in play, nearest the top of the screen last
 var _all_rows: Array[Row] = []   # every row ever created (the pool)
@@ -67,9 +78,11 @@ var plane_z := 0.0                 # set by Main each frame: where the plane is 
 var run_time := 0.0                # set by Main each frame: seconds into the run (clouds start late)
 var scroll_speed := 0.0            # set by Main each frame: world speed (cloud frequency grows with it)
 var _cloud_mesh := ArrayMesh.new() # the shared low-poly puff
-var _cloud_c0 := 0                 # the bank in progress: its first and last column...
-var _cloud_c1 := 0
-var _cloud_rows_left := 0          # ...and how many more rows it covers
+var _clouds: Array[Cloud] = []       # bundles in play
+var _all_clouds: Array[Cloud] = []   # every bundle ever created (the pool)
+var _free_clouds: Array[Cloud] = []
+var puffs_removed := 0              # puffs removed by the fairness rule (the tests count them)
+signal cloud_spawned(cloud)         # for the tests
 var _last_row_z := 0.0
 var _obstacle_mesh := BoxMesh.new()  # unit cube, scaled per obstacle
 var _obstacle_mat := StandardMaterial3D.new()
@@ -102,6 +115,8 @@ func _ready() -> void:
 	_stripe_mesh.material = stripe_mat
 	for i in POOL_ROWS:  # everything is created now, so nothing is allocated while playing
 		_make_row()
+	for i in CLOUD_POOL:
+		_make_cloud_node()
 	reset()
 
 ## Put every row back in the pool and start the obstacle stream over (restart in place). The first
@@ -113,7 +128,8 @@ func reset(first_row_z: float = -12.0) -> void:
 	_flashes.clear()
 	_prev_open.clear()
 	_pending_open.clear()
-	_cloud_rows_left = 0
+	for c in _clouds.duplicate():
+		_release_cloud(c)
 	_safe_col = Tuning.column_count / 2
 	for i in Tuning.column_count:
 		_prev_open.append(true)  # first row may use any column
@@ -125,6 +141,7 @@ func advance(dist: float) -> void:
 	for r in _rows:
 		r.position.z += dist
 	_last_row_z += dist
+	_advance_clouds(dist)
 	while _last_row_z > -Tuning.spawn_distance:
 		_last_row_z -= Tuning.spawn_spacing
 		_spawn_row(_last_row_z)
@@ -202,8 +219,8 @@ func _process(_delta: float) -> void:
 	for r in _rows:   # fuel cans bob gently so they read as pickups
 		if r.has_can:
 			r.can.position.y = 0.25 + 0.12 * sin(t * 4.0 + r.can_x)
-		if r.cloud_on:
-			_update_cloud_alpha(r)
+	for c in _clouds:
+		_update_cloud_alpha(c)
 
 func _update_flashes() -> void:
 	var now := Time.get_ticks_msec()
@@ -236,18 +253,23 @@ func prewarm_show(with_flash: bool, with_clouds: bool = true) -> void:
 		row.can.visible = true   # every pooled fuel can is drawn too
 		row.can.position = Vector3(Tuning.column_center(idx % Tuning.column_count), 0.4, 0.5)
 		row.can.scale = Vector3.ONE * Tuning.fuel_can_size
-		if with_clouds:   # every pooled cloud puff is drawn too (over the cubes, at a middling opacity)
-			row.cloud_mat.albedo_color = Color(Tuning.cloud_color, 0.6)
-			for k in row.cloud_blobs.size():
-				var blob := row.cloud_blobs[k]
-				blob.visible = true
-				blob.position = Vector3(Tuning.column_center(k / BLOBS_PER_COLUMN % Tuning.column_count), CLOUD_Y, ((k % BLOBS_PER_COLUMN) - 1) * 3.0)
-				blob.scale = Vector3(2.0, 1.0, 2.0)
+	if with_clouds:   # every pooled cloud puff is drawn too (over the cubes, at a middling opacity)
+		for idx in _all_clouds.size():
+			var cl := _all_clouds[idx]
+			cl.position = Vector3(Tuning.column_center(idx % Tuning.column_count), 0.0, -8.0 + 1.5 * idx)
+			cl.visible = true
+			for k in cl.puffs.size():
+				cl.mats[k].albedo_color = Color(Tuning.cloud_color, 0.6)
+				cl.puffs[k].visible = true
+				cl.puffs[k].position = Vector3((k - 3) * 0.8, CLOUD_Y, 0.0)
+				cl.puffs[k].scale = Vector3(1.5, 1.0, 1.5)
 
 ## End of the pre-warm: hide the pooled rows again.
 func prewarm_hide() -> void:
 	for row in _all_rows:
 		_hide_row(row)
+	for cl in _all_clouds:
+		_hide_cloud(cl)
 
 ## Test helper: put a row at z with obstacles at the given x positions (no randomness).
 func _rows_make_for_test(z: float, xs: Array) -> Row:
@@ -291,21 +313,6 @@ func _make_row() -> Row:
 	row.can.material_overlay = row.can_outline
 	row.can.visible = false
 	row.add_child(row.can)
-	row.cloud_mat = StandardMaterial3D.new()
-	row.cloud_mat.transparency = BaseMaterial3D.TRANSPARENCY_ALPHA
-	row.cloud_mat.vertex_color_use_as_albedo = true   # the puff's baked facet tones
-	row.cloud_mat.cull_mode = BaseMaterial3D.CULL_DISABLED
-	row.cloud_mat.depth_draw_mode = BaseMaterial3D.DEPTH_DRAW_ALWAYS
-	row.cloud_mat.roughness = 1.0
-	row.cloud_mat.metallic_specular = 0.0
-	for k in BLOBS_PER_ROW:
-		var blob := MeshInstance3D.new()
-		blob.mesh = _cloud_mesh
-		blob.material_override = row.cloud_mat
-		blob.cast_shadow = GeometryInstance3D.SHADOW_CASTING_SETTING_OFF
-		blob.visible = false
-		row.add_child(blob)
-		row.cloud_blobs.append(blob)
 	for i in Tuning.column_count:
 		row.cloud_cov.append(false)
 	row.stripe = MeshInstance3D.new()
@@ -336,9 +343,6 @@ func _hide_row(row: Row) -> void:
 	row.visible = false
 	row.can.visible = false
 	row.has_can = false
-	row.cloud_on = false
-	for blob in row.cloud_blobs:
-		blob.visible = false
 	for i in row.cubes.size():
 		row.cubes[i].visible = false
 		row.cube_outlines[i].set_shader_parameter("outline_color", Color.BLACK)
@@ -367,11 +371,17 @@ func _spawn_row(z: float) -> void:
 		row.obs.append(mi)
 		row.outlines.append(row.cube_outlines[i])
 	row.stripe.scale = Vector3(Tuning.ortho_size * 2.0, 0.1, 0.4)
-	_make_cloud(row, open)
+	for c in open.size():
+		row.open.append(open[c])
+	_rows.append(row)
+	if not DebugFlags.off("clouds") and run_time >= Tuning.cloud_start_time:
+		_keep_row_fair(row)
+	_spawn_clouds_for_row(z)
+	for c in mini(open.size(), row.cloud_cov.size()):
+		row.cloud_cov[c] = open[c] and _covered(z, Tuning.column_center(c))
 	var can_col := _choose_can_column(open, next_open, _safe_col, row.cloud_cov)
 	if can_col >= 0:
 		_place_can(row, Tuning.column_center(can_col))
-	_rows.append(row)
 
 func _place_can(row: Row, x: float) -> void:
 	row.has_can = true
@@ -474,64 +484,188 @@ func refresh_obstacles() -> void:
 func _place_can_for_test(row: Row, x: float) -> void:
 	_place_can(row, x)
 
-## Decide whether this row has cloud over it, and set up its pooled puffs. Cloud comes in banks: a
-## run of consecutive rows (cloud_min_rows..cloud_max_rows) covering the same 1..cloud_max_columns
-## columns. None before cloud_start_time; after that a new bank starts with a chance that grows with
-## speed. FAIRNESS: a cloud never covers every open column of a row, so one open gap always stays
-## in plain view.
-func _make_cloud(row: Row, open: Array[bool]) -> void:
-	row.cloud_on = false
-	var n := mini(open.size(), row.cloud_cov.size())
-	for c in n:
-		row.cloud_cov[c] = false
+## ---- Clouds: free-floating bundles --------------------------------------------------------------
+## Bundles appear above the top of the screen at a random sideways position, in three size classes
+## (wisps, medium clumps, large banks), and drift sideways a little as they scroll. None before
+## cloud_start_time; after that they come more often as the run speeds up.
+
+func _make_cloud_node() -> Cloud:
+	var cl := Cloud.new()
+	for k in PUFFS_PER_CLOUD:
+		var mat := StandardMaterial3D.new()
+		mat.transparency = BaseMaterial3D.TRANSPARENCY_ALPHA
+		mat.vertex_color_use_as_albedo = true   # the puff's baked facet tones
+		mat.cull_mode = BaseMaterial3D.CULL_DISABLED
+		mat.depth_draw_mode = BaseMaterial3D.DEPTH_DRAW_ALWAYS
+		mat.roughness = 1.0
+		mat.metallic_specular = 0.0
+		var puff := MeshInstance3D.new()
+		puff.mesh = _cloud_mesh
+		puff.material_override = mat
+		puff.cast_shadow = GeometryInstance3D.SHADOW_CASTING_SETTING_OFF
+		puff.visible = false
+		cl.add_child(puff)
+		cl.puffs.append(puff)
+		cl.mats.append(mat)
+		cl.ox.append(0.0)
+		cl.oz.append(0.0)
+		cl.rad.append(1.0)
+		cl.on.append(false)
+	cl.visible = false
+	add_child(cl)
+	_all_clouds.append(cl)
+	_free_clouds.append(cl)
+	return cl
+
+func _hide_cloud(cl: Cloud) -> void:
+	cl.visible = false
+	cl.in_use = false
+	for k in cl.puffs.size():
+		cl.puffs[k].visible = false
+		cl.on[k] = false
+
+func _release_cloud(cl: Cloud) -> void:
+	_hide_cloud(cl)
+	_clouds.erase(cl)
+	if not _free_clouds.has(cl):
+		_free_clouds.append(cl)
+
+## Scroll the bundles (they drift sideways as they go), recycle the ones past the bottom, and create new
+## ones at the top. The creation rate is cloud_frequency bundles per row spacing, growing with speed.
+func _advance_clouds(dist: float) -> void:
+	for i in range(_clouds.size() - 1, -1, -1):
+		var cl := _clouds[i]
+		cl.position.z += dist
+		cl.position.x += cl.slope * dist
+		if cl.position.z - 7.0 > 12.0:
+			_release_cloud(cl)
+
+## Bundles are created along with the rows: cloud_frequency of them per row (more at speed), placed
+## anywhere sideways and anywhere within a few units of the new row in depth, so they sit over
+## rows and between them as they happen to fall.
+func _spawn_clouds_for_row(z: float) -> void:
 	if DebugFlags.off("clouds") or run_time < Tuning.cloud_start_time:
-		_cloud_rows_left = 0
 		return
-	if _cloud_rows_left <= 0:
-		var speed_at_start := Tuning.base_speed + Tuning.speed_ramp * Tuning.cloud_start_time
-		var rate := minf(Tuning.cloud_frequency * clampf(scroll_speed / maxf(speed_at_start, 0.1), 1.0, 3.0), 0.9)
-		if randf() < rate:
-			var width := randi_range(1, clampi(Tuning.cloud_max_columns, 1, mini(CLOUD_COLUMNS, n)))
-			_cloud_c0 = randi_range(0, n - width)
-			_cloud_c1 = _cloud_c0 + width - 1
-			_cloud_rows_left = randi_range(maxi(Tuning.cloud_min_rows, 1), maxi(Tuning.cloud_max_rows, Tuning.cloud_min_rows))
-	if _cloud_rows_left <= 0:
+	var speed_at_start := Tuning.base_speed + Tuning.speed_ramp * Tuning.cloud_start_time
+	var rate := minf(Tuning.cloud_frequency * clampf(scroll_speed / maxf(speed_at_start, 0.1), 1.0, 3.0), 3.0)
+	var n := int(rate) + int(randf() < rate - floorf(rate))
+	for i in n:
+		_spawn_cloud(z + randf_range(-6.0, 4.0))
+
+func _spawn_cloud(z: float) -> void:
+	if _free_clouds.is_empty():
 		return
-	_cloud_rows_left -= 1
-	for c in range(_cloud_c0, _cloud_c1 + 1):
-		row.cloud_cov[c] = true
-	var open_uncovered := false
-	for c in n:
-		if open[c] and not row.cloud_cov[c]:
-			open_uncovered = true
-	if not open_uncovered:
-		row.cloud_cov[_safe_col] = false   # the safe path's column stays in plain view
-	# Lay the puffs: three along the row for each covered column, a little irregular.
-	var k := 0
-	for c in n:
-		if not row.cloud_cov[c]:
+	var cl: Cloud = _free_clouds.pop_back()
+	var roll := randf()
+	var count: int
+	var r_lo: float
+	var r_hi: float
+	var spread: float
+	if roll < 0.4:        # a wisp
+		count = randi_range(1, 2)
+		r_lo = 0.7
+		r_hi = 1.1
+		spread = 0.7
+	elif roll < 0.8:      # a medium clump
+		count = randi_range(3, 4)
+		r_lo = 1.0
+		r_hi = 1.6
+		spread = 1.6
+	else:                 # a large bank
+		count = randi_range(5, PUFFS_PER_CLOUD)
+		r_lo = 1.4
+		r_hi = 2.4
+		spread = 2.8
+	var half := Tuning.ortho_size * 0.5
+	cl.position = Vector3(randf_range(-half - 0.5, half + 0.5), 0.0, z)
+	cl.slope = randf_range(-Tuning.cloud_max_drift, Tuning.cloud_max_drift)
+	for k in cl.puffs.size():
+		var used := k < count
+		cl.on[k] = used
+		cl.puffs[k].visible = used
+		if not used:
 			continue
-		for j in BLOBS_PER_COLUMN:
-			var blob := row.cloud_blobs[k]
-			var r := randf_range(1.9, 2.4)
-			blob.position = Vector3(Tuning.column_center(c) + randf_range(-0.3, 0.3), CLOUD_Y, (j - 1) * 3.3 + randf_range(-0.5, 0.5))
-			blob.scale = Vector3(r, 1.0, r)
-			blob.rotation = Vector3(0.0, randf() * TAU, 0.0)
-			blob.visible = true
-			k += 1
-	if k == 0:
-		return   # nothing left to cover (the only covered column was uncovered above)
-	for rest in range(k, row.cloud_blobs.size()):
-		row.cloud_blobs[rest].visible = false
-	row.cloud_on = true
-	_update_cloud_alpha(row)
+		var r := randf_range(r_lo, r_hi)
+		cl.ox[k] = 0.0 if k == 0 else randf_range(-1.0, 1.0) * spread * 1.3   # wider than deep, like a bank
+		cl.oz[k] = 0.0 if k == 0 else randf_range(-1.0, 1.0) * spread * 0.8
+		cl.rad[k] = r
+		cl.puffs[k].position = Vector3(cl.ox[k], CLOUD_Y + randf() * 0.03, cl.oz[k])
+		cl.puffs[k].scale = Vector3(r, 1.0, r)
+		cl.puffs[k].rotation = Vector3(0.0, randf() * TAU, 0.0)
+	cl.visible = true
+	cl.in_use = true
+	_clouds.append(cl)
+	# FAIRNESS: no row already in play may end up with every open column hidden. Where one would,
+	# remove this bundle's puffs from the way of a column that was clear until now.
+	for row in _rows:
+		if row.open.is_empty() or _clear_column(row) >= 0:
+			continue
+		for c in row.open.size():
+			if row.open[c] and not _covered(row.position.z, Tuning.column_center(c), null, cl):
+				_covered(row.position.z, Tuning.column_center(c), cl, null, true)
+				break
+	var any := false
+	for k in count:
+		any = any or cl.on[k]
+	if not any:
+		_release_cloud(cl)
+	else:
+		_update_cloud_alpha(cl)
+		cloud_spawned.emit(cl)
+
+## Will any puff cover the centre line of a column in a row at world z `rz`? The line is the path
+## the plane would fly through the row (x = the column's centre, z within the row's cube depth), and
+## every puff drifts along its slope until the row reaches the plane, so the whole drift is checked.
+## `only` / `skip` restrict which bundle is looked at; `hide_hits` removes the puffs that cover it.
+func _covered(rz: float, cx: float, only: Cloud = null, skip: Cloud = null, hide_hits: bool = false) -> bool:
+	var s_max := maxf(plane_z - rz, 0.0)   # scroll left before the row reaches the plane
+	var hit := false
+	for cl in _clouds:
+		if cl == skip or (only != null and cl != only):
+			continue
+		for k in cl.puffs.size():
+			if not cl.on[k]:
+				continue
+			var r: float = cl.rad[k] * PUFF_EDGE
+			var dz := maxf(absf(cl.position.z + cl.oz[k] - rz) - CLOUD_PATH_HALF, 0.0)   # z offsets never change as everything scrolls together
+			if dz >= r:
+				continue
+			var w := sqrt(r * r - dz * dz)
+			var x0: float = cl.position.x + cl.ox[k]
+			var x1 := x0 + cl.slope * s_max
+			if minf(x0, x1) < cx + w and maxf(x0, x1) > cx - w:
+				if not hide_hits:
+					return true
+				hit = true
+				cl.on[k] = false
+				cl.puffs[k].visible = false
+				puffs_removed += 1
+	return hit
+
+## An open column of the row whose centre line no cloud covers, or -1 if every open column is covered.
+func _clear_column(row: Row) -> int:
+	for c in row.open.size():
+		if row.open[c] and not _covered(row.position.z, Tuning.column_center(c)):
+			return c
+	return -1
+
+## A new row must keep at least one open column visible: if the clouds already in play cover them
+## all, the puffs covering the safe-path column are removed.
+func _keep_row_fair(row: Row) -> void:
+	if _clear_column(row) >= 0:
+		return
+	var c := _safe_col if (_safe_col < row.open.size() and row.open[_safe_col]) else row.open.find(true)
+	_covered(row.position.z, Tuning.column_center(c), null, null, true)
 
 ## Late reveal: nearly opaque while far above the plane, fading to cloud_min_opacity as it reaches it.
-func _update_cloud_alpha(row: Row) -> void:
-	var ahead := plane_z - row.position.z   # > 0: the row is above the plane (not reached yet)
-	var t := clampf(1.0 - ahead / maxf(Tuning.cloud_reveal_distance, 0.1), 0.0, 1.0)
-	t = t * t * (3.0 - 2.0 * t)   # smoothstep: eases in and out
-	row.cloud_mat.albedo_color = Color(Tuning.cloud_color, lerpf(Tuning.cloud_max_opacity, Tuning.cloud_min_opacity, t))
+func _update_cloud_alpha(cl: Cloud) -> void:
+	for k in cl.puffs.size():
+		if not cl.on[k]:
+			continue
+		var ahead := plane_z - (cl.position.z + cl.oz[k])   # > 0: the puff is above the plane (not reached yet)
+		var t := clampf(1.0 - ahead / maxf(Tuning.cloud_reveal_distance, 0.1), 0.0, 1.0)
+		t = t * t * (3.0 - 2.0 * t)   # smoothstep: eases in and out
+		cl.mats[k].albedo_color = Color(Tuning.cloud_color, lerpf(Tuning.cloud_max_opacity, Tuning.cloud_min_opacity, t))
 
 ## The shared puff: a flat, low-poly dome (about 45 triangles) with its facets tinted a touch
 ## differently, so it reads as a soft, puffy, flat-shaded shape. Built once.
