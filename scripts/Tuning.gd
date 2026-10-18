@@ -180,16 +180,19 @@ func bonus_cap_now() -> float:
 ## A row counts as a near miss if the plane passed it with less than this gap (units) between the
 ## plane's hit box and the closest obstacle edge (0 = touching = crash).
 var near_miss_distance := 0.30
-## The points bonus grows with the streak of close calls (each one adds 1; the streak decays, see below):
-##   bonus = 1 + bonus_scale * ln(1 + streak), never above bonus_cap.
-## With scale 1.2: one close call = x1.8, two = x2.3, three = x2.7, five reaches the default cap.
-var bonus_scale := 1.2
+## The points bonus grows with the streak of close calls. Each close call in the streak adds the next
+## entry of bonus_steps, and every close call after the table runs out adds bonus_step_tail:
+##   bonus = 1 + (sum of the steps earned), never above bonus_cap.
+## With the defaults: x1.5, x1.9, x2.2, x2.4, x2.5, then +0.1 each (x2.6, x2.7 ... the cap at 10 in a row).
+var bonus_steps: Array[float] = [0.5, 0.4, 0.3, 0.2, 0.1]
+var bonus_step_tail := 0.1
 ## The bonus ceiling (an upgrade will raise it later). The streak is held at the value that just
 ## reaches it, so the bonus starts easing down as soon as the timeout ends.
 var bonus_cap := 3.0
 ## Seconds after a close call before the streak starts to drop.
 var bonus_hold_time := 4.0
-## Once dropping, the streak falls by this much per second, so the bonus eases down smoothly to x1.
+## Once dropping, steps come off one at a time, the most recent first, this many per second
+## (x2.6 -> x2.5 -> x2.4 -> x2.2 ...), down to x1.
 var bonus_decay_rate := 0.8
 ## Looks only: colours and the score swell stop growing at this bonus, so a very high cap can't break the layout.
 var bonus_visual_max := 6.0
@@ -210,11 +213,9 @@ var near_miss_flash_time := 0.25
 ## Haptic pulse length in milliseconds (ignored where unsupported).
 var haptic_ms := 25
 ## Near-miss popup tiers: the first applies below the first value of near_miss_tier_bonus, the second
-## from it up to the next, the last from the final value up. Each text says what happened (first line)
-## and what you earned (second line); %.1f is the points bonus you now have. Then colour (warmer each
-## tier) and font size (px in the 1080-wide base viewport).
+## from it up to the next, the last from the final value up. A popup shows only the new bonus number
+## ("x1.9"); the tier sets its colour (warmer each tier) and font size (px in the 1080-wide base viewport).
 var near_miss_tier_bonus: Array[float] = [2.0, 2.8]
-var near_miss_texts: Array[String] = ["Close call!\nx%.1f points", "Closer!\nx%.1f points", "Whisker close!\nx%.1f points"]
 var near_miss_colors: Array[Color] = [Color(1.0, 0.95, 0.55), Color(1.0, 0.62, 0.2), Color(1.0, 0.28, 0.12)]
 var near_miss_sizes: Array[int] = [64, 84, 108]
 ## Trail ribbon colour per bonus tier (x1-x2, x2-x3, x3-x4, x4+); it shows while there is a bonus and fades at x1.
@@ -288,15 +289,31 @@ var plane_hit_scale := 0.95
 func tier_index(bonus: float, count: int) -> int:
 	return clampi(int(bonus) - 1, 0, count - 1)
 
-## The points bonus for a streak of close calls.
-func streak_bonus(streak: float) -> float:
-	return clampf(1.0 + bonus_scale * log(1.0 + maxf(streak, 0.0)), 1.0, maxf(bonus_cap_now(), 1.0))
+## The points bonus for a streak of `n` close calls: 1 + the first n steps (then the tail step each).
+func streak_bonus(n: int) -> float:
+	var total := 1.0
+	for i in maxi(n, 0):
+		total += bonus_steps[i] if i < bonus_steps.size() else bonus_step_tail
+	return clampf(total, 1.0, maxf(bonus_cap_now(), 1.0))
 
-## The streak that just reaches the cap (the streak never goes above it).
-func streak_at_cap() -> float:
-	if bonus_cap_now() <= 1.0 or bonus_scale <= 0.0:
-		return 0.0
-	return exp((bonus_cap_now() - 1.0) / bonus_scale) - 1.0
+## The smallest streak that reaches the cap (the streak is never counted above it, so the bonus
+## starts easing down as soon as the hold time ends).
+func streak_at_cap() -> int:
+	var need := bonus_cap_now() - 1.0
+	if need <= 0.0:
+		return 0
+	var sum := 0.0
+	for i in bonus_steps.size():
+		sum += bonus_steps[i]
+		if sum >= need - 0.000001:
+			return i + 1
+	if bonus_step_tail <= 0.0:
+		return bonus_steps.size()
+	return bonus_steps.size() + int(ceil((need - sum) / bonus_step_tail - 0.000001))
+
+## The text of a popup / the label: just the number.
+func popup_text(bonus: float) -> String:
+	return "x%.1f" % bonus
 
 ## Is there a bonus worth showing? (The label disappears as the bonus eases down to x1.)
 func bonus_active(bonus: float) -> bool:
@@ -305,13 +322,13 @@ func bonus_active(bonus: float) -> bool:
 func at_cap(bonus: float) -> bool:
 	return bonus_cap_now() > 1.0 and bonus >= bonus_cap_now() - 0.001
 
-## Which popup tier (index into near_miss_texts) a bonus belongs to.
+## Which popup tier (index into near_miss_sizes / near_miss_colors) a bonus belongs to.
 func popup_tier(bonus: float) -> int:
 	var t := 0
 	for thr in near_miss_tier_bonus:
 		if bonus >= thr:
 			t += 1
-	return mini(t, near_miss_texts.size() - 1)
+	return mini(t, near_miss_sizes.size() - 1)
 
 ## Colour for a bonus: warms along near_miss_colors up to bonus_visual_max, gold at the cap.
 func bonus_color(bonus: float) -> Color:

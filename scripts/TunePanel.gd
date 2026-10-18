@@ -21,7 +21,6 @@ const ENTRIES := [
 	["near_miss_distance", "Near-miss distance", 0.1, 1.5, 0.05],
 	["obstacle_scale", "Obstacle scale", 0.3, 0.9, 0.01],
 	["plane_tip_radius", "Plane tip radius", 0.05, 0.35, 0.01],
-	["bonus_scale", "Bonus scale", 0.2, 3.0, 0.05],
 	["bonus_cap", "Bonus cap", 1.5, 10.0, 0.1],
 	["cloud_start_time", "Cloud start time (s)", 0.0, 120.0, 1.0],
 	["cloud_frequency", "Clouds per row", 0.0, 2.0, 0.05],

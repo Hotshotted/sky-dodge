@@ -25,11 +25,11 @@ var run_cans := 0       # fuel cans collected this run (they pay coins at the en
 var last_earned := 0    # coins the last run paid
 var last_was_best := false
 var score := 0.0        # accumulates distance flown x bonus
-var streak := 0.0   # close-call streak (each near miss adds 1; it drops gradually after the hold time)
+var streak := 0     # close calls in the current streak (steps come off one at a time after the hold time)
 var bonus := 1.0    # points bonus from the streak, 1.0 = none
 var fuel := 0.0         # drains steadily; fuel cans refill it; empty ends the run
 var _bonus_timer := 0.0  # counts down to the streak starting to drop
-var _decaying := false
+var _decay_acc := 0.0   # fractional steps accumulated towards the next one coming off
 var _warming := false
 static var _haptic_warmed := false  # first-touch haptic warm-up done (once per app session)
 static var _warmed := false  # pre-warm only once per app session
@@ -235,9 +235,9 @@ func _on_pickup(pos: Vector3) -> void:
 ## which one causes a hitch.
 func _on_near_miss(ev: Dictionary) -> void:
 	var t0 := Time.get_ticks_usec()
-	streak = minf(streak + 1.0, Tuning.streak_at_cap())
+	streak = mini(streak + 1, Tuning.streak_at_cap())
 	bonus = Tuning.streak_bonus(streak)
-	_decaying = false
+	_decay_acc = 1.0   # when the hold time ends the first step comes off at once
 	_bonus_timer = Tuning.bonus_hold_time
 	hud.set_bonus(bonus, hud.BONUS_NONE if DebugFlags.off("punch") else hud.BONUS_PUNCH)
 	var side: int = ev["side"]
@@ -248,10 +248,9 @@ func _on_near_miss(ev: Dictionary) -> void:
 	if not DebugFlags.off("flash"):
 		spawner.flash_obstacle(ev["outline"])
 	if not DebugFlags.off("popup"):
-		var n := Tuning.near_miss_texts.size()
 		var i := Tuning.popup_tier(bonus)
 		var pos := camera.unproject_position(player.position + Vector3(0, 0, -2.0))
-		hud.popup(Tuning.near_miss_texts[i] % bonus, Tuning.near_miss_sizes[mini(i, Tuning.near_miss_sizes.size() - 1)],
+		hud.popup(Tuning.popup_text(bonus), Tuning.near_miss_sizes[mini(i, Tuning.near_miss_sizes.size() - 1)],
 				Tuning.near_miss_colors[mini(i, Tuning.near_miss_colors.size() - 1)], pos)
 	if not DebugFlags.off("haptic"):
 		Input.vibrate_handheld(Tuning.haptic_ms)  # no-op where unsupported
@@ -262,26 +261,30 @@ func _on_tuning_changed(property: String) -> void:
 	if property == "obstacle_scale":
 		spawner.refresh_obstacles()   # rows already on screen change size now
 
-## Without fresh near misses the bonus holds, then the streak drops gradually (the bonus eases down) to x1.
+## Without fresh near misses the bonus holds, then steps come off one at a time, the most recent
+## first (x2.6 -> x2.5 -> x2.4 -> x2.2 ...), bonus_decay_rate per second, down to x1.
 func _decay_bonus(delta: float) -> void:
-	if streak <= 0.0:
+	if streak <= 0:
 		return
 	_bonus_timer -= delta
 	if _bonus_timer > 0.0:
 		return
-	var first := not _decaying
-	_decaying = true
-	streak = maxf(streak - Tuning.bonus_decay_rate * delta, 0.0)
-	bonus = Tuning.streak_bonus(streak)
-	# show it shrinking when it starts to fade: the bonus fades if you play safe
-	hud.set_bonus(bonus, hud.BONUS_SHRINK if first else hud.BONUS_NONE)
+	_decay_acc += Tuning.bonus_decay_rate * delta
+	var dropped := false
+	while _decay_acc >= 1.0 and streak > 0:
+		_decay_acc -= 1.0
+		streak -= 1
+		dropped = true
+	if dropped:
+		bonus = Tuning.streak_bonus(streak)
+		hud.set_bonus(bonus, hud.BONUS_SHRINK)   # shrinks each step: the bonus fades if you play safe
 
 ## A crash, the end of a run or a restart: no streak, no bonus.
 func _reset_bonus() -> void:
-	streak = 0.0
+	streak = 0
 	bonus = 1.0
 	_bonus_timer = 0.0
-	_decaying = false
+	_decay_acc = 0.0
 
 ## Camera tilted `camera_tilt_deg` away from straight down (so front faces show), placed so the
 ## screen centre always looks at world z = 0. Screen-up = world -Z.

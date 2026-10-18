@@ -18,7 +18,7 @@ extends SceneTree
 ##       sizes, off the column grid, drifting; never cover every open column's centre line (thousands of
 ##       generated rows, checked every step), fade in late, sit above obstacles/cans but below the plane,
 ##       hide cans more often, ?nofx=clouds disables them, restart clears them, nothing new is allocated
-##   2i. bonus: logarithmic streak bonus, cap (gold MAX label), gradual decay, reset on crash, huge caps
+##   2i. bonus: step-table streak bonus, cap (gold glowing label), steps coming off one by one, number-only text, reset on crash, huge caps
 ##   2j. progression: save file round trip (versioned), coin award, Hangar purchases apply, ?tune save buttons
 ##   3. ?debug flags parse, and switching an effect off really skips it
 ##   4. plane collision capsules: span matches the wings, rounded corners graze past a cube corner
@@ -214,7 +214,7 @@ func _initialize() -> void:
 				"run %d starts fresh (score %d, x%.1f, fuel %.0f)" % [run, int(main.score), main.bonus, main.fuel])
 		check(not main.hud._over.visible, "game-over UI hidden while playing")
 		await do_near_misses(main, 3)
-		check(is_equal_approx(main.bonus, tuning.streak_bonus(3.0)) and main.hud._bonus_label.text == "x%.1f POINTS" % main.bonus, "three close calls give x%.1f (%s)" % [main.bonus, main.hud._bonus_label.text])
+		check(is_equal_approx(main.bonus, tuning.streak_bonus(3)) and main.hud._bonus_label.text == "x%.1f" % main.bonus, "three close calls give x%.1f (%s)" % [main.bonus, main.hud._bonus_label.text])
 		check(count_visible(main.hud._pop_labels) >= 1 and count_visible(main.fx._emitters) >= 1, "popup and sparks are showing")
 		# fuel: drains; a can refills it with a pooled pop
 		var f0: float = main.fuel
@@ -280,7 +280,7 @@ func _initialize() -> void:
 		defaults[e[0]] = tuning.get(e[0])
 	for t in panel.TOGGLES:
 		defaults[t[0]] = tuning.get(t[0])
-	check(panel.ENTRIES.size() == 19 and panel._sliders.size() == 19 and panel._toggles.size() == 1, "19 sliders and 1 on/off switch for the tuned values")
+	check(panel.ENTRIES.size() == 18 and panel._sliders.size() == 18 and panel._toggles.size() == 1, "18 sliders and 1 on/off switch for the tuned values")
 	var all_match := true
 	for e in panel.ENTRIES:
 		if not is_equal_approx(panel._sliders[e[0]].value, tuning.get(e[0])):
@@ -810,66 +810,88 @@ func _initialize() -> void:
 	var after_clouds := snapshot(main)
 	check(same_world(base, after_clouds), "generating thousands of cloud rows created nothing new  [%s]" % describe(after_clouds))
 
-	print("2i. bonus: logarithmic streak bonus with a cap")
-	var bsaved := {"scale": tuning.bonus_scale, "cap": tuning.bonus_cap}
-	tuning.bonus_scale = 1.2
+	print("2i. bonus: step table with a cap")
+	var bsaved := {"cap": tuning.bonus_cap, "steps": tuning.bonus_steps.duplicate(), "tail": tuning.bonus_step_tail}
+	tuning.bonus_cap = 10.0
+	var expect := [1.0, 1.5, 1.9, 2.2, 2.4, 2.5, 2.6, 2.7, 2.8, 2.9, 3.0, 3.1]
+	var table_ok := true
+	for ni in expect.size():
+		table_ok = table_ok and is_equal_approx(tuning.streak_bonus(ni), expect[ni])
+	check(table_ok, "bonus = 1 + steps [0.5 0.4 0.3 0.2 0.1] then 0.1 each: x1.5 x1.9 x2.2 x2.4 x2.5 x2.6 ...")
+	tuning.bonus_steps = [1.0, 0.5] as Array[float]
+	tuning.bonus_step_tail = 0.25
+	check(is_equal_approx(tuning.streak_bonus(1), 2.0) and is_equal_approx(tuning.streak_bonus(2), 2.5) and is_equal_approx(tuning.streak_bonus(4), 3.0), "the steps and the tail are Tuning values (custom table: x2.0 x2.5 x2.75 x3.0)")
+	tuning.bonus_steps = bsaved["steps"] as Array[float]
+	tuning.bonus_step_tail = bsaved["tail"]
 	tuning.bonus_cap = 3.0
-	check(tuning.streak_bonus(0.0) == 1.0 and is_equal_approx(tuning.streak_bonus(1.0), 1.0 + 1.2 * log(2.0)) and is_equal_approx(tuning.streak_bonus(3.0), 1.0 + 1.2 * log(4.0)),
-			"bonus = 1 + scale * ln(1 + streak)  (streak 1 = %.2f, 3 = %.2f)" % [tuning.streak_bonus(1.0), tuning.streak_bonus(3.0)])
-	check(tuning.streak_bonus(1000.0) == 3.0 and tuning.streak_bonus(tuning.streak_at_cap()) >= 3.0 - 0.0001, "clamped to bonus_cap (3.0), reached at streak %.1f" % tuning.streak_at_cap())
+	check(tuning.streak_bonus(1000) == 3.0 and tuning.streak_at_cap() == 10 and is_equal_approx(tuning.streak_bonus(10), 3.0), "clamped to bonus_cap (3.0), reached at close call %d" % tuning.streak_at_cap())
 	main._reset_bonus()
 	main.set_process(false)
 	var brow = sp._rows_make_for_test(-5.0, [1.0])
 	var bev := {"side": 1, "node": brow.obs[0], "outline": brow.outlines[0]}
 	DebugFlags.parse(["nofx=sparks,streaks,popup,flash,trail,haptic"])
 	var seen_bonus := []
-	for i in 12:
+	for i in 14:
 		main._on_near_miss(bev)
 		seen_bonus.append(main.bonus)
 	var rising := true
 	for i in range(1, seen_bonus.size()):
 		rising = rising and seen_bonus[i] >= seen_bonus[i - 1]
-	check(rising and main.bonus == 3.0 and main.streak <= tuning.streak_at_cap() + 0.0001, "twelve close calls rise and stop at the cap; the streak is held at the cap's streak (%.1f)" % main.streak)
-	check(main.hud._bonus_label.text == "x3.0 POINTS  MAX" and main.hud._bonus_label.get_theme_color("font_color").is_equal_approx(tuning.bonus_gold),
-			"at the cap the label is gold and says MAX (\"%s\")" % main.hud._bonus_label.text)
-	# popup tiers keyed to bonus thresholds, with the bonus in the text
+	check(rising and main.bonus == 3.0 and main.streak == 10, "fourteen close calls rise and stop at the cap; the streak is held at %d" % main.streak)
+	var shown_text: String = main.hud._bonus_label.text
+	check(shown_text == "x3.0" and main.hud._bonus_label.get_theme_color("font_color").is_equal_approx(tuning.bonus_gold)
+			and not main.hud._bonus_label.get_theme_color("font_outline_color").is_equal_approx(Color.BLACK) and shown_text.replace("x", "").is_valid_float(),
+			"at the cap the label is just \"%s\", gold with a glow (no word)" % shown_text)
+	# popups: number only, tiers keyed to bonus thresholds
+	check(tuning.popup_text(1.9) == "x1.9" and tuning.popup_text(2.4) == "x2.4", "popups show only the number (\"x1.9\")")
 	check(tuning.popup_tier(1.8) == 0 and tuning.popup_tier(2.0) == 1 and tuning.popup_tier(2.79) == 1 and tuning.popup_tier(2.8) == 2 and tuning.popup_tier(50.0) == 2,
-			"popup tiers: Close call below x2.0, Closer to x2.8, Whisker close above")
-	check((tuning.near_miss_texts[1] % 2.4) == "Closer!\nx2.4 points", "popups show the bonus with one decimal")
-	# gradual decay: holds, then eases down smoothly to x1, and the label goes away
+			"popup tiers escalate at x2.0 and x2.8 (size and colour)")
+	main._reset_bonus()
+	main.hud.clear_bonus()
+	main._on_near_miss(bev)
+	main._on_near_miss(bev)
+	check(main.bonus == 1.9 and main.hud._bonus_label.text == "x1.9", "two close calls: x1.9, label \"%s\"" % main.hud._bonus_label.text)
+	# decay: holds, then steps come off one at a time, newest first
+	main._reset_bonus()
+	for i in 6:
+		main._on_near_miss(bev)
+	check(is_equal_approx(main.bonus, 2.6), "six close calls: x2.6")
 	var hold: float = tuning.bonus_hold_time
 	var t_el := 0.0
-	var b_prev: float = main.bonus
+	var seq := [main.bonus]
+	var times := []
 	var held := true
-	var smooth := true
-	var monotone := true
-	var drop_start := -1.0
-	while main.streak > 0.0 and t_el < 60.0:
+	while main.streak > 0 and t_el < 60.0:
+		var before: float = main.bonus
 		main._decay_bonus(0.05)
 		t_el += 0.05
-		if main.bonus < b_prev - 0.0001 and drop_start < 0.0:
-			drop_start = t_el
-		if main.bonus > b_prev + 0.0001:
-			monotone = false
-		if t_el < hold - 0.06 and main.bonus < 3.0:
+		if main.bonus != before:
+			seq.append(main.bonus)
+			times.append(t_el)
+		if t_el < hold - 0.06 and main.bonus != before:
 			held = false
-		if b_prev - main.bonus > 0.2:
-			smooth = false
-		b_prev = main.bonus
-	check(held and monotone and smooth and drop_start >= hold - 0.1, "the bonus holds %.1f s, then eases down smoothly (first drop at %.2f s)" % [hold, drop_start])
-	check(main.bonus == 1.0 and main.streak == 0.0 and t_el < 30.0, "...and reaches x1 after %.1f s" % t_el)
-	await real_wait(tuning.bonus_hold_time * 0 + 0.7)
+	var seq_ok: bool = seq.size() == 7
+	var expect_seq := [2.6, 2.5, 2.4, 2.2, 1.9, 1.5, 1.0]
+	for i in mini(seq.size(), expect_seq.size()):
+		seq_ok = seq_ok and is_equal_approx(seq[i], expect_seq[i])
+	check(seq_ok and held, "after the %.1f s hold the steps come off newest first: %s" % [hold, str(seq)])
+	var gap_ok: bool = times.size() == 6 and times[0] >= hold - 0.1 and times[0] <= hold + 0.2
+	for i in range(1, times.size()):
+		gap_ok = gap_ok and absf((times[i] - times[i - 1]) - 1.0 / tuning.bonus_decay_rate) < 0.12
+	check(gap_ok, "one step every 1/bonus_decay_rate = %.2f s (first at %.2f s)" % [1.0 / tuning.bonus_decay_rate, times[0] if times.size() > 0 else -1.0])
+	check(main.bonus == 1.0 and main.streak == 0, "...down to x1")
+	await real_wait(0.7)
 	check(main.hud._bonus_label.text == "", "the label shrinks away at x1")
 	# a crash / the end of a run resets the streak
 	main._on_near_miss(bev)
 	main._on_near_miss(bev)
 	main._end_run(main.HEADER_CRASH, main.REASON_OBSTACLE)
-	check(main.bonus == 1.0 and main.streak == 0.0 and main.hud._bonus_label.text == "", "a crash resets the streak and bonus")
+	check(main.bonus == 1.0 and main.streak == 0 and main.hud._bonus_label.text == "", "a crash resets the streak and bonus")
 	main.restart()
 	main.set_process(false)
 	# high caps: the maths and the looks stay sane (the cap will be raised by upgrades)
-	tuning.bonus_scale = 3.0
 	tuning.bonus_cap = 1000.0
+	check(tuning.streak_at_cap() == 5 + int(ceil((999.0 - 1.5) / 0.1 - 0.000001)) and is_equal_approx(tuning.streak_bonus(tuning.streak_at_cap()), 1000.0), "a cap of 1000 is reached at close call %d" % tuning.streak_at_cap())
 	var okv := true
 	for b in [1.0, 1.05, 2.0, 6.0, 50.0, 999.0, 1000.0]:
 		var c: Color = tuning.bonus_color(b)
@@ -880,15 +902,14 @@ func _initialize() -> void:
 		main._on_near_miss(bev)
 	main.hud.set_score(12345, main.bonus)
 	main.hud._update_bonus_look(Time.get_ticks_msec())
-	check(main.bonus < 1000.0 and main.bonus > 6.0 and main.hud._score.scale.x <= tuning.bonus_swell(tuning.bonus_visual_max) + 0.11,
+	check(is_equal_approx(main.bonus, 1.0 + 1.5 + 0.1 * 35.0) and main.hud._score.scale.x <= tuning.bonus_swell(tuning.bonus_visual_max) + 0.11,
 			"a long streak with a huge cap: x%.1f, score scale %.2f stays bounded" % [main.bonus, main.hud._score.scale.x])
 	main.hud.set_bonus(1000.0, main.hud.BONUS_PUNCH)
-	check(main.hud._bonus_label.text == "x1000.0 POINTS  MAX", "the label copes with a four-digit bonus (\"%s\")" % main.hud._bonus_label.text)
+	check(main.hud._bonus_label.text == "x1000.0", "the label copes with a four-digit bonus (\"%s\")" % main.hud._bonus_label.text)
 	main._reset_bonus()
 	main.hud.clear_bonus()
 	DebugFlags.parse([])
 	sp._release_row(brow)
-	tuning.bonus_scale = bsaved["scale"]
 	tuning.bonus_cap = bsaved["cap"]
 
 	print("2j. progression: save file, coins, Hangar upgrades")
@@ -975,7 +996,7 @@ func _initialize() -> void:
 	tsave.buy("refill")
 	check(is_equal_approx(tuning.refill_amount(), tuning.fuel_refill + 4.0), "Refill 1: +4 fuel per can (%.0f)" % tuning.refill_amount())
 	tsave.buy("bonus_cap")
-	check(is_equal_approx(tuning.bonus_cap_now(), tuning.bonus_cap + 0.5) and is_equal_approx(tuning.streak_bonus(1000.0), 3.5), "Bonus Cap 1: the cap rises 3.0 -> 3.5")
+	check(is_equal_approx(tuning.bonus_cap_now(), tuning.bonus_cap + 0.5) and is_equal_approx(tuning.streak_bonus(1000), 3.5), "Bonus Cap 1: the cap rises 3.0 -> 3.5")
 	main.restart()
 	main.set_process(false)
 	check(main.fuel == 115.0, "the next run starts with the bigger tank (%.0f)" % main.fuel)
@@ -1046,7 +1067,7 @@ func _initialize() -> void:
 		e.visible = false
 	var row = sp._rows_make_for_test(-5.0, [1.0])
 	main._on_near_miss({"side": 1, "node": row.obs[0], "outline": row.outlines[0]})
-	check(main.bonus > 1.5, "bonus still rises with every effect off")
+	check(main.bonus >= 1.5, "bonus still rises with every effect off")
 	check(count_visible(main.fx._emitters) == 0 and count_visible(main.fx._streak_nodes) == 0
 			and count_visible(main.hud._pop_labels) == 0 and sp._flashes.is_empty(),
 			"no spark / streak / popup / flash with ?nofx")
