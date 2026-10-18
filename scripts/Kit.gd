@@ -519,6 +519,10 @@ func _setup(e: Ent) -> void:
 			var n: int = Tuning.windmill_blades[v]
 			var len: float = Tuning.windmill_blade[v]
 			e.reach = Vector2(len, len)
+			# Set once, here: the start angle that puts the blades at `phase` when this row reaches the plane's row, at the
+			# scroll speed now (speed only changes in BREATHER steps, and windmill patterns are never chosen around one).
+			var to_plane: float = (plane_z - _carrier_z(e)) / maxf(scroll_speed, 1.0)
+			e.phase = e.phase - e.dir * Tuning.windmill_speed[v] * to_plane
 			e.parts[0].mesh = _cyl(Tuning.windmill_hub[v], Tuning.windmill_hub[v] * 0.6, 0.5, 8)
 			for k in 4:
 				var bl: MeshInstance3D = e.parts[2 + k]
@@ -612,9 +616,9 @@ func _pose(e: Ent, delta: float) -> void:
 		WINDMILL:
 			e.px = e.x0
 			e.pz = _carrier_z(e)
-			# the blades turn at windmill_speed, but their angle is pinned to the moment the windmill reaches the plane's row:
-			# there it always shows `phase`, whatever the scroll speed (so a pattern's timing holds at every speed step)
-			e.ang = e.phase - e.dir * Tuning.windmill_speed[int(e.a)] * (plane_z - e.pz) / maxf(scroll_speed, 1.0)
+			# constant angular speed on the simulation clock (e.age): nothing the plane does can change it. The starting angle
+			# was set once at spawn (see _setup) so that the blades show `phase` when the row reaches the plane.
+			e.ang = e.phase + e.dir * Tuning.windmill_speed[int(e.a)] * e.age
 			e.pivot.rotation.y = -e.ang
 		BALLOON:
 			e.px = clampf(e.x0 + e.amp * sin(e.rate * e.age + e.phase), -4.4, 4.4)

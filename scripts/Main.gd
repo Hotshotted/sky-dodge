@@ -363,6 +363,8 @@ func _process(raw_delta: float) -> void:
 	if spawner.kit_on:   # Countryside: no ramp, only the steps a BREATHER brings (eased in)
 		_kit_speed = move_toward(_kit_speed, spawner.stepped_speed(spawner.speed_steps), Tuning.speed_step_rate * delta)
 		speed = _kit_speed * tail
+	if spawner.kit_on:
+		spawner.base_speed_now = _kit_speed
 	var step := speed * delta
 	score += step * Tuning.coins_per_unit * distance_pay() * earn_mult()
 	spawner.near_miss_scale = 1.0 + picks.value("daredevil") * 0.01

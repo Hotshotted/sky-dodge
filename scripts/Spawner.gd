@@ -244,6 +244,7 @@ func reset(first_row_z: float = -12.0) -> void:
 	wave_cycle = 0
 	speed_steps = 0
 	speed_steps_planned = 0
+	base_speed_now = -1.0
 	_step_marked_cycle = -1
 	_wave_start = 0.0
 	_wave_apply()
@@ -263,6 +264,8 @@ func advance(dist: float) -> void:
 	_last_row_z += dist
 	_advance_clouds(dist)
 	hazards.advance(dist)
+	kit.plane_z = plane_z   # (windmills set their start angle at spawn from these)
+	kit.scroll_speed = scroll_speed
 	if kit_on:
 		for r in _rows:
 			if r.step_mark and r.position.z >= plane_z - 8.0:
@@ -690,6 +693,7 @@ var wave_can_mult := 1.0            # the intensity wave scales how many cans / 
 var wave_hay_mult := 1.0
 const WAVE_NAMES := ["CALM", "BUILD", "PEAK", "BREATHER"]
 var wave_phase := 0
+var base_speed_now := -1.0           # set by Main: the Countryside speed before Tailwind (eased); differs from the target while a step is under way
 var speed_steps := 0                # speed steps applied so far (a BREATHER reached the plane)
 var speed_steps_planned := 0        # ...and spawned (patterns are chosen for the speed they will be flown at)
 var _step_marked_cycle := -1
@@ -778,6 +782,7 @@ func _choose_pattern() -> Dictionary:
 		if not forced.is_empty():
 			return forced
 	var rng := wave_range()
+	var windmills_wait := kit_on and base_speed_now >= 0.0 and (speed_steps_planned != speed_steps or absf(base_speed_now - stepped_speed(speed_steps_planned)) > 0.05)
 	var spd := maxf(scroll_speed, stepped_speed(speed_steps_planned)) if kit_on else scroll_speed
 	var slack := 0.5
 	while slack < 6.0:
@@ -787,6 +792,8 @@ func _choose_pattern() -> Dictionary:
 		weights.clear()
 		for p in Patterns.all():
 			if p["name"] == _pat_last or float(p["diff"]) < rng.x - slack or float(p["diff"]) > rng.y + slack:
+				continue
+			if windmills_wait and Patterns.has_tag(p, "windmill"):   # (their blade timing must not span a speed step)
 				continue
 			if spd < float(p["speed"][0]) - 0.01 or spd > float(p["speed"][1]):
 				continue

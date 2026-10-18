@@ -2841,16 +2841,41 @@ func _initialize() -> void:
 		check(absf(longest - maxf(tuning.windmill_blade[k_v] * 0.5, tuning.windmill_hub[k_v])) < 0.001, "windmill variant %d: blade shapes are the blade length (%.1f)" % [k_v, tuning.windmill_blade[k_v]])
 	check(blade_counts == [4, 3, 2], "windmills: standard 4 blades, large 3, small 2 (%s)" % str(blade_counts))
 	check(tuning.windmill_blade[0] >= 3.0 and tuning.windmill_blade[1] > tuning.windmill_blade[0] - 0.01 and tuning.windmill_speed[2] > tuning.windmill_speed[0] * 2.0, "the blades span most of the lane; the small one is much faster")
-	# the blades always show their `phase` when the windmill reaches the plane's row, at any scroll speed
-	var angle_ok := true
+	# the blades show their `phase` when the windmill reaches the plane's row (the start angle is set once, at spawn)
+	var angle_err := 0.0
 	for k_spd in [7.0, 13.0, 26.0]:
 		kit.release_all()
 		kit.scroll_speed = k_spd
+		kit.plane_z = kpz
+		k_carrier.position.z = kpz - 30.0
 		var k_wm2 = kit.spawn(2, k_carrier, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 1.1, 1.0)
-		k_carrier.position.z = kpz
-		kit.update(0.0)
-		angle_ok = angle_ok and absf(k_wm2.ang - 1.1) < 0.0001
-	check(angle_ok, "windmill blades are at their pattern phase when they reach the plane, whatever the speed")
+		while k_carrier.position.z < kpz:
+			k_carrier.position.z += k_spd / 60.0
+			kit.update(1.0 / 60.0)
+		angle_err = maxf(angle_err, absf(wrapf(k_wm2.ang - 1.1, -PI, PI)))
+	check(angle_err < 0.06, "windmill blades are at their pattern phase when they reach the plane, at every speed (error %.3f rad)" % angle_err)
+	# ...and moving the plane never changes how fast they turn: a constant angular speed on the simulation clock
+	kit.release_all()
+	kit.scroll_speed = 10.0
+	k_carrier.position.z = kpz - 20.0
+	var k_wm3 = kit.spawn(2, k_carrier, 0.0, 0.0, 1.0, 0.0, 0.0, 0.0, 0.3, 1.0)   # the large windmill
+	var k_prev: float = k_wm3.ang
+	var k_steady := true
+	var k_rate_seen := 0.0
+	for i in 120:
+		kit.plane_x = 4.0 * sin(i * 0.9)   # the plane swings from side to side and up and down, hard
+		kit.plane_z = kpz + 3.0 * sin(i * 1.7)
+		k_carrier.position.z += 10.0 / 60.0
+		kit.update(1.0 / 60.0)
+		var k_rate: float = (k_wm3.ang - k_prev) * 60.0
+		k_rate_seen = k_rate
+		k_steady = k_steady and absf(k_rate - tuning.windmill_speed[1]) < 0.0001
+		k_prev = k_wm3.ang
+	check(k_steady, "swinging the plane about never changes the blades' angular speed (%.3f rad/s, set %.3f)" % [k_rate_seen, tuning.windmill_speed[1]])
+	kit.plane_x = 0.0
+	kit.plane_z = kpz
+	kit.scroll_speed = 7.0
+	kit.release_all()
 	kit.scroll_speed = 7.0
 	kit.release_all()
 	# the tractor: dust plume first, then it drives across (solid), dropping hay bales behind it
@@ -3281,6 +3306,28 @@ func _initialize() -> void:
 			h_split_ok = not h_had_next and not hs._pat_next.is_empty()
 			break
 	check(h_split_ok, "the next pattern is chosen in the frame after a pattern's last row, not with the first row of the new one")
+	hs.reset()
+	# windmill patterns are never chosen while a speed step is under way (their blade timing must not span one)
+	hs.kit_enabled = true
+	hs.apply_map(0)
+	hs.run_time = 40.0
+	var wm_picked := 0
+	var wm_picked_calm := 0
+	hs.base_speed_now = 7.0
+	hs.scroll_speed = 7.0
+	for i in 400:
+		hs.wave_phase = 1
+		hs._pat_last = ""
+		hs.speed_steps_planned = 1
+		hs.speed_steps = 0   # a step is spawned but not applied yet
+		wm_picked += int(P.has_tag(hs._choose_pattern(), "windmill"))
+		hs.speed_steps_planned = 0
+		hs.speed_steps = 0
+		hs.wave_phase = 1
+		hs._pat_last = ""
+		wm_picked_calm += int(P.has_tag(hs._choose_pattern(), "windmill"))
+	check(wm_picked == 0 and wm_picked_calm > 20, "no windmill pattern is chosen while a speed step is pending or under way (%d), and they are chosen otherwise (%d of 400)" % [wm_picked, wm_picked_calm])
+	hs.base_speed_now = -1.0
 	hs.reset()
 	# nothing is driven by the wall clock: motion advances by the frame's own delta, so a slow frame is never caught up
 	var clk0: float = hs.hazards._clock
