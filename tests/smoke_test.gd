@@ -146,6 +146,12 @@ func drag_by(pl: Node, rel: Vector2) -> void:
 	ev.relative = rel
 	pl._input(ev)
 
+func get_paused() -> bool:
+	return paused
+
+func paused_ok(want: bool) -> bool:
+	return paused == want
+
 func tap() -> void:
 	var ev := InputEventScreenTouch.new()
 	ev.index = 0
@@ -3919,6 +3925,141 @@ func _initialize() -> void:
 	for cn in main.hud._call_nodes:
 		parents_ok = parents_ok and cn["glyph"].get_parent() == cn["holder"] and cn["text"].get_parent() == cn["holder"]
 	check(parents_ok and not main.hud._res.visible, "the results screen and the callouts hold their own parts (hiding them hides everything)")
+
+	print("16. background readability and the screen audit")
+	var sa_save := root.get_node("Save")
+	sa_save.reset_all()
+	main.set_process(true)
+	main.restart()
+	main.picks.enabled = false
+	main.spawner.kit_enabled = true
+	# -- the countryside is a small blurred picture, muted, no outlines
+	var sa_g: Node3D = main.ground
+	var sa_view: Vector2 = main.get_viewport().get_visible_rect().size
+	await process_frame
+	check(sa_g.vp.size.x <= int(sa_view.x / tuning.ground_blur_div) + 1 and sa_g.vp.size.x >= 8 and sa_g.vp.render_target_update_mode == SubViewport.UPDATE_ALWAYS, "the countryside is drawn at 1/%d size (%s) and blurred on the ground plane" % [tuning.ground_blur_div, str(sa_g.vp.size)])
+	check(main.spawner.ground_mi.material_override == sa_g.backdrop_mat and sa_g.backdrop_mat.get_shader_parameter("use_tex") == 1.0, "the ground plane shows the blurred picture")
+	var sa_sat := 0.0
+	for m in sa_g._all_mats:
+		sa_sat = maxf(sa_sat, m.albedo_color.s)
+	var sa_obs_sat: float = main.spawner._obstacle_mat.albedo_color.s
+	check(sa_sat < 0.3 and sa_sat < sa_obs_sat, "ground colours are muted (max saturation %.2f vs obstacles %.2f)" % [sa_sat, sa_obs_sat])
+	var sa_outlined := 0
+	for mi in sa_g.world.find_children("*", "MeshInstance3D", true, false):
+		if (mi as MeshInstance3D).material_overlay != null:
+			sa_outlined += 1
+	check(sa_outlined == 0 and sa_g.world.find_children("*", "Label3D", true, false).is_empty(), "no outlines and no text anywhere in the background")
+	for tod in [0.0, 0.35, 0.7, 1.0]:   # every time of day keeps the ground muted and darker or equal in saturation than the obstacles
+		main._apply_time_of_day(tod)
+		var mx := 0.0
+		for m in sa_g._all_mats:
+			mx = maxf(mx, m.albedo_color.s)
+		check(mx < 0.35, "time of day %.2f: ground saturation stays low (%.2f)" % [tod, mx])
+	main._apply_time_of_day(0.35)
+	# -- obstacle shadows
+	var sa_row = main.spawner._rows_make_for_test(main.player.position.z - 6.0, [-2.0, 2.0])
+	main.shadows.update_from(main.spawner, 0.0, true)
+	check(main.shadows.count >= 2 and main.shadows._mm.visible_instance_count == main.shadows.count, "each obstacle gets a soft shadow on the ground (%d blobs)" % main.shadows.count)
+	DebugFlags.parse(["tune", "nofx=shadows"])
+	main.shadows.update_from(main.spawner, 0.0, true)
+	check(main.shadows.count == 0 and main.shadows._mm.visible_instance_count == 0, "?nofx=shadows hides them")
+	DebugFlags.parse(["tune", "nofx=ground"])
+	sa_g.apply_debug()
+	check(sa_g.vp.render_target_update_mode == SubViewport.UPDATE_DISABLED and sa_g.backdrop_mat.get_shader_parameter("use_tex") == 0.0, "?nofx=ground hides the countryside (flat colour, nothing drawn)")
+	DebugFlags.parse(["tune"])
+	sa_g.apply_debug()
+	main.spawner._release_row(sa_row)
+	# -- every screen: only the expected ones show after each transition
+	var sa_names := func(extra: Array) -> String:
+		var a: Array = Array(main.visible_screens())
+		a = a.filter(func(n): return not ["popup", "coin_pop", "callout", "combo", "flash"].has(n) or extra.has(n))
+		a.sort()
+		return ",".join(a)
+	main._show_menu()
+	check(sa_names.call([]) == "menu", "menu: only the start screen shows [%s]" % sa_names.call([]))
+	main._open_hangar()
+	check(sa_names.call([]) == "hangar", "hangar: only the Hangar shows [%s]" % sa_names.call([]))
+	main._show_menu()
+	main._open_logbook()
+	check(sa_names.call([]) == "logbook", "logbook: only the Logbook shows [%s]" % sa_names.call([]))
+	main._show_menu()
+	main.hud.play_pressed.emit()
+	check(sa_names.call([]) == "airstrip" or sa_names.call([]) == "", "play: nothing but the world shows [%s]" % sa_names.call([]))
+	check(not main.hud._menu.visible and not main.hud._hangar.visible and not main.hud._logbook.visible and not main.hud.results_visible() and not main.pick_screen.is_shown(), "play: no screen is up")
+	# a run with callouts, popups and a combo banner up, then a crash
+	main._callout("steady_nerves", "Steady Nerves kept your streak!")
+	main.hud.popup("x2", 64, Color.WHITE, Vector2(540, 800))
+	main.hud.show_combo("TEST", Color.WHITE, "COMBO!")
+	var sa_now: Array = Array(main.visible_screens())
+	check(sa_now.has("callout") and sa_now.has("popup") and sa_now.has("combo"), "a run shows its callout, popup and combo banner [%s]" % ",".join(sa_now))
+	main.score = 500.0
+	main._end_run(main.HEADER_CRASH, main.REASON_OBSTACLE)
+	check(sa_names.call(["callout", "popup", "combo"]).contains("crash") and not main.hud.results_visible() and not main.hud._menu.visible, "crash: the crash sequence plays, no results yet [%s]" % sa_names.call(["callout", "popup", "combo"]))
+	for i in 40:
+		main._update_crash(0.05)
+	check(sa_names.call([]) == "results" or sa_names.call([]) == "airstrip,results" or sa_names.call([]).begins_with("crash,results") or sa_names.call([]) == "results,crash", "results: the results screen shows over the finished crash [%s]" % sa_names.call([]))
+	check(main.hud._res.mouse_filter == Control.MOUSE_FILTER_STOP and main.hud._menu.mouse_filter == Control.MOUSE_FILTER_STOP and main.hud._hangar.mouse_filter == Control.MOUSE_FILTER_STOP and main.hud._logbook.mouse_filter == Control.MOUSE_FILTER_STOP and main.pick_screen._root.mouse_filter == Control.MOUSE_FILTER_STOP, "every screen swallows touches (nothing leaks to the game behind)")
+	# results -> hangar (the upgrade button) -> menu -> play
+	main.hud.hangar_goto.emit(tuning.upgrades[0]["id"])
+	check(sa_names.call([]) == "hangar" and not main.crash_fx.active and main._cam_ease == 0.0 and main._crash_t < 0.0, "results -> Hangar: only the Hangar shows, the crash and camera are cleared [%s]" % sa_names.call([]))
+	main.hud.back_pressed.emit()
+	check(sa_names.call([]) == "menu", "Hangar -> back: only the start screen [%s]" % sa_names.call([]))
+	main.hud.play_pressed.emit()
+	check(main.alive and not main.hud._menu.visible and not main.hud.results_visible() and not main.crash_fx.active, "...and PLAY starts a clean run")
+	# results -> play again, with callouts and popups still up
+	main._callout("steady_nerves", "again")
+	main.hud.popup("x3", 64, Color.WHITE, Vector2(540, 800))
+	main._end_run(main.HEADER_CRASH, main.REASON_OBSTACLE)
+	for i in 40:
+		main._update_crash(0.05)
+	main._death_time -= 1.0
+	main.hud.play_again_pressed.emit()
+	var sa_after: String = sa_names.call([])
+	check(main.alive and (sa_after == "" or sa_after == "airstrip"), "results -> PLAY AGAIN: a clean run, nothing left over [%s]" % sa_after)
+	# restart while popups, callouts and a combo banner are active
+	main._callout("steady_nerves", "again")
+	main.hud.popup("x3", 64, Color.WHITE, Vector2(540, 800))
+	main.hud.show_combo("TEST", Color.WHITE, "COMBO!")
+	main.restart()
+	check(not Array(main.visible_screens()).has("callout") and not Array(main.visible_screens()).has("popup") and not Array(main.visible_screens()).has("combo"), "restart clears every active popup, callout and banner [%s]" % ",".join(main.visible_screens()))
+	# the pick screen opening and closing
+	main.picks.enabled = true
+	main._callout("steady_nerves", "pick")
+	main._begin_pick()
+	check(sa_names.call(["callout"]).contains("pick") and paused_ok(true), "pick: the cards show and the game is paused [%s]" % sa_names.call(["callout"]))
+	main._notification(NOTIFICATION_APPLICATION_FOCUS_OUT)   # the tab loses focus with the pick screen up
+	main._notification(NOTIFICATION_APPLICATION_FOCUS_IN)
+	check(main.pick_screen.is_shown() and get_paused(), "the tab losing focus over the pick screen changes nothing")
+	main._on_pick_chosen(0)
+	check(not main.pick_screen.is_shown() and not get_paused() and not main._picking, "choosing a card closes the pick screen and resumes")
+	main._begin_pick()
+	main._end_run(main.HEADER_CRASH, main.REASON_OBSTACLE)   # (a hit can never come while paused, but make sure a menu closes it)
+	main._open_hangar()
+	check(sa_names.call([]) == "hangar" and not get_paused() and not main._picking, "a menu opening over a pick screen closes it and unpauses [%s]" % sa_names.call([]))
+	main._show_menu()
+	main.hud.play_pressed.emit()
+	main.picks.enabled = false
+	# the tab losing focus mid-run: the world stands still and the audio is muted
+	var sa_t0: float = main.elapsed
+	main._notification(NOTIFICATION_APPLICATION_FOCUS_OUT)
+	main._process(0.016)
+	main._process(0.016)
+	check(main._suspended and AudioServer.is_bus_mute(0) and main.elapsed == sa_t0, "focus lost mid-run: the sim stands still and the sound is muted")
+	main._notification(NOTIFICATION_APPLICATION_FOCUS_IN)
+	check(not main._suspended and not AudioServer.is_bus_mute(0), "focus back: sound is back")
+	# the tuning panel
+	main.tune_panel.open()
+	check(sa_names.call([]) == "tune" and get_paused(), "the tuning panel shows alone and pauses the game")
+	main.tune_panel.close()
+	check(sa_names.call([]) == "" or sa_names.call([]) == "airstrip", "...and closing it leaves nothing behind [%s]" % sa_names.call([]))
+	# the goal gates and the airstrip never survive into a menu
+	main.goals.prewarm_show(1.0)
+	main.ground.start_airstrip(1.0)
+	main._show_menu()
+	check(sa_names.call([]) == "menu", "goal gates and the airstrip are gone behind the start screen [%s]" % sa_names.call([]))
+	main.hud.play_pressed.emit()
+	main.set_process(false)
+	sa_save.reset_all()
 
 	DirAccess.remove_absolute(ProjectSettings.globalize_path("user://smoke_test_save.json"))
 	print("")

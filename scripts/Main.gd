@@ -333,6 +333,7 @@ var _event := ""                 # the latest thing worth naming in the hitch lo
 var _event_frame := -100
 var sim_time := 0.0              # seconds of simulation this run (should track the wall clock minus pauses)
 var _run_start_ms := 0
+var _suspend_since_ms := 0
 var _paused_since_ms := 0        # when the current pause / suspension began (0 = not paused)
 var _paused_total_ms := 0
 
@@ -381,12 +382,14 @@ func _notification(what: int) -> void:
 		NOTIFICATION_APPLICATION_FOCUS_OUT, NOTIFICATION_APPLICATION_PAUSED, NOTIFICATION_WM_WINDOW_FOCUS_OUT:
 			if not _suspended:
 				_suspended = true
-				_paused_since_ms = Time.get_ticks_msec()
+				_suspend_since_ms = Time.get_ticks_msec()   # (its own clock: a pick screen that was already up keeps its own)
+				AudioServer.set_bus_mute(0, true)           # nothing keeps droning from a background tab
 				_note_event("window went to the background")
 		NOTIFICATION_APPLICATION_FOCUS_IN, NOTIFICATION_APPLICATION_RESUMED, NOTIFICATION_WM_WINDOW_FOCUS_IN:
 			if _suspended:
 				_suspended = false
-				_paused_total_ms += Time.get_ticks_msec() - _paused_since_ms
+				_paused_total_ms += Time.get_ticks_msec() - _suspend_since_ms
+				AudioServer.set_bus_mute(0, false)
 				_skip_frames = Tuning.resume_skip_frames
 				player.clear_input()   # (the drag that piled up while away must not jump the plane)
 				_note_event("window came back")
@@ -1253,8 +1256,43 @@ func _on_play_again() -> void:
 	if screen == SCREEN_OVER and Time.get_ticks_msec() / 1000.0 - _death_time > 0.4:
 		restart()
 
+## Everything showing right now, by name: the HUD's screens and overlays plus the pick screen, the tuning panel, the crash
+## sequence, the goal gates and the airstrip. The tests assert exactly the expected set after every transition.
+func visible_screens() -> PackedStringArray:
+	var out: PackedStringArray = hud.visible_overlays()
+	if pick_screen.is_shown() and pick_screen.visible:
+		out.append("pick")
+	if tune_panel and tune_panel.is_open:
+		out.append("tune")
+	if crash_fx.active:
+		out.append("crash")
+	for gate in goals._gates:
+		if (gate["root"] as Node3D).visible:
+			out.append("goal_gate")
+			break
+	if ground.airstrip.visible:
+		out.append("airstrip")
+	return out
+
+## Going to a menu screen: nothing of the last run may stay showing behind it (the crash, the goal gates, the airstrip,
+## the shadows, the zoomed camera) and the pick screen is surely closed.
+func _leave_world() -> void:
+	crash_fx.stop()
+	goals.hide_all()
+	ground.stop_airstrip()
+	shadows.hide_all()
+	_crash_t = -1.0
+	_cam_ease = 0.0
+	if _picking or get_tree().paused:
+		_picking = false
+		pick_screen.hide_cards()
+		get_tree().paused = false
+		sfx.duck(false)
+	hud.reset_transients()
+
 ## The start screen: the world waits (nothing scrolls) behind it.
 func _show_menu() -> void:
+	_leave_world()
 	screen = SCREEN_MENU
 	alive = false
 	sfx.stop_run()
@@ -1264,11 +1302,13 @@ func _show_menu() -> void:
 	hud.show_menu()
 
 func _open_logbook() -> void:
+	_leave_world()
 	screen = SCREEN_LOGBOOK
 	alive = false
 	hud.show_logbook()
 
 func _open_hangar() -> void:
+	_leave_world()
 	screen = SCREEN_HANGAR
 	alive = false
 	hud.show_hangar()

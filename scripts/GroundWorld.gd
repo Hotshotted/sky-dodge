@@ -54,7 +54,6 @@ func _ready() -> void:
 	vp.msaa_3d = Viewport.MSAA_DISABLED
 	vp.gui_disable_input = true
 	vp.size = Vector2i(270, 480)
-	vp.render_target_update_mode = SubViewport.UPDATE_DISABLED if DebugFlags.off("ground") else SubViewport.UPDATE_ALWAYS
 	add_child(vp)
 	world = Node3D.new()
 	vp.add_child(world)
@@ -71,7 +70,7 @@ func _ready() -> void:
 	var shader := load("res://shaders/backdrop.gdshader") as Shader
 	backdrop_mat.shader = shader
 	backdrop_mat.set_shader_parameter("tex", vp.get_texture())
-	backdrop_mat.set_shader_parameter("use_tex", 0.0 if DebugFlags.off("ground") else 1.0)
+	apply_debug()
 	for i in 6:
 		_field_mats.append(StandardMaterial3D.new())
 	for m in [_road_mat, _river_mat, _wall_mat, _roof_mat, _strip_mat]:
@@ -112,6 +111,12 @@ func _ready() -> void:
 
 var _bg_env: Environment
 var _all_mats: Array[StandardMaterial3D] = []
+
+## ?nofx=ground: no countryside (and no picture to draw), just the flat colour. Read again when the flags change.
+func apply_debug() -> void:
+	var off := DebugFlags.off("ground")
+	vp.render_target_update_mode = SubViewport.UPDATE_DISABLED if off else SubViewport.UPDATE_ALWAYS
+	backdrop_mat.set_shader_parameter("use_tex", 0.0 if off else 1.0)
 
 ## Keep the small picture's camera and size matched to the main view (the picture is 1/ground_blur_div as big).
 func sync_camera(main_cam: Camera3D, view: Vector2) -> void:

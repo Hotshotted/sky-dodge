@@ -264,7 +264,7 @@ func _screen_root() -> Control:
 	root.set_anchors_and_offsets_preset(Control.PRESET_FULL_RECT)
 	root.mouse_filter = Control.MOUSE_FILTER_STOP   # taps on the screen don't reach the game
 	var bg := ColorRect.new()
-	bg.color = Color(0.08, 0.1, 0.16, 0.94)
+	bg.color = Color(0.08, 0.1, 0.16, 1.0)   # (opaque: nothing of the run shows through)
 	bg.set_anchors_and_offsets_preset(Control.PRESET_FULL_RECT)
 	bg.mouse_filter = Control.MOUSE_FILTER_IGNORE
 	root.add_child(bg)
@@ -570,6 +570,8 @@ func _refresh_milestones() -> void:
 		(r["line"] as Label).add_theme_color_override("font_color", Color(0.85, 0.93, 1.0) if done else Color(0.7, 0.75, 0.85))
 
 func show_logbook() -> void:
+	hide_results()
+	reset_transients()
 	refresh_logbook()
 	_menu.visible = false
 	_hangar.visible = false
@@ -656,6 +658,8 @@ func set_volume_sliders(music: float, sound: float) -> void:
 		_volume_sliders[1].set_value_no_signal(sound)
 
 func show_menu() -> void:
+	hide_results()
+	reset_transients()
 	refresh_menus()
 	_logbook.visible = false
 	_hangar.visible = false
@@ -670,6 +674,8 @@ func focus_upgrade(id: String) -> void:
 		_select_tab(d["tab"])
 
 func show_hangar() -> void:
+	hide_results()
+	reset_transients()
 	refresh_menus()
 	_logbook.visible = false
 	_menu.visible = false
@@ -677,11 +683,65 @@ func show_hangar() -> void:
 	_over.visible = false
 	_hangar.visible = true
 
+## Hide the pooled in-run bits: callouts, popups, coin pops, the combo banner and the flash.
+func reset_transients() -> void:
+	for i in CALLOUTS:
+		_call_born[i] = 0
+		(_call_nodes[i]["holder"] as Control).visible = false
+	for i in POPUP_POOL:
+		_pop_labels[i].visible = false
+		_pop_born[i] = 0
+	for i in COIN_POP_POOL:
+		_coin_pops[i].visible = false
+		_coin_born[i] = 0
+	_combo_label.visible = false
+	_combo_sub.visible = false
+	_flash_rect.color.a = 0.0
+
 func hide_menus() -> void:
 	_logbook.visible = false
 	_menu.visible = false
 	_hangar.visible = false
 	_over_hangar.visible = false
+
+## Every screen and overlay that is showing right now (by name). The tests assert exactly the expected set in each state.
+## (The always-on run HUD, score and fuel gauge, is not listed. The transient pooled bits are "popup", "coin_pop",
+## "callout", "combo" and "flash".)
+func visible_overlays() -> PackedStringArray:
+	var out := PackedStringArray()
+	for pair in [["menu", _menu], ["hangar", _hangar], ["logbook", _logbook], ["results", _res], ["hangar_button", _over_hangar]]:
+		if pair[1] != null and (pair[1] as Control).is_visible_in_tree():
+			out.append(pair[0])
+	if _over.visible and _over.modulate.a > 0.01:
+		out.append("gameover_text")
+	if is_instance_valid(_splash) and not _splash.is_queued_for_deletion():
+		out.append("splash")
+	if _combo_label.visible or _combo_sub.visible:
+		out.append("combo")
+	for cn in _call_nodes:
+		if (cn["holder"] as Control).visible:
+			out.append("callout")
+			break
+	for l in _pop_labels:
+		if l.visible:
+			out.append("popup")
+			break
+	for l in _coin_pops:
+		if l.visible:
+			out.append("coin_pop")
+			break
+	if _flash_rect.color.a > 0.01:
+		out.append("flash")
+	return out
+
+## The run HUD (score, distance, fuel gauge, next pick, perk icons, effect labels) only shows while a run is on screen.
+func set_run_hud(on: bool) -> void:
+	for c in _run_hud_nodes():
+		c.visible = on
+
+func _run_hud_nodes() -> Array:
+	var list: Array = [_score, _distance_label, _fuel_bg, _fuel_fill, _fuel_label, _next_label]
+	return list
 
 ## Is a touch at `pos` on the game-over "Hangar" button? (Main uses it so that tap doesn't restart.)
 func over_hangar_hit(pos: Vector2) -> bool:
