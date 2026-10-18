@@ -22,6 +22,8 @@ const ENTRIES := [
 	["whisker_close_distance", "Whisker-close distance", 0.0, 0.3, 0.01],
 	["obstacle_scale", "Obstacle scale", 0.3, 0.9, 0.01],
 	["plane_tip_radius", "Plane tip radius", 0.05, 0.35, 0.01],
+	["first_pick_min_seconds", "First pick: not before (s)", 0.0, 30.0, 1.0],
+	["first_pick_max_seconds", "First pick: by (s)", 1.0, 60.0, 1.0],
 	["bonus_cap", "Bonus cap", 1.5, 10.0, 0.1],
 	["cloud_start_time", "Cloud start time (s)", 0.0, 120.0, 1.0],
 	["cloud_frequency", "Clouds per row", 0.0, 2.0, 0.05],

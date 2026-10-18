@@ -192,6 +192,10 @@ var pick_growth := 1.5
 ## Pay), so that picks keep their pace as those grow: scale = map x Coin Value x (1 + weight x (bounty + close-call pay) / ref).
 var pick_flat_weight := 0.15
 var pick_flat_ref := 12.0
+## The FIRST pick of every run comes inside this window (seconds into the run): never before the minimum, whatever
+## the score, and guaranteed by the maximum, whatever the score. Later picks are purely score-based.
+var first_pick_min_seconds := 8.0
+var first_pick_max_seconds := 15.0
 var pick_cards := 3
 ## How much more often a perk you already own is offered (a card for each owned perk at 1.0 + this).
 var perk_owned_weight := 3.0

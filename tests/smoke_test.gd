@@ -297,7 +297,7 @@ func _initialize() -> void:
 		defaults[e[0]] = tuning.get(e[0])
 	for t in panel.TOGGLES:
 		defaults[t[0]] = tuning.get(t[0])
-	check(panel.ENTRIES.size() == 19 and panel._sliders.size() == 19 and panel._toggles.size() == 1, "19 sliders and 1 on/off switch for the tuned values")
+	check(panel.ENTRIES.size() == 21 and panel._sliders.size() == 21 and panel._toggles.size() == 1, "21 sliders and 1 on/off switch for the tuned values")
 	var all_match := true
 	for e in panel.ENTRIES:
 		if not is_equal_approx(panel._sliders[e[0]].value, tuning.get(e[0])):
@@ -1597,7 +1597,44 @@ func _initialize() -> void:
 	sp.reset(-500.0)
 	check(main.hud._next_label.text == "Next: 40", "the HUD shows \"Next: 40\" under the score")
 	# (b) reaching it pauses the game completely and deals three cards
+	# the first pick lives in a time window
+	check(tuning.first_pick_min_seconds == 8.0 and tuning.first_pick_max_seconds == 15.0, "first_pick_min_seconds 8 and first_pick_max_seconds 15 are Tuning values")
+	main.elapsed = 3.0
+	main.score = 1000000.0
+	main._process(0.02)
+	check(not main.get_tree().paused and not main._picking, "the first pick never comes before 8 s, however high the score (3 s, score 1M)")
+	main.elapsed = 8.0
+	main.score = 1000000.0
+	main._process(0.02)
+	check(main.get_tree().paused and main._picking, "...it comes at 8 s once the score is there")
+	main.pick_screen.hide_cards()
+	main.get_tree().paused = false
+	main._picking = false
+	main.restart()
+	main.set_process(false)
+	sp.reset(-500.0)
+	pk.enabled = true
+	pk.start_run(1.0)
+	main.elapsed = 12.0
+	main.score = 0.0
+	main._process(0.02)
+	check(not main._picking, "with a low score nothing happens at 12 s")
+	main.elapsed = 14.99
+	main._process(0.02)
+	check(main.get_tree().paused and main._picking and not main._pick_is_extra, "...but it is guaranteed by 15 s regardless of score")
+	await real_wait(0.55)
+	main.pick_screen._on_card(0)
+	check(not main.get_tree().paused and pk.picks_taken == 1 and pk.next_pick >= 0.0 + pk.price(1), "(it counts as a normal pick; the next one is a full price away: %.0f)" % pk.next_pick)
+	main.elapsed = 60.0
+	main._process(0.02)
+	check(not main._picking, "later picks are score-based only: 60 s in with a low score, no pick")
+	main.restart()
+	main.set_process(false)
+	sp.reset(-500.0)
+	pk.enabled = true
+	pk.start_run(1.0)
 	var elapsed0: float = main.elapsed
+	main.elapsed = 9.0
 	main.score = 40.0
 	main._process(0.02)
 	check(main.get_tree().paused and main.pick_screen.is_shown() and main._pick_cards.size() == 3, "reaching the score pauses the game and shows three cards")
@@ -1609,7 +1646,7 @@ func _initialize() -> void:
 	main.pick_screen._on_card(0)
 	check(main.get_tree().paused, "a tap in the first moment is ignored (no accidental picks)")
 	await real_wait(0.45)
-	check(is_equal_approx(main.elapsed, elapsed0 + 0.02) and absf(main.pick_screen._cards[0].position.x - 60.0) < 1.0, "while paused nothing advances, and the cards have slid into place")
+	check(is_equal_approx(main.elapsed, 9.02) and absf(main.pick_screen._cards[0].position.x - 60.0) < 1.0, "while paused nothing advances, and the cards have slid into place")
 	var first_card: Dictionary = main._pick_cards[0]
 	main.pick_screen._on_card(0)
 	check(not main.get_tree().paused and not main.pick_screen.is_shown() and pk.next_pick > 90.0, "choosing a card resumes the game and sets the next pick (%.0f)" % pk.next_pick)
@@ -2414,6 +2451,7 @@ func _initialize() -> void:
 	sp.reset(-500.0)
 	pk.enabled = true
 	pk.start_run(1.0)
+	main.elapsed = 9.0
 	main.score = 600.0
 	main._process(0.02)
 	check(main.get_tree().paused, "(a pick is up)")

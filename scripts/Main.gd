@@ -406,8 +406,14 @@ func _process(raw_delta: float) -> void:
 			_on_pickup(cans[ci], spawner.picked_golden[ci])
 	hud.set_fuel(fuel / Tuning.fuel_max())
 	_check_fuel(delta)
-	if not _picking and (score >= picks.next_pick or _extra_picks > 0):
-		_begin_pick(score < picks.next_pick)   # (a purple crate's pick is extra: it does not use up the score)
+	if not _picking:
+		var due := score >= picks.next_pick
+		if picks.picks_taken == 0 and picks.enabled:   # the first pick lives in a time window
+			due = (due and elapsed >= Tuning.first_pick_min_seconds) or elapsed >= Tuning.first_pick_max_seconds
+		if due:
+			_begin_pick(false)
+		elif _extra_picks > 0:
+			_begin_pick(true)   # (a purple crate's pick is extra: it does not use up the score)
 
 ## Empty tank: Reserve Tank refills it; Glide (a perk) keeps you flying for a few seconds; else the run ends.
 ## Second Wind refills a share of the tank once when it runs low.
@@ -483,7 +489,7 @@ func _on_pick_chosen(i: int) -> void:
 		tune_panel.set_available(true)
 	_apply_card(card)
 	if not _pick_is_extra:
-		picks.advance()
+		picks.advance(score)
 	_pick_is_extra = false
 	hud.set_next(picks.next_pick)
 	_check_combos()

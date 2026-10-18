@@ -31,10 +31,12 @@ func price(k: int) -> float:
 	return Tuning.pick_first * perm_mult * pow(Tuning.pick_growth, k)
 
 ## A pick was taken: the next one is due `price` more score later.
-func advance() -> void:
+func advance(score_now: float = 0.0) -> void:
 	picks_taken += 1
 	_price_sum += price(picks_taken)
 	next_pick = _price_sum
+	if picks_taken == 1:   # the first pick came on a timer: the second is a full price away from the score you have now
+		next_pick = maxf(next_pick, score_now + price(1))
 
 func level(id: String) -> int:
 	return int(levels.get(id, 0))
