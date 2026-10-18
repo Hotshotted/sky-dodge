@@ -15,6 +15,7 @@ var _score_bonus := 1.0                # drives the score label's tint, size and
 var _last_points := 0.0
 var _score_tick_ms := -10000         # when the score number last ticked up while a bonus was active
 ## Menu buttons, wired up by Main.
+signal volume_changed(music: float, sound: float)   # the start screen's sliders
 signal play_pressed
 signal hangar_pressed
 signal map_pressed(index: int)
@@ -83,6 +84,8 @@ const FUEL_BAR_H := 30.0
 const FUEL_BAR_TOP := 255.0
 const FUEL_PULSE_TIME := 0.35
 var _splash: Control
+var sfx: Sfx = null                  # set by Main: the buttons click through it
+var _volume_sliders: Array[HSlider] = []
 var _perf_label: Label
 var _graph: FrameGraph        # ?perf: the rolling frame-time graph
 var _perf_worst := 0.0        # worst frame time (ms) in the current 3 s window
@@ -211,6 +214,7 @@ func _ready() -> void:
 
 func _make_button(text: String, font_size: int, size: Vector2) -> Button:
 	var b := Button.new()
+	b.pressed.connect(func(): if sfx != null: sfx.play("tap", 0.8))   # every button clicks
 	b.text = text
 	b.add_theme_font_size_override("font_size", font_size)
 	b.custom_minimum_size = size
@@ -284,6 +288,29 @@ func _build_menus() -> void:
 	_place(hangar, (W - 560.0) * 0.5, 1350, 560, 130)
 	hangar.pressed.connect(func(): hangar_pressed.emit())
 	_menu.add_child(hangar)
+	# volume settings: Music and Sound, one slider each
+	for vi in 2:
+		var vl := _screen_label(_menu, ["Music", "Sound"][vi], 40, 90, 1660 + 90.0 * vi, 200, 70, HORIZONTAL_ALIGNMENT_LEFT)
+		vl.add_theme_font_size_override("font_size", 40)
+		var sl := HSlider.new()
+		sl.min_value = 0.0
+		sl.max_value = 1.0
+		sl.step = 0.05
+		sl.value = Save.audio_music if vi == 0 else Save.audio_sound
+		sl.position = Vector2(310, 1660 + 90.0 * vi)
+		sl.size = Vector2(680, 70)
+		sl.value_changed.connect(func(v: float):
+			if vi == 0:
+				Save.audio_music = v
+			else:
+				Save.audio_sound = v
+			volume_changed.emit(Save.audio_music, Save.audio_sound))
+		sl.drag_ended.connect(func(_changed: bool):
+			Save.save_game()
+			if sfx != null:
+				sfx.play("tap", 0.8))
+		_menu.add_child(sl)
+		_volume_sliders.append(sl)
 	var logbook := _make_button("LOGBOOK", 50, Vector2(560, 110))
 	_place(logbook, (W - 560.0) * 0.5, 1510, 560, 110)
 	logbook.pressed.connect(func(): logbook_pressed.emit())
@@ -603,6 +630,12 @@ func refresh_menus(all_tabs: bool = false) -> void:
 			eq.visible = show and lv > 0
 			eq.text = "REMOVE" if (_sel_slot < 3 and Save.loadout[_sel_slot] == id) else ("IN SLOT\n%d" % (Save.loadout.find(id) + 1) if Save.is_equipped(id) else "EQUIP")
 			eq.disabled = false
+
+## The start screen's sliders show the saved volumes.
+func set_volume_sliders(music: float, sound: float) -> void:
+	if _volume_sliders.size() == 2:
+		_volume_sliders[0].set_value_no_signal(music)
+		_volume_sliders[1].set_value_no_signal(sound)
 
 func show_menu() -> void:
 	refresh_menus()

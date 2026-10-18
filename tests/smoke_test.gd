@@ -3428,6 +3428,115 @@ func _initialize() -> void:
 	check(cs_owned_hits > cs_other_hits * 1.2, "a perk you own is offered more often (%d vs %d)" % [cs_owned_hits, cs_other_hits])
 	cs_pk.set_perk("scavenger", 0)
 
+	print("12. sound: synthesised files, pooled players, the mix follows speed and the wave phase, ?nofx=sound / music")
+	DebugFlags.parse(["tune"])
+	var so = main.sfx
+	var so_ok := true
+	for n12 in so.ONE_SHOTS:
+		so_ok = so_ok and so._streams[n12] != null and so._streams[n12].get_length() > 0.01
+	check(so_ok and so._pool.size() == so.POOL, "all %d one-shot sounds load (synthesised offline), in a pool of %d players" % [so.ONE_SHOTS.size(), so.POOL])
+	var loops_ok := true
+	for p12 in [so._engine, so._wind] + so._music:
+		loops_ok = loops_ok and p12.stream.loop_mode == AudioStreamWAV.LOOP_FORWARD and p12.stream.loop_end > 1000
+	check(loops_ok and so._music.size() == 3, "the engine, the wind and the three music layers are seamless loops")
+	check(AudioServer.get_bus_index("Music") >= 0 and AudioServer.get_bus_index("SFX") >= 0, "a Music bus and a SFX bus carry the volume settings")
+	var so_save = root.get_node("Save")
+	so_save.audio_music = 0.5
+	so_save.audio_sound = 0.25
+	so.apply_volumes()
+	check(absf(AudioServer.get_bus_volume_db(AudioServer.get_bus_index("Music")) - linear_to_db(0.5)) < 0.01 and absf(AudioServer.get_bus_volume_db(AudioServer.get_bus_index("SFX")) - linear_to_db(0.25)) < 0.01, "the start-screen volumes set the buses")
+	var vol_seen := [-1.0, -1.0]
+	main.hud.volume_changed.connect(func(m: float, sd: float):
+		vol_seen[0] = m
+		vol_seen[1] = sd)
+	main.hud._volume_sliders[0].value = 0.3
+	main.hud._volume_sliders[1].value = 0.9
+	check(main.hud._volume_sliders.size() == 2 and absf(so_save.audio_music - 0.3) < 0.001 and absf(so_save.audio_sound - 0.9) < 0.001 and absf(vol_seen[0] - 0.3) < 0.001, "the start screen has a Music and a Sound slider that change the settings live")
+	so_save.save_game()
+	so_save.load_game()
+	check(absf(so_save.audio_music - 0.3) < 0.001 and absf(so_save.audio_sound - 0.9) < 0.001, "...and they are saved")
+	# the sounds fire from the game's events
+	main.restart()
+	var plays0: int = so.plays
+	var nm_ev := {"side": 1, "node": null, "outline": ShaderMaterial.new(), "clearance": 0.1, "whisker": false, "row": null, "k": -1}
+	main._on_near_miss(nm_ev)
+	var s_plain: String = so.last_played
+	nm_ev["whisker"] = true
+	main._on_near_miss(nm_ev)
+	var s_whisker: String = so.last_played
+	nm_ev["special"] = "barnstormer"
+	main._on_near_miss(nm_ev)
+	check(s_plain == "whoosh" and s_whisker == "whoosh_big" and so.last_played == "barnstormer", "a close call whooshes; a Whisker close and a Barnstormer get bigger ones (%s, %s, %s)" % [s_plain, s_whisker, so.last_played])
+	main._on_pickup(Vector3.ZERO)
+	var s_pickup: String = so.last_played
+	main._on_crate_break(1, Vector3.ZERO)
+	var s_crunch: String = so.last_played
+	main._speed_up_cue(0.4)
+	var s_speed: String = so.last_played
+	check(s_pickup == "pickup" and s_crunch == "crunch" and s_speed == "speed_whoosh" and so.plays - plays0 >= 6, "fuel can pickup, hay crunch and the speed-up whoosh each play their sound")
+	main.hud.show_menu()
+	so.last_played = ""
+	var tap_btn: Button = main.hud._make_button("x", 20, Vector2(10, 10))
+	tap_btn.pressed.emit()
+	tap_btn.free()
+	check(so.last_played == "tap", "UI buttons tap")
+	# engine and wind follow the speed
+	so.set_flight(true, 0.0)
+	for i in 30:
+		so._process(0.05)
+	var eng_lo_pitch: float = so._engine.pitch_scale
+	var eng_lo_db: float = so._engine.volume_db
+	var wind_lo_db: float = so._wind.volume_db
+	so.set_flight(true, 1.0)
+	for i in 30:
+		so._process(0.05)
+	check(so._engine.playing and so._engine.pitch_scale > eng_lo_pitch * 2.0 and so._engine.volume_db > eng_lo_db and so._wind.volume_db > wind_lo_db + 6.0, "the engine's pitch and volume and the wind rise with speed (pitch x%.1f)" % (so._engine.pitch_scale / eng_lo_pitch))
+	so.set_flight(false)
+	for i in 30:
+		so._process(0.05)
+	check(not so._engine.playing, "...and fall silent when the run ends")
+	# the music layers follow the wave phase
+	for ph12 in 4:
+		so.set_phase(ph12)
+		for i in 60:
+			so._process(0.05)
+		var want_mix: Array = so.LAYER_MIX[ph12]
+		var got_ok := true
+		for i in 3:
+			got_ok = got_ok and absf(so._layer_now[i] - float(want_mix[i])) < 0.01
+		check(got_ok, "music layers in %s: %s" % [["CALM (base only)", "BUILD (+ rhythm)", "PEAK (full)", "BREATHER (back to base)"][ph12], str(so._layer_now)])
+	check(so._music[0].volume_db > -20.0 and so._music[2].volume_db < -60.0, "...as volumes (base audible, lead silent in the BREATHER)")
+	# ?nofx=sound and ?nofx=music
+	DebugFlags.parse(["nofx=sound"])
+	var p_before: int = so.plays
+	so.play("crash")
+	so.set_flight(true, 0.5)
+	for i in 30:
+		so._process(0.05)
+	check(so.plays == p_before and not so._engine.playing, "?nofx=sound: no effects, no engine")
+	DebugFlags.parse(["nofx=music"])
+	so.set_phase(2)
+	for i in 60:
+		so._process(0.05)
+	check(so._music[0].volume_db <= -79.0 and so._music[2].volume_db <= -79.0, "?nofx=music: the music is silent")
+	DebugFlags.parse(["tune"])
+	so.set_flight(false)
+	so.set_phase(0)
+	# nothing is created while playing
+	var snd_base := snapshot(main)
+	for i in 400:
+		so.play(so.ONE_SHOTS[i % so.ONE_SHOTS.size()], 0.0)
+		so.set_flight(i % 50 < 40, (i % 100) / 100.0)
+		so.set_phase(i % 4)
+		so._process(0.016)
+	so.set_flight(false)
+	check(same_world(snd_base, snapshot(main)), "400 sounds, engine and music changes created nothing new  [%s]" % describe(snapshot(main)))
+	for p12 in so._pool:
+		p12.stop()
+	so_save.audio_music = 0.7
+	so_save.audio_sound = 0.8
+	so.apply_volumes()
+
 	DirAccess.remove_absolute(ProjectSettings.globalize_path("user://smoke_test_save.json"))
 	print("")
 	if failures.is_empty():

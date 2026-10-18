@@ -7,6 +7,7 @@ extends Node3D
 @onready var camera: Camera3D = $Camera3D
 @onready var sun: DirectionalLight3D = $Sun
 @onready var hud: CanvasLayer = $Hud
+var sfx := Sfx.new()   # all sound (see Sfx.gd)
 
 ## What ends a run, shown on the game-over screen as a big header plus a line under it.
 ## The plane's path each frame is tested in steps no longer than this (units), so a flick can't
@@ -75,6 +76,9 @@ var _pick_count := 0               # crates broken this run (Cat's Cradle counts
 func _ready() -> void:
 	Engine.max_physics_steps_per_frame = 1   # no physics here: make sure a stall can never trigger catch-up steps
 	fuel = Tuning.fuel_max()
+	add_child(sfx)
+	hud.sfx = sfx
+	hud.volume_changed.connect(func(_m: float, _s: float): sfx.apply_volumes())
 	add_child(fx)
 	add_child(trail)
 	add_child(picks)
@@ -132,6 +136,7 @@ func _prewarm() -> void:
 	_warming = true
 	var spot := Vector3(0.0, 1.2, 1.0)
 	hud.begin_prewarm(not DebugFlags.off("popup"))
+	sfx.prewarm_start()   # every sound decoded once, silently
 	spawner.prewarm_show(not DebugFlags.off("flash"), not DebugFlags.off("clouds"))
 	pick_screen.prewarm_show()      # the pick cards are drawn too
 	if tune_panel:
@@ -178,6 +183,7 @@ func _prewarm() -> void:
 		if elapsed_s >= Tuning.prewarm_min_seconds and calm_frames >= Tuning.prewarm_stable_frames:
 			break
 	fx.clear()
+	sfx.prewarm_end()
 	trail.clear()
 	spawner.prewarm_hide()
 	pick_screen.hide_cards()
@@ -193,6 +199,8 @@ func _prewarm() -> void:
 ## material and UI node stays alive (and warm) across runs; only the game state is reset.
 func restart() -> void:
 	screen = SCREEN_PLAY
+	sfx.set_phase(0)
+	sfx.start_music()
 	sim_time = 0.0
 	_run_start_ms = Time.get_ticks_msec()
 	_paused_total_ms = 0
@@ -374,6 +382,8 @@ func _process(raw_delta: float) -> void:
 	spawner.plane_x = player.position.x
 	var t_pf := Time.get_ticks_usec()
 	_speed_cues(speed / tail, delta)
+	sfx.set_flight(true, (speed - Tuning.base_speed) / maxf(Tuning.max_speed - Tuning.base_speed, 1.0))
+	sfx.set_phase(spawner.wave_phase if spawner.kit_on else int(elapsed / 30.0) % 3)
 	_pf("speed cues + wind", t_pf)
 	t_pf = Time.get_ticks_usec()
 	spawner.advance(step)
@@ -517,6 +527,9 @@ func _can_absorb() -> bool:
 ## The score reached the next pick: pause the game completely, deal three cards.
 func _begin_pick(extra: bool = false) -> void:
 	_picking = true
+	sfx.play("pick_open")
+	sfx.duck(true)
+	sfx.set_flight(false)
 	_paused_since_ms = Time.get_ticks_msec()
 	_note_event("pick screen opened")
 	_pick_is_extra = extra
@@ -535,6 +548,8 @@ func _on_pick_chosen(i: int) -> void:
 	if i < 0 or i >= _pick_cards.size():
 		return
 	var card := _pick_cards[i]
+	sfx.play("pick_select")
+	sfx.duck(false)
 	pick_screen.hide_cards()
 	get_tree().paused = false
 	_picking = false
@@ -575,6 +590,7 @@ func _speed_cues(base: float, delta: float) -> void:
 ## The SPEED UP banner with its whoosh (and a nudge on the Tailwind icon, which speeds the plane up too).
 func _speed_up_cue(fraction: float) -> void:
 	last_cue = Tuning.speed_up_text
+	sfx.play("speed_whoosh", 0.9)
 	hud.show_combo(Tuning.speed_up_text, Tuning.speed_up_color, "+%d%% speed" % int(round(fraction * 100.0)))
 	if not DebugFlags.off("streaks"):
 		fx.whoosh()
@@ -647,6 +663,7 @@ func _add_fuel(amount: float) -> void:
 func _on_crate_break(kind: int, pos: Vector3) -> void:
 	_note_event("crate broke")
 	Save.add_stat("crates")
+	sfx.play("crunch", 1.0, [1.0, 1.12, 0.88][clampi(kind - 1, 0, 2)])
 	hud.pulse_perk("tailwind")
 	var ram := picks.level("battering_ram")
 	var gold_touch := maxf(picks.value("golden_touch"), 1.0)   # Golden Touch: crates pay x2 / x3 / x4
@@ -702,6 +719,9 @@ func _absorb_hit(p: Vector2, caps: PackedFloat32Array) -> void:
 func _end_run(header: String, reason: String) -> void:
 	alive = false
 	fx.stop_wind()
+	sfx.play("crash")
+	sfx.stop_run()
+	sfx.set_phase(3)
 	_death_time = Time.get_ticks_msec() / 1000.0
 	player.crash()
 	player.set_flicker(false)
@@ -743,6 +763,7 @@ func _apply_palette() -> void:
 ## A fuel can was collected at `pos`: refill (never past a full tank) and pop.
 func _on_pickup(pos: Vector3, golden: bool = false) -> void:
 	run_cans += 1
+	sfx.play("pickup", 1.0, 1.25 if golden else 1.0)
 	hud.pulse_perk("tailwind")   # (Tailwind boosts what this can earns)
 	if combo_on("deadstick") and _gliding:   # Deadstick: a can extends the glide instead of refuelling
 		_glide_left += Tuning.deadstick_extend
@@ -773,6 +794,7 @@ func _on_near_miss(ev: Dictionary) -> void:
 	var whisker: bool = ev.get("whisker", false) or picks.has_boost("whisker_window")   # Whisker Window: every close call counts
 	if combo_on("cloud_surfer") and spawner._cloud_over(player.position.x, player.position.z):   # Cloud Surfer: under a cloud counts too
 		whisker = true
+	sfx.play("barnstormer" if ev.get("special", "") == "barnstormer" else ("whoosh_big" if whisker else "whoosh"), 1.0, 1.0 + 0.04 * minf(bonus, 6.0))
 	_add_step(whisker)
 	hud.pulse_perk("tailwind")
 	if whisker and randf() * 100.0 < picks.value("lucky_whiskers"):   # Lucky Whiskers: a can drops ahead
@@ -920,6 +942,10 @@ func _input(event: InputEvent) -> void:
 func _show_menu() -> void:
 	screen = SCREEN_MENU
 	alive = false
+	sfx.stop_run()
+	sfx.set_phase(0)
+	sfx.start_music()
+	hud.set_volume_sliders(Save.audio_music, Save.audio_sound)
 	hud.show_menu()
 
 func _open_logbook() -> void:

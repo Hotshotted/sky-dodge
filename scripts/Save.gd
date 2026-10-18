@@ -25,6 +25,8 @@ var maps_unlocked: Array = [true, false, false, false]
 var selected_map := 0
 var combos_found := {}              # combo id -> true (the Logbook shows them)
 var milestones := {}                # milestone id -> true (unlocks perks etc.)
+var audio_music := 0.7              # start-screen volume settings (0..1)
+var audio_sound := 0.8
 var explained := {}                 # pick-card kinds (perk / boost / supply) whose one-line explainer has been shown
 var map_stats := {}                 # map id -> {"best_distance": meters, "best_score": coins, "medals": 0..3 earned}
 
@@ -44,6 +46,8 @@ func _defaults() -> void:
 	selected_map = 0
 	milestones = {}
 	explained = {}
+	audio_music = 0.7
+	audio_sound = 0.8
 	combos_found = {}
 	map_stats = {}
 	for m in Tuning.maps:
@@ -115,6 +119,8 @@ func _apply(d: Dictionary) -> void:
 		for k in mi:
 			if bool(mi[k]):
 				milestones[String(k)] = true
+	audio_music = clampf(float(d.get("audio_music", 0.7)), 0.0, 1.0)
+	audio_sound = clampf(float(d.get("audio_sound", 0.8)), 0.0, 1.0)
 	var ex: Variant = d.get("explained", {})
 	if ex is Dictionary:
 		for k in ex:
@@ -146,7 +152,7 @@ func _is_gear(id: String) -> bool:
 func to_dict() -> Dictionary:
 	return {"version": VERSION, "high_score": high_score, "coins": coins, "levels": levels.duplicate(),
 			"slots": slots, "loadout": loadout.duplicate(), "stats": stats.duplicate(),
-			"milestones": milestones.duplicate(), "explained": explained.duplicate(), "combos_found": combos_found.duplicate(), "maps_unlocked": maps_unlocked.duplicate(), "selected_map": selected_map, "map_stats": map_stats.duplicate(true)}
+			"milestones": milestones.duplicate(), "explained": explained.duplicate(), "audio_music": audio_music, "audio_sound": audio_sound, "combos_found": combos_found.duplicate(), "maps_unlocked": maps_unlocked.duplicate(), "selected_map": selected_map, "map_stats": map_stats.duplicate(true)}
 
 func was_explained(kind: String) -> bool:
 	return bool(explained.get(kind, false))
