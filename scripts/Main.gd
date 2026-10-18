@@ -19,7 +19,7 @@ const HEADER_FUEL := "OUT OF FUEL"
 const REASON_FUEL := "The tank ran dry"
 const HEADER_STRUCK := "STRUCK"
 const REASON_STRUCK := "Hit by lightning"
-const REASON_CRATE := "Hit a crate too slowly"
+const REASON_CRATE := "Clipped a crate"
 
 ## Which screen is up. A run is only on while screen == SCREEN_PLAY and alive.
 enum { SCREEN_MENU, SCREEN_HANGAR, SCREEN_PLAY, SCREEN_OVER, SCREEN_LOGBOOK }
@@ -206,7 +206,7 @@ func restart() -> void:
 	_picking = false
 	pick_screen.hide_cards()
 	get_tree().paused = false
-	picks.start_run(coin_mult)
+	picks.start_run(Tuning.pick_scale(map))
 	_combos.clear()
 	_crates_broken = 0
 	_extra_picks = 0

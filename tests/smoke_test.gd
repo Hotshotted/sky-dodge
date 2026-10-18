@@ -1581,24 +1581,24 @@ func _initialize() -> void:
 	pk.enabled = true
 	# (a) prices: pick_first x permanent multiplier, +20% each
 	pk.start_run(1.0)
-	check(is_equal_approx(pk.next_pick, 500.0) and is_equal_approx(pk.price(1), 600.0) and is_equal_approx(pk.price(2), 720.0), "the first pick is at 500 x the multiplier; each pick costs 20% more (500, 600, 720)")
+	check(is_equal_approx(pk.next_pick, 40.0) and is_equal_approx(pk.price(1), 60.0) and is_equal_approx(pk.price(2), 90.0), "the first pick is at 40 x the multiplier; each pick costs 50% more (40, 60, 90)")
 	pk.advance()
-	check(is_equal_approx(pk.next_pick, 1100.0), "...and the next score needed adds up (1,100)")
+	check(is_equal_approx(pk.next_pick, 100.0), "...and the next score needed adds up (100)")
 	pk.start_run(2.2)
-	check(is_equal_approx(pk.next_pick, 1100.0), "with a x2.2 permanent multiplier the first pick is at 1,100")
+	check(is_equal_approx(pk.next_pick, 88.0), "with a x2.2 permanent multiplier the first pick is at 88")
 	tsave.levels["coin_value"] = 5
 	tsave.select_map(0)
 	main.restart()
 	main.set_process(false)
-	check(is_equal_approx(main.coin_mult, 1.5) and is_equal_approx(pk.next_pick, 750.0) and main.hud._next_label.text == "Next: 750", "in a run: multiplier = map x Coin Value (x1.5) -> first pick at 750, shown as \"%s\"" % main.hud._next_label.text)
+	check(is_equal_approx(main.coin_mult, 1.5) and is_equal_approx(pk.next_pick, 60.0) and main.hud._next_label.text == "Next: 60", "in a run: multiplier = map x Coin Value (x1.5) -> first pick at 60, shown as \"%s\"" % main.hud._next_label.text)
 	tsave.levels["coin_value"] = 0
 	main.restart()
 	main.set_process(false)
 	sp.reset(-500.0)
-	check(main.hud._next_label.text == "Next: 500", "the HUD shows \"Next: 500\" under the score")
+	check(main.hud._next_label.text == "Next: 40", "the HUD shows \"Next: 40\" under the score")
 	# (b) reaching it pauses the game completely and deals three cards
 	var elapsed0: float = main.elapsed
-	main.score = 500.0
+	main.score = 40.0
 	main._process(0.02)
 	check(main.get_tree().paused and main.pick_screen.is_shown() and main._pick_cards.size() == 3, "reaching the score pauses the game and shows three cards")
 	var ids := {}
@@ -1612,8 +1612,8 @@ func _initialize() -> void:
 	check(is_equal_approx(main.elapsed, elapsed0 + 0.02) and absf(main.pick_screen._cards[0].position.x - 60.0) < 1.0, "while paused nothing advances, and the cards have slid into place")
 	var first_card: Dictionary = main._pick_cards[0]
 	main.pick_screen._on_card(0)
-	check(not main.get_tree().paused and not main.pick_screen.is_shown() and pk.next_pick > 1000.0, "choosing a card resumes the game and sets the next pick (%.0f)" % pk.next_pick)
-	check(main.hud._next_label.text == "Next: 1.1K", "...shown as \"%s\"" % main.hud._next_label.text)
+	check(not main.get_tree().paused and not main.pick_screen.is_shown() and pk.next_pick > 90.0, "choosing a card resumes the game and sets the next pick (%.0f)" % pk.next_pick)
+	check(main.hud._next_label.text == "Next: 100", "...shown as \"%s\"" % main.hud._next_label.text)
 	if first_card["kind"] == "perk":
 		check(pk.level(first_card["id"]) == 1, "a picked perk is owned at level 1")
 	pk.start_run(1.0)

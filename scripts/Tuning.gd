@@ -184,10 +184,14 @@ func fmt_m(meters_value: float) -> String:
 	return txt + out + " m"
 
 # ---------- In-run picks ----------
-## The first pick comes at pick_first x your permanent multiplier (map multiplier x Coin Value) in score; each
+## The first pick comes at pick_first x your permanent multiplier (map multiplier x Coin Value, see pick_scale) in score; each
 ## following pick costs pick_growth times the one before. The game pauses, three cards slide in, you choose.
-var pick_first := 500.0
-var pick_growth := 1.2
+var pick_first := 40.0
+var pick_growth := 1.5
+## The permanent multiplier that scales the prices also counts the flat coin upgrades (Can Bounty + Close Call
+## Pay), so that picks keep their pace as those grow: scale = map x Coin Value x (1 + weight x (bounty + close-call pay) / ref).
+var pick_flat_weight := 0.15
+var pick_flat_ref := 12.0
 var pick_cards := 3
 ## How much more often a perk you already own is offered (a card for each owned perk at 1.0 + this).
 var perk_owned_weight := 3.0
@@ -514,6 +518,10 @@ func refill_amount() -> float:
 
 func bonus_cap_now() -> float:
 	return upgrade_value("bonus_cap", Save.level("bonus_cap"))
+
+## What the pick prices are multiplied by: the permanent multiplier (map x Coin Value), with the flat upgrades' share.
+func pick_scale(map: int) -> float:
+	return map_coin_mult[map] * coin_value_mult() * (1.0 + pick_flat_weight * (can_bounty_pay() + close_call_pay()) / pick_flat_ref)
 
 func coin_value_mult() -> float:
 	return upgrade_value("coin_value", Save.level("coin_value"))

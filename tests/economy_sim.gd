@@ -86,6 +86,10 @@ func evaluate(level: Dictionary, equipped: Array, s: float, target_dist_units: f
 	var e_dist := 0.0
 	var dist := 0.0
 	var p_target := 0.0
+	var path_coins := 0.0     # coins if the plane never crashed: when does each pick price get reached?
+	var pick_k := 0
+	var picks_exp := 0.0
+	var first_pick_t := -1.0
 	var target_t := -1.0
 	while t < t_fuel:
 		var sp := speed_at(t)
@@ -100,6 +104,12 @@ func evaluate(level: Dictionary, equipped: Array, s: float, target_dist_units: f
 		var b := base_b + (head - 1.0) * exp(-t / 8.0)
 		var per_sec: float = sp * T.coins_per_unit * maxf(b - T.bonus_pay_offset, 0.0) * coin_mult + (lam * bounty + c * ccpay) * coin_mult
 		e_coins += surv * per_sec * DT
+		path_coins += per_sec * DT
+		while pick_k < 40 and path_coins >= T.pick_first * coin_mult * pow(T.pick_growth, pick_k) * 0.0 + _pick_cum(pick_k, coin_mult * (1.0 + T.pick_flat_weight * (bounty + ccpay) / T.pick_flat_ref)):
+			picks_exp += surv
+			if first_pick_t < 0.0:
+				first_pick_t = t
+			pick_k += 1
 		e_time += surv * DT
 		e_dist += surv * sp * DT
 		dist += sp * DT
@@ -107,7 +117,14 @@ func evaluate(level: Dictionary, equipped: Array, s: float, target_dist_units: f
 			target_t = t
 			p_target = surv
 		t += DT
-	return {"time": e_time, "coins": e_coins, "dist_units": e_dist, "p_target": p_target, "t_fuel": t_fuel}
+	return {"time": e_time, "coins": e_coins, "dist_units": e_dist, "p_target": p_target, "t_fuel": t_fuel, "picks": picks_exp, "first_pick": first_pick_t}
+
+## The score at which pick number k (0 = the first) comes: the sum of the prices so far.
+func _pick_cum(k: int, perm: float) -> float:
+	var total := 0.0
+	for i in k + 1:
+		total += T.pick_first * perm * pow(T.pick_growth, i)
+	return total
 
 func value_of(level: Dictionary, loadout: Array, s: float) -> float:
 	var ev := evaluate(level, loadout, s, 1e9)
@@ -243,6 +260,7 @@ func play(label: String) -> Dictionary:
 					clock / 60.0, runs, run_len, fmt(ev["coins"]), fmt(ev["coins"] / (run_len + OVERHEAD) * 60.0), fmt(coins),
 					level["coin_value"], level["can_bounty"], level["close_call_pay"], level["bonus_cap"],
 					level["fuel_tank"], level["efficiency"], level["refill"], str(loadout), slots, (1.0 - unlock_p) * 100.0])
+			print("          picks: first after %s, %.1f picks per run" % [("%.0f s" % ev["first_pick"]) if ev["first_pick"] >= 0.0 else "never", ev["picks"]])
 			next_mark += 1
 	print("")
 	for e in events:
