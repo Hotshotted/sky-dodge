@@ -33,6 +33,9 @@ class Row extends Node3D:
 	var can_dz := 0.0                     # how far the Can Magnet has pulled the can along z (relative to the row)
 	var open: Array[bool] = []            # per column: open (no cube); the fairness check reads this
 	var safe_col := -1                    # the main safe-path column through this row (lightning never strikes it)
+	var obs_cols: Array[int] = []         # the column of each obstacle in use (same order as obs)
+	var crate_kind: Array[int] = []       # per obstacle: 0 = a plain cube, 1 gold / 2 green / 3 purple crate
+	var crate_glows: Array[MeshInstance3D] = []   # one glow plate per column (shown on crates)
 	var gull_k: Array[int] = []           # which of the obstacles (index into xs / obs) are drifting gulls
 	var gull_lo: Array[float] = []        # how far each may drift (x range) and how fast / which way
 	var gull_hi: Array[float] = []
@@ -60,6 +63,8 @@ class Row extends Node3D:
 			cloud_cov[i] = false
 		can_dz = 0.0
 		safe_col = -1
+		obs_cols.clear()
+		crate_kind.clear()
 		gull_k.clear()
 		gull_lo.clear()
 		gull_hi.clear()
@@ -130,12 +135,17 @@ var _cloud_color := Color.WHITE
 var _blocked_add := 0
 var _gull_share := 0.0
 var _cloud_mult := 1.0
-var crate_shower_rows := 0          # Crate Shower supply: how many of the next rows are crate-rich (Phase 5)
+var crate_shower_rows := 0          # Crate Shower supply: how many of the next rows are crate-rich
 var near_miss_scale := 1.0         # Daredevil: close calls count from this much farther
 signal bump(pos: Vector3, depth: int)   # a shoved obstacle hit another one (Prop Wash); depth = 0 for the first, 1+ down a chain
 var chain_nudges := false           # Wingwalker: a bump shoves the obstacle it hit, too
 var picked_golden: Array[bool] = [] # for each can in the last collect_cans() result: was it golden?
 var _golden_can_mat := StandardMaterial3D.new()
+var _crate_mat := StandardMaterial3D.new()                 # the wooden crate body
+var _crate_glow_mats: Array[StandardMaterial3D] = []       # gold, green, purple glow plates
+var _glow_mesh := BoxMesh.new()
+var last_hit_crate := false        # the last hits() found a crate under the plane (it crashed on a crate)
+const BROKEN_X := 1.0e6            # a broken crate's x: far off, so nothing ever touches it again
 
 func _ready() -> void:
 	# One shared material for every cube. Each cube gets its OWN outline material (same shader),
@@ -163,6 +173,14 @@ func _ready() -> void:
 	add_child(ground)
 	_stripe_mat.albedo_color = Color(0.3, 0.38, 0.5)
 	_stripe_mesh.material = _stripe_mat
+	_crate_mat.albedo_color = Tuning.crate_wood
+	_crate_mat.roughness = 1.0
+	_crate_mat.metallic_specular = 0.0
+	for k in 3:
+		var cmat := StandardMaterial3D.new()
+		cmat.shading_mode = BaseMaterial3D.SHADING_MODE_UNSHADED
+		cmat.albedo_color = Tuning.crate_colors[k]
+		_crate_glow_mats.append(cmat)
 	_golden_can_mat.albedo_color = Color(1.0, 0.82, 0.15)
 	_golden_can_mat.roughness = 1.0
 	_golden_can_mat.metallic_specular = 0.0
@@ -243,11 +261,13 @@ func hits(p: Vector2, caps: PackedFloat32Array) -> bool:
 	for r in _rows:
 		if absf(r.position.z - p.y) > NEAR_RANGE:
 			continue
-		for ox in r.xs:
+		for k in r.xs.size():
+			var ox: float = r.xs[k]
 			if absf(ox - p.x) > FAR_X:
 				continue
 			for o in range(0, caps.size(), 5):
 				if _gap(p, caps, o, ox, r.position.z, half) < 0.0:
+					last_hit_crate = k < r.crate_kind.size() and r.crate_kind[k] != 0
 					return true
 	return false
 
@@ -351,8 +371,14 @@ func prewarm_show(with_flash: bool, with_clouds: bool = true) -> void:
 			mi.position = Vector3(Tuning.column_center(i), 0.0, 0.0)
 			mi.scale = Vector3.ONE
 			row.cube_outlines[i].set_shader_parameter("outline_color", Color.WHITE if (with_flash and idx % 2 == 1) else Color.BLACK)
-		for i in row.cubes.size():   # every other cube is drawn as a gull, so that material is warm too
-			row.cubes[i].material_override = _gull_mat if (idx + i) % 2 == 0 else _obstacle_mat
+		for i in row.cubes.size():   # every other cube is drawn as a gull (or a crate), so those materials are warm too
+			row.cubes[i].material_override = _gull_mat if (idx + i) % 3 == 0 else (_crate_mat if (idx + i) % 3 == 1 else _obstacle_mat)
+		for i in row.crate_glows.size():
+			var cgl := row.crate_glows[i]
+			cgl.material_override = _crate_glow_mats[(idx + i) % 3]
+			cgl.position = Vector3(Tuning.column_center(i), 0.55, 0.0)
+			cgl.scale = Vector3(0.8, 0.04, 1.0)
+			cgl.visible = (idx + i) % 3 == 1
 		for g in row.ghosts:   # ...and every Cloud Eye frame
 			g.visible = true
 			g.position = Vector3(Tuning.column_center(row.ghosts.find(g)), GHOST_Y, 0.0)
@@ -393,6 +419,8 @@ func _rows_make_for_test(z: float, xs: Array) -> Row:
 		row.xs.append(xs[k])
 		row.obs.append(row.cubes[k])
 		row.obs_ghosts.append(row.ghosts[k])
+		row.obs_cols.append(k)
+		row.crate_kind.append(0)
 		row.outlines.append(row.cube_outlines[k])
 	_rows.append(row)
 	return row
@@ -420,6 +448,14 @@ func _make_row() -> Row:
 		row.add_child(mi)
 		row.cubes.append(mi)
 		row.cube_outlines.append(outline)
+	for i in Tuning.column_count:
+		var cg := MeshInstance3D.new()
+		cg.mesh = _glow_mesh
+		cg.material_override = _crate_glow_mats[0]
+		cg.cast_shadow = GeometryInstance3D.SHADOW_CASTING_SETTING_OFF
+		cg.visible = false
+		row.add_child(cg)
+		row.crate_glows.append(cg)
 	for i in Tuning.column_count:
 		var g := MeshInstance3D.new()
 		g.mesh = _ghost_mesh
@@ -467,6 +503,8 @@ func _hide_row(row: Row) -> void:
 	row.has_can = false
 	for g in row.ghosts:
 		g.visible = false
+	for cg in row.crate_glows:
+		cg.visible = false
 	for i in row.cubes.size():
 		row.cubes[i].visible = false
 		row.cube_outlines[i].set_shader_parameter("outline_color", Color.BLACK)
@@ -498,11 +536,14 @@ func _spawn_row(z: float) -> void:
 		row.xs.append(x)
 		row.obs.append(mi)
 		row.obs_ghosts.append(g)
+		row.obs_cols.append(i)
+		row.crate_kind.append(0)
 		row.outlines.append(row.cube_outlines[i])
 	row.stripe.scale = Vector3(Tuning.ortho_size * 2.0, 0.1, 0.4)
 	for c in open.size():
 		row.open.append(open[c])
 	row.safe_col = _safe_col
+	_make_crates(row, width)
 	_make_gulls(row, width)
 	_rows.append(row)
 	hazards.on_row_spawned(z)
@@ -651,6 +692,67 @@ func refresh_obstacles() -> void:
 func _place_can_for_test(row: Row, x: float) -> void:
 	_place_can(row, x)
 
+## ---- Crates: breakable blocks with something inside ----------------------------------------------------
+
+## Turn some of this row's obstacles into crates (a crate still takes a blocked cell, so the open columns,
+## and with them every fairness rule, are untouched).
+func _make_crates(row: Row, width: float) -> void:
+	if not Tuning.crates_enabled or DebugFlags.off("crates"):
+		return
+	var chance := 0.0
+	if crate_shower_rows > 0:
+		chance = Tuning.crate_shower_chance
+		crate_shower_rows -= 1
+	elif run_time >= Tuning.crate_start_time:
+		chance = Tuning.crate_chance
+	if chance <= 0.0:
+		return
+	for k in row.obs.size():
+		if randf() >= chance:
+			continue
+		var roll := randf()
+		var kind := 0
+		var acc := 0.0
+		for w in Tuning.crate_weights:
+			acc += w
+			if roll <= acc / 1.0:
+				break
+			kind += 1
+		kind = mini(kind, 2)
+		row.crate_kind[k] = kind + 1
+		var mi: MeshInstance3D = row.obs[k]
+		mi.material_override = _crate_mat
+		mi.scale = Vector3(width, width * 0.8, Tuning.obstacle_depth)
+		var glow := row.crate_glows[row.obs_cols[k]]
+		glow.material_override = _crate_glow_mats[kind]
+		glow.position = Vector3(row.xs[k], width * 0.4 + 0.02, 0.0)
+		glow.scale = Vector3(width * 0.78, 0.04, Tuning.obstacle_depth * 0.78)
+		glow.visible = true
+
+## Break the crates the plane touches, if it may (`ram_ok`: it is flying up fast enough, or has Battering Ram).
+## Returns what broke: [{"kind": 1 gold / 2 green / 3 purple, "pos": where}]. Crates it may not break stay, and crash it.
+func break_crates(p: Vector2, caps: PackedFloat32Array, ram_ok: bool) -> Array[Dictionary]:
+	var out: Array[Dictionary] = []
+	if not ram_ok:
+		return out
+	var half := _obstacle_half()
+	for r in _rows:
+		if absf(r.position.z - p.y) > NEAR_RANGE:
+			continue
+		for k in r.xs.size():
+			if r.crate_kind[k] == 0 or absf(r.xs[k] - p.x) > FAR_X:
+				continue
+			for o in range(0, caps.size(), 5):
+				if _gap(p, caps, o, r.xs[k], r.position.z, half) < 0.0:
+					out.append({"kind": r.crate_kind[k], "pos": Vector3(r.xs[k], 0.4, r.position.z)})
+					r.crate_kind[k] = 0
+					r.xs[k] = BROKEN_X
+					r.obs[k].visible = false
+					r.crate_glows[r.obs_cols[k]].visible = false
+					r.obs_ghosts[k].visible = false
+					break
+	return out
+
 ## ---- Gulls: obstacles that drift sideways ------------------------------------------------------------
 const GULL_HEIGHT := 0.55      # a gull is a flatter block than a cube (same footprint, so the hit box matches)
 const WING_CLEARANCE := 1.1    # the plane's half wingspan
@@ -665,7 +767,7 @@ func _make_gulls(row: Row, width: float) -> void:
 	var need := width * 0.5 + Tuning.outline_thickness + WING_CLEARANCE + 0.15
 	var keep_x := Tuning.column_center(row.safe_col)
 	for k in row.obs.size():
-		if randf() >= _gull_share:
+		if row.crate_kind[k] != 0 or randf() >= _gull_share:
 			continue
 		var x0: float = row.xs[k]
 		var lo := x0 - amp
@@ -752,6 +854,9 @@ func drop_can_ahead(x: float, golden: bool = false) -> bool:
 ## Per-frame hazard update (Main calls it during a run): gulls drift and flap, gusts and lightning run.
 func update_hazards(delta: float) -> void:
 	var now := Time.get_ticks_msec() / 1000.0
+	var pulse := 0.92 + 0.08 * sin(now * 5.0)   # the crates glow breathes
+	for k in 3:
+		_crate_glow_mats[k].albedo_color = Tuning.crate_colors[k] * pulse
 	var width := Tuning.column_width() * Tuning.obstacle_scale
 	for r in _rows:
 		for gi in r.gull_k.size():

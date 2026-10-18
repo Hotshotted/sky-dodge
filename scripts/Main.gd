@@ -19,6 +19,7 @@ const HEADER_FUEL := "OUT OF FUEL"
 const REASON_FUEL := "The tank ran dry"
 const HEADER_STRUCK := "STRUCK"
 const REASON_STRUCK := "Hit by lightning"
+const REASON_CRATE := "Hit a crate too slowly"
 
 ## Which screen is up. A run is only on while screen == SCREEN_PLAY and alive.
 enum { SCREEN_MENU, SCREEN_HANGAR, SCREEN_PLAY, SCREEN_OVER, SCREEN_LOGBOOK }
@@ -59,7 +60,9 @@ var _glide_left := 0.0                # Glide: seconds left in the glide (0 = no
 var _gliding := false
 var _second_wind_used := false
 var _combos := {}                     # combo id -> true: the combos that have switched on this run
-var _crates_broken := 0               # crates broken this run (Cat's Cradle counts them)
+var _crates_broken := 0
+var _extra_picks := 0                 # purple crates broken: instant extra picks waiting to be shown
+var _pick_is_extra := false               # crates broken this run (Cat's Cradle counts them)
 
 func _ready() -> void:
 	fuel = Tuning.fuel_max()
@@ -142,6 +145,8 @@ func _prewarm() -> void:
 				fx.whisker(spot + Vector3(0.6, 0, 1.2))
 				fx.coins(spot + Vector3(-0.8, 0, 2.2))   # round-robin: warms both coin bursts
 				fx.coins(spot + Vector3(0.8, 0, 2.2))
+				for kk in 3:   # every crate burst colour
+					fx.crate_burst(spot + Vector3(-2.0 + 2.0 * kk, 0, 3.2), kk)
 			if not DebugFlags.off("popup"):
 				hud.prewarm_popups()
 			if not DebugFlags.off("pickup"):
@@ -198,7 +203,10 @@ func restart() -> void:
 	picks.start_run(coin_mult)
 	_combos.clear()
 	_crates_broken = 0
+	_extra_picks = 0
+	_pick_is_extra = false
 	spawner.chain_nudges = false
+	spawner.crate_shower_rows = 0
 	_reset_bonus()
 	var head := Tuning.gear_value("head_start")   # Head Start: begin at x1.5 / x2 (it fades like any bonus)
 	if head > 1.0:
@@ -282,10 +290,13 @@ func _process(delta: float) -> void:
 		else:
 			_end_run(HEADER_STRUCK, REASON_STRUCK)
 			return
+	var can_ram: bool = picks.level("battering_ram") > 0 or player.velocity.y < -Tuning.ram_speed   # Battering Ram, or flying up fast
 	var from: Vector2 = player.prev_xz
 	var steps := clampi(ceili(from.distance_to(plane) / SWEEP_STEP), 1, MAX_SWEEP_STEPS)
 	for i in range(1, steps + 1):
 		var p: Vector2 = from.lerp(plane, float(i) / steps)
+		for b in spawner.break_crates(p, caps, can_ram):   # a crate in the way breaks if it may
+			_on_crate_break(b["kind"], b["pos"])
 		if _invuln <= 0.0 and not DebugFlags.god and spawner.hits(p, caps):
 			if _can_absorb():   # Nine Lives / Shield / Patch: the plane takes the hit and keeps flying
 				_absorb_hit(p, caps)
@@ -301,7 +312,7 @@ func _process(delta: float) -> void:
 				else:
 					lo = mid
 			player.position = Vector3(hi.x, player.position.y, hi.y)
-			_end_run(HEADER_CRASH, REASON_OBSTACLE)
+			_end_run(HEADER_CRASH, REASON_CRATE if spawner.last_hit_crate else REASON_OBSTACLE)
 			return
 		for ev in spawner.update_near_misses(p, caps):
 			_on_near_miss(ev)
@@ -310,8 +321,8 @@ func _process(delta: float) -> void:
 			_on_pickup(cans[ci], spawner.picked_golden[ci])
 	hud.set_fuel(fuel / Tuning.fuel_max())
 	_check_fuel(delta)
-	if score >= picks.next_pick and not _picking:
-		_begin_pick()
+	if not _picking and (score >= picks.next_pick or _extra_picks > 0):
+		_begin_pick(score < picks.next_pick)   # (a purple crate's pick is extra: it does not use up the score)
 
 ## Empty tank: Reserve Tank refills it; Glide (a perk) keeps you flying for a few seconds; else the run ends.
 ## Second Wind refills a share of the tank once when it runs low.
@@ -353,8 +364,11 @@ func _can_absorb() -> bool:
 # ---------- In-run picks ----------
 
 ## The score reached the next pick: pause the game completely, deal three cards.
-func _begin_pick() -> void:
+func _begin_pick(extra: bool = false) -> void:
 	_picking = true
+	_pick_is_extra = extra
+	if extra:
+		_extra_picks = maxi(_extra_picks - 1, 0)
 	_pick_cards = picks.roll(fuel / Tuning.fuel_max(), Tuning.pick_cards)
 	if tune_panel:
 		tune_panel.set_available(false)
@@ -374,7 +388,9 @@ func _on_pick_chosen(i: int) -> void:
 	if tune_panel:
 		tune_panel.set_available(true)
 	_apply_card(card)
-	picks.advance()
+	if not _pick_is_extra:
+		picks.advance()
+	_pick_is_extra = false
 	hud.set_next(picks.next_pick)
 	_check_combos()
 
@@ -395,7 +411,7 @@ func _apply_card(card: Dictionary) -> void:
 			score += amount
 			hud.coin_pop("+" + Tuning.fmt(amount), camera.unproject_position(player.position + Vector3(0, 0, -2.0)))
 		"crate_shower":
-			spawner.crate_shower_rows = 6
+			spawner.crate_shower_rows = Tuning.crate_shower_rows
 
 ## Prop Wash: a shoved obstacle bumped another one: coins (each link of a Wingwalker chain pays one more time).
 func _on_bump(pos: Vector3, depth: int) -> void:
@@ -433,7 +449,30 @@ func _add_fuel(amount: float) -> void:
 	if amount > room and combo_on("fuel_overflow"):
 		score += (amount - room) * Tuning.overflow_coin_rate * earn_mult()
 
-## A crate was broken (crates come in Phase 5): Cat's Cradle gives a life back for every N of them.
+## A crate broke (kind 1 gold = coins, 2 green = fuel, 3 purple = an extra pick).
+func _on_crate_break(kind: int, pos: Vector3) -> void:
+	Save.add_stat("crates")
+	var ram := picks.level("battering_ram")
+	var gold_touch := maxf(picks.value("golden_touch"), 1.0)   # Golden Touch: crates pay x2 / x3 / x4
+	if not DebugFlags.off("sparks"):
+		fx.crate_burst(pos, kind - 1)
+	if not DebugFlags.off("haptic"):
+		Input.vibrate_handheld(20)
+	var at := camera.unproject_position(pos)
+	match kind:
+		1:
+			var coins := Tuning.crate_coins * earn_mult() * gold_touch * (1.0 + 0.5 * maxi(ram - 1, 0))   # Battering Ram 2-3: more crate coins
+			score += coins
+			hud.coin_pop("+" + Tuning.fmt(coins), at)
+		2:
+			_add_fuel(Tuning.crate_fuel * gold_touch)
+			hud.fuel_pulse()
+			hud.coin_pop("FUEL", at)
+		3:
+			_extra_picks += 1
+	_on_crate_broken()
+
+## A crate was broken: Cat's Cradle gives a life back for every N of them.
 func _on_crate_broken() -> void:
 	_crates_broken += 1
 	if combo_on("cats_cradle") and _crates_broken % Tuning.cradle_crates == 0:
@@ -478,7 +517,11 @@ func _end_run(header: String, reason: String) -> void:
 	last_was_best = last_earned > float(Save.map_stat(map)["best_score"])
 	Save.record_run(score)
 	last_result = Save.record_map_run(map, meters_run, score)
+	last_result["milestones"] = Save.check_milestones()
 	hud.show_game_over(header, reason, last_earned, last_was_best, float(Save.map_stat(map)["best_score"]), _result_text(meters_run))
+	var unlocked_now: Array = last_result["milestones"]
+	if not unlocked_now.is_empty():   # a popup for the new perk
+		hud.show_combo(Tuning.perk_def(unlocked_now[0]["perk"])["name"], Color(1.0, 0.85, 0.3), "PERK UNLOCKED!")
 
 ## The extra game-over lines: distance, medals, unlocks.
 func _result_text(meters_run: float) -> String:
@@ -489,6 +532,8 @@ func _result_text(meters_run: float) -> String:
 		lines.append("%s medal!  +%s coins" % [MEDAL_NAMES[k], Tuning.fmt(Tuning.map_def(map)["medals"][k][1])])
 	for j in last_result.get("unlocked", []):
 		lines.append("%s unlocked!" % Tuning.map_def(j)["name"])
+	for m in last_result.get("milestones", []):
+		lines.append("Perk unlocked: %s!" % Tuning.perk_def(m["perk"])["name"])
 	return "\n".join(lines)
 
 ## The map's colours: sky behind everything and the ambient light (the ground, obstacles and clouds

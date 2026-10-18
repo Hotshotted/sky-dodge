@@ -176,7 +176,11 @@ func build() -> void:
 	column.add_child(save_buttons)
 	var save_buttons2 := HBoxContainer.new()
 	save_buttons2.add_theme_constant_override("separation", 20)
+	var unlock_ms := _make_button("Unlock all milestones", 30)
+	unlock_ms.pressed.connect(func(): Save.unlock_all_milestones(); _out.text = "All milestones unlocked.")
+	unlock_ms.set_meta("debug", "unlock_milestones")
 	save_buttons2.add_child(unlock_maps)
+	save_buttons2.add_child(unlock_ms)
 	column.add_child(save_buttons2)
 	# Grant any perk at any level (applies to this run and every run after, until the save is reset).
 	var grant_row := HBoxContainer.new()

@@ -25,6 +25,9 @@ var _next_whisker := 0
 const COIN_EMITTERS := 2
 var _coin_emitters: Array[CPUParticles3D] = []      # the gold burst of a Close Call Pay
 var _next_coin := 0
+const CRATE_EMITTERS := 3
+var _crate_emitters: Array[CPUParticles3D] = []     # the burst of a broken crate (tinted by what was inside)
+var _next_crate := 0
 
 func _ready() -> void:
 	# Spark emitters: configured once, restarted for each burst.
@@ -121,6 +124,38 @@ func _ready() -> void:
 		p.visible = false
 		add_child(p)
 		_coin_emitters.append(p)
+	# Crate break: chunky splinters, tinted gold / green / purple by the contents.
+	var k_quad := QuadMesh.new()
+	k_quad.size = Vector2(0.34, 0.34)
+	var k_mat := StandardMaterial3D.new()
+	k_mat.shading_mode = BaseMaterial3D.SHADING_MODE_UNSHADED
+	k_mat.billboard_mode = BaseMaterial3D.BILLBOARD_ENABLED
+	k_mat.vertex_color_use_as_albedo = true
+	k_mat.transparency = BaseMaterial3D.TRANSPARENCY_ALPHA
+	k_quad.material = k_mat
+	var k_ramp := Gradient.new()
+	k_ramp.colors = PackedColorArray([Color(1, 1, 1, 1), Color(1, 1, 1, 1), Color(1, 1, 1, 0)])
+	k_ramp.offsets = PackedFloat32Array([0.0, 0.5, 1.0])
+	for i in CRATE_EMITTERS:
+		var p := CPUParticles3D.new()
+		p.mesh = k_quad
+		p.color_ramp = k_ramp
+		p.amount = 18
+		p.lifetime = 0.55
+		p.one_shot = true
+		p.explosiveness = 1.0
+		p.local_coords = false
+		p.direction = Vector3(0, 1, 0)
+		p.spread = 180.0
+		p.initial_velocity_min = 4.0
+		p.initial_velocity_max = 11.0
+		p.gravity = Vector3.ZERO
+		p.scale_amount_min = 0.5
+		p.scale_amount_max = 1.3
+		p.emitting = false
+		p.visible = false
+		add_child(p)
+		_crate_emitters.append(p)
 	# Fuel pickup bursts: green puffs rising from the can, same kind of emitter as the sparks.
 	var pop_quad := QuadMesh.new()
 	pop_quad.size = Vector2(0.34, 0.34)
@@ -190,6 +225,16 @@ func sparks(pos: Vector3, side: int) -> void:
 func whisker(pos: Vector3) -> void:
 	var p := _whisker_emitters[_next_whisker]
 	_next_whisker = (_next_whisker + 1) % WHISKER_EMITTERS
+	p.global_position = pos
+	p.visible = true
+	p.restart()
+	p.emitting = true
+
+## A crate breaks at `pos`: a burst in the colour of what was inside (0 gold, 1 green, 2 purple).
+func crate_burst(pos: Vector3, kind: int) -> void:
+	var p := _crate_emitters[_next_crate]
+	_next_crate = (_next_crate + 1) % CRATE_EMITTERS
+	p.color = Tuning.crate_colors[clampi(kind, 0, 2)]
 	p.global_position = pos
 	p.visible = true
 	p.restart()
@@ -269,6 +314,11 @@ func clear() -> void:
 		p.emitting = false
 		p.visible = false
 	for p in _coin_emitters:
+		p.emitting = false
+		p.restart()
+		p.emitting = false
+		p.visible = false
+	for p in _crate_emitters:
 		p.emitting = false
 		p.restart()
 		p.emitting = false

@@ -234,6 +234,31 @@ func perk_unlocked(id: String) -> bool:
 func discover_combo(id: String) -> void:
 	combos_found[id] = true
 
+## Progress toward a milestone: [done, target] (maps count as 0/1 and 1/1).
+func milestone_progress(m: Dictionary) -> Vector2:
+	if m["kind"] == "map":
+		return Vector2(1.0 if map_unlocked(int(m["map"])) else 0.0, 1.0)
+	return Vector2(minf(stat(m["stat"]), m["target"]), m["target"])
+
+## Unlock every milestone whose goal is met. Returns the ones that were just unlocked (and saves if any).
+func check_milestones() -> Array[Dictionary]:
+	var out: Array[Dictionary] = []
+	for m in Tuning.milestones:
+		if bool(milestones.get(m["id"], false)):
+			continue
+		var pr := milestone_progress(m)
+		if pr.x >= pr.y:
+			milestones[m["id"]] = true
+			out.append(m)
+	if not out.is_empty():
+		save_game()
+	return out
+
+func unlock_all_milestones() -> void:
+	for m in Tuning.milestones:
+		milestones[m["id"]] = true
+	save_game()
+
 func unlock_milestone(id: String) -> void:
 	milestones[id] = true
 

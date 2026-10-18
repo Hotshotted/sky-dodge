@@ -41,6 +41,7 @@ var _combo_sub: Label
 var _combo_ms := -100000
 var _logbook_box: VBoxContainer
 var _logbook: Control                     # the Logbook: discovered combos (and milestones)
+var _milestone_rows: Array[Dictionary] = []
 var _logbook_rows: Array[Dictionary] = [] # per combo: icon style, glyph, title, line
 var _last_meters := -1
 var _hangar: Control                 # upgrade screen
@@ -378,6 +379,9 @@ func _build_logbook() -> void:
 	_logbook_heading("COMBOS  (pick a perk to level 3 with the right partner)")
 	for c in Tuning.combos:
 		_logbook_rows.append(_logbook_row(150.0))
+	_logbook_heading("MILESTONES  (they unlock more perks for the pick screen)")
+	for m in Tuning.milestones:
+		_milestone_rows.append(_logbook_row(120.0))
 	var back := _make_button("BACK", 56, Vector2(380, 110))
 	_place(back, (W - 380.0) * 0.5, 1730, 380, 110)
 	back.pressed.connect(func(): back_pressed.emit())
@@ -444,6 +448,7 @@ func _logbook_row(height: float) -> Dictionary:
 func refresh_logbook(all_found: bool = false) -> void:
 	if _logbook == null:
 		return
+	_refresh_milestones()
 	for i in Tuning.combos.size():
 		var c: Dictionary = Tuning.combos[i]
 		var r := _logbook_rows[i]
@@ -454,6 +459,20 @@ func refresh_logbook(all_found: bool = false) -> void:
 		(r["title"] as Label).add_theme_color_override("font_color", Color.WHITE if found else Color(0.55, 0.6, 0.7))
 		(r["line"] as Label).text = c["line"] if found else "Hint: %s" % c["hint"]
 		(r["line"] as Label).add_theme_color_override("font_color", Color(0.85, 0.93, 1.0) if found else Color(0.5, 0.55, 0.65))
+
+func _refresh_milestones() -> void:
+	for i in Tuning.milestones.size():
+		var m: Dictionary = Tuning.milestones[i]
+		var r := _milestone_rows[i]
+		var perk := Tuning.perk_def(m["perk"])
+		var done: bool = Save.milestones.has(m["id"])
+		var pr: Vector2 = Save.milestone_progress(m)
+		(r["style"] as StyleBoxFlat).bg_color = perk["color"] if done else Color(0.16, 0.18, 0.24)
+		(r["glyph"] as Label).text = perk["glyph"] if done else "?"
+		(r["title"] as Label).text = ("%s  (perk unlocked)" % perk["name"]) if done else ("%s  locked" % perk["name"])
+		(r["title"] as Label).add_theme_color_override("font_color", Color.WHITE if done else Color(0.6, 0.65, 0.75))
+		(r["line"] as Label).text = ("%s: done" % m["goal"]) if done else ("%s  (%s / %s)" % [m["goal"], Tuning.fmt(pr.x), Tuning.fmt(pr.y)])
+		(r["line"] as Label).add_theme_color_override("font_color", Color(0.85, 0.93, 1.0) if done else Color(0.7, 0.75, 0.85))
 
 func show_logbook() -> void:
 	refresh_logbook()
@@ -617,11 +636,11 @@ func flash(color: Color = Color.WHITE) -> void:
 	_flash_color = color
 
 ## The combo banner: its name in big letters in the combo's colour, with "COMBO!" above, for a couple of seconds.
-func show_combo(combo_name: String, color: Color) -> void:
+func show_combo(combo_name: String, color: Color, sub: String = "COMBO!") -> void:
 	_combo_label.text = combo_name.to_upper()
 	_combo_label.add_theme_color_override("font_color", color)
 	_combo_label.add_theme_color_override("font_outline_color", Color(color.r * 0.5, color.g * 0.4, color.b * 0.3).darkened(0.3))
-	_combo_sub.text = "COMBO!"
+	_combo_sub.text = sub
 	_combo_sub.add_theme_color_override("font_color", Color(1.0, 0.95, 0.6))
 	_combo_ms = Time.get_ticks_msec()
 	_combo_label.visible = true
@@ -1000,6 +1019,8 @@ func prewarm_popups() -> void:
 ## Every label stays alive; nothing is created or freed.
 func reset_for_run() -> void:
 	_over.visible = false
+	_combo_label.visible = false
+	_combo_sub.visible = false
 	hide_menus()
 	for i in POPUP_POOL:
 		_pop_labels[i].visible = false

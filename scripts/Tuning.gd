@@ -128,7 +128,7 @@ var maps: Array[Dictionary] = [
 	{"id": "stormfront", "name": "Stormfront", "unlock_from": 2, "unlock_meters": 5000.0,
 			"speed_mult": 1.3, "ramp_mult": 1.3, "blocked_add": 1, "gull_share": 0.3, "gust_chance": 0.3, "lightning_interval": 5.0, "cloud_mult": 1.8,
 			"sky": Color(0.09, 0.1, 0.16), "ground": Color(0.12, 0.13, 0.2), "stripe": Color(0.22, 0.24, 0.36),
-			"obstacle": Color(0.78, 0.3, 0.95), "cloud": Color(0.5, 0.53, 0.62), "ambient": Color(0.6, 0.62, 0.8),
+			"obstacle": Color(0.9, 0.2, 0.45), "cloud": Color(0.5, 0.53, 0.62), "ambient": Color(0.6, 0.62, 0.8),
 			"medals": [[3000.0, 1000000.0], [6000.0, 7000000.0], [9000.0, 45000000.0]]},
 ]
 ## GULLS: white obstacles that drift sideways slowly (units/second), at most this fraction of a column
@@ -277,8 +277,30 @@ func combo_def(id: String) -> Dictionary:
 			return c
 	return {}
 
-## Crates exist only once Phase 5 turns this on (the crate perks and the Crate Shower need them).
-var crates_enabled := false
+## CRATES: breakable blocks that take a blocked cell of a row (so fairness treats them as blocked). A glow on
+## top shows what is inside: gold = coins, green = fuel, purple = an instant extra pick. Flying into one while
+## moving UP the screen faster than ram_speed (units/second) breaks it; any other touch crashes (unless Battering Ram).
+var crates_enabled := true
+var crate_chance := 0.10           # chance a blocked cell is a crate
+var crate_shower_chance := 0.8     # ...in the rows after a Crate Shower
+var crate_start_time := 5.0        # none in the first seconds of a run
+var ram_speed := 9.0
+var crate_coins := 30.0            # gold crate: coins (x the earn multiplier, Battering Ram level, Golden Touch)
+var crate_fuel := 30.0             # green crate: fuel (x Golden Touch)
+var crate_weights: Array[float] = [0.55, 0.30, 0.15]   # gold, green, purple
+var crate_colors: Array[Color] = [Color(1.0, 0.8, 0.15), Color(0.25, 1.0, 0.45), Color(0.75, 0.35, 1.0)]
+var crate_wood := Color(0.55, 0.38, 0.2)
+## Crate coins per Battering Ram level (the perk's own value is this multiplier) and the Crate Shower's length.
+var crate_shower_rows := 6
+
+## MILESTONES unlock the perks that are not in the starting pool. Fields: id (also the perk's `unlock`), perk, name of the
+## goal, kind (stat = a lifetime counter in the save, map = reach a map), stat / target, shown in the Logbook.
+var milestones: Array[Dictionary] = [
+	{"id": "prop_wash", "perk": "prop_wash", "goal": "Collect 100 fuel cans", "kind": "stat", "stat": "cans", "target": 100.0},
+	{"id": "second_wind", "perk": "second_wind", "goal": "Make 10 Whisker closes", "kind": "stat", "stat": "whiskers", "target": 10.0},
+	{"id": "battering_ram", "perk": "battering_ram", "goal": "Break 50 crates", "kind": "stat", "stat": "crates", "target": 50.0},
+	{"id": "golden_touch", "perk": "golden_touch", "goal": "Reach the Coast", "kind": "map", "map": 1},
+]
 
 func perk_def(id: String) -> Dictionary:
 	for d in perks:

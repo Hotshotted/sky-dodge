@@ -19,7 +19,7 @@ extends SceneTree
 ##       generated rows, checked every step), fade in late, sit above obstacles/cans but below the plane,
 ##       hide cans more often, ?nofx=clouds disables them, restart clears them, nothing new is allocated
 ##   2i. bonus: step-table streak bonus, cap (gold glowing label), steps coming off one by one, number-only text, reset on crash, huge caps
-##   2n. combos: each of the seven triggers (perk 3 + partner) and its effect, the banner, the Logbook\n##   2m. in-run picks: prices, pause + three cards, card odds, every perk / boost / supply effect\n##   2l. maps: unlocks, medals, palettes, gulls / wind gusts / lightning and their fairness rules
+##   2o. crates (shapes, contents, ram rules, rewards, Crate Shower) and milestones\n##   2n. combos: each of the seven triggers (perk 3 + partner) and its effect, the banner, the Logbook\n##   2m. in-run picks: prices, pause + three cards, card odds, every perk / boost / supply effect\n##   2l. maps: unlocks, medals, palettes, gulls / wind gusts / lightning and their fairness rules
 ##   2k. Whisker close: doubled step, popup/burst, decay, cap, detection by clearance
 ##   2j. progression: save file round trip (versioned), coin award, Hangar purchases apply, ?tune save buttons
 ##   3. ?debug flags parse, and switching an effect off really skips it
@@ -43,6 +43,9 @@ func snapshot(main: Node) -> Dictionary:
 	var nodes := {}
 	var mats := {}
 	_walk(main, nodes, mats)
+	# (materials built at start-up that only show up in this walk while something uses them: gulls, golden cans, crates)
+	for pm in [main.spawner._gull_mat, main.spawner._golden_can_mat, main.spawner._crate_mat] + main.spawner._crate_glow_mats:
+		mats.erase(pm.get_instance_id())
 	return {
 		"nodes": nodes, "mats": mats,
 		"node_count": Performance.get_monitor(Performance.OBJECT_NODE_COUNT),
@@ -66,6 +69,7 @@ func _walk(n: Node, nodes: Dictionary, mats: Dictionary) -> void:
 		while m != null:
 			mats[m.get_instance_id()] = true
 			m = m.next_pass if m is BaseMaterial3D else null
+
 	for c in n.get_children():
 		_walk(c, nodes, mats)
 
@@ -126,6 +130,7 @@ func _initialize() -> void:
 	root.add_child(main)
 	current_scene = main
 	main.picks.enabled = false   # (the tests set scores by hand; the pick tests switch it back on)
+	tuning.crate_chance = 0.0    # (no random crates in the older tests; the crate tests switch them on)
 	await process_frame
 	await process_frame
 	await process_frame
@@ -161,6 +166,7 @@ func _initialize() -> void:
 	check(count_visible(main.spawner.hazards._all_gusts) == main.spawner.hazards.GUST_POOL and count_visible(main.spawner.hazards._bolts) == main.spawner.hazards.BOLT_POOL, "every pooled wind gust and lightning strip is drawn during the pre-warm")
 	check(main.pick_screen.is_shown() and count_visible(main.pick_screen._cards) == 3, "the pick cards are drawn during the pre-warm")
 	check(main.hud._combo_label.visible and main.hud._logbook.visible, "the combo banner and the Logbook are drawn during the pre-warm")
+	check(count_visible(main.fx._crate_emitters) == main.fx.CRATE_EMITTERS and count_visible(main.fx._coin_emitters) == main.fx.COIN_EMITTERS, "every crate-break and coin burst emitter is drawing during the pre-warm")
 	check(count_visible(main.fx._whisker_emitters) == main.fx.WHISKER_EMITTERS, "both Whisker-close burst emitters are drawing during the pre-warm")
 	var whisker_popup_drawn := false
 	for pl_ in main.hud._pop_labels:
@@ -185,7 +191,7 @@ func _initialize() -> void:
 	check(count_visible(cans) == cans_in_play and count_visible(main.fx._pickup_emitters) == 0, "no pre-warm cans or pickup puffs left behind")
 	check(count_visible(blobs) == 0, "no pre-warm cloud puffs left behind (no clouds in the first %.0f s)" % tuning.cloud_start_time)
 	check(count_visible(cubes) == in_play and count_visible(main.fx._streak_nodes) == 0 and main.trail._pts.is_empty()
-			and count_visible(main.fx._emitters) == 0 and count_visible(main.fx._whisker_emitters) == 0, "no pre-warm effects left behind (only the live game's own cubes are showing: %d)" % in_play)
+			and count_visible(main.fx._emitters) == 0 and count_visible(main.fx._whisker_emitters) == 0 and count_visible(main.fx._crate_emitters) == 0, "no pre-warm effects left behind (only the live game's own cubes are showing: %d)" % in_play)
 	check(main.screen == main.SCREEN_MENU and main.hud._menu.visible and not main.alive and not main.hud._hangar.visible,
 			"after start-up the start screen is showing and the world waits")
 	main.hud.play_pressed.emit()   # PLAY
@@ -1625,13 +1631,20 @@ func _initialize() -> void:
 			dup = dup or local.has(c["id"])
 			local[c["id"]] = true
 	var want := ["glide", "cloud_diver", "lucky_whiskers", "fuel_miser", "hot_streak", "scavenger", "tailwind", "daredevil",
-			"double_coins", "shield", "magnet_storm", "whisker_window", "fuel_freeze", "full_tank", "patch", "coin_bag"]
+			"double_coins", "shield", "magnet_storm", "whisker_window", "fuel_freeze", "full_tank", "patch", "coin_bag", "crate_shower"]
 	var pool_ok := starting.size() == want.size()
 	for w in want:
 		pool_ok = pool_ok and starting.has(w)
-	check(pool_ok and not dup, "starting pool: perks 1, 2, 3, 6, 7, 8, 9, 10 + all five boosts + the supplies; never the same card twice (%d kinds)" % starting.size())
-	check(not starting.has("prop_wash") and not starting.has("battering_ram") and not starting.has("second_wind") and not starting.has("golden_touch") and not starting.has("crate_shower"),
-			"Prop Wash, Battering Ram, Second Wind and Golden Touch are locked (milestones), Crate Shower waits for crates")
+	check(pool_ok and not dup, "starting pool: perks 1, 2, 3, 6, 7, 8, 9, 10 + all five boosts + all four supplies; never the same card twice (%d kinds)" % starting.size())
+	check(not starting.has("prop_wash") and not starting.has("battering_ram") and not starting.has("second_wind") and not starting.has("golden_touch"),
+			"Prop Wash, Battering Ram, Second Wind and Golden Touch are locked until their milestones")
+	tuning.crates_enabled = false
+	var no_crates_seen := false
+	for i in 400:
+		for c in pk.roll(1.0, 3):
+			no_crates_seen = no_crates_seen or c["id"] == "crate_shower"
+	tuning.crates_enabled = true
+	check(not no_crates_seen, "(the Crate Shower is only dealt while crates exist)")
 	tsave.unlock_milestone("prop_wash")
 	tsave.unlock_milestone("second_wind")
 	var unlocked_seen := {}
@@ -2098,6 +2111,212 @@ func _initialize() -> void:
 	snap_combo["mats"].erase(sp._gull_mat.get_instance_id())
 	snap_combo["mats"].erase(sp._golden_can_mat.get_instance_id())
 	check(same_world(base, snap_combo), "combos, banners and the Logbook created nothing new  [%s]" % describe(snap_combo))
+	tsave.reset_all()
+
+	print("2o. crates and milestones")
+	tsave.reset_all()
+	tuning.crate_chance = 0.5
+	# (a) crates take blocked cells only, in the right colours
+	sp.apply_map(0)
+	sp.reset(-500.0)
+	sp.run_time = 1.0
+	var early_crates := 0
+	for i in 200:
+		sp._spawn_row(-30.0)
+		var er2 = sp._rows[-1]
+		for kcr in er2.crate_kind:
+			early_crates += int(kcr != 0)
+		sp._release_row(er2)
+	check(early_crates == 0, "no crates in the first %.0f s of a run" % tuning.crate_start_time)
+	sp.run_time = 30.0
+	var n_cr := 0
+	var n_blk := 0
+	var kinds := [0, 0, 0]
+	var layout_ok := true
+	for i in 1500:
+		sp._spawn_row(-30.0)
+		var cr2 = sp._rows[-1]
+		var blocked_n := 0
+		for c in cr2.open:
+			blocked_n += int(not c)
+		layout_ok = layout_ok and cr2.obs.size() == blocked_n and cr2.crate_kind.size() == cr2.obs.size()
+		for k in cr2.obs.size():
+			n_blk += 1
+			if cr2.crate_kind[k] != 0:
+				n_cr += 1
+				kinds[cr2.crate_kind[k] - 1] += 1
+				layout_ok = layout_ok and cr2.obs[k].material_override == sp._crate_mat and cr2.crate_glows[cr2.obs_cols[k]].visible and cr2.crate_glows[cr2.obs_cols[k]].material_override == sp._crate_glow_mats[cr2.crate_kind[k] - 1]
+			else:
+				layout_ok = layout_ok and not cr2.crate_glows[cr2.obs_cols[k]].visible
+		sp._release_row(cr2)
+	check(layout_ok, "FAIRNESS: a crate takes a blocked cell, never an open one (every row: obstacles = blocked columns), with its own wood body and a glow plate")
+	check(absf(float(n_cr) / n_blk - 0.5) < 0.04 and absf(kinds[0] / float(n_cr) - 0.55) < 0.05 and absf(kinds[1] / float(n_cr) - 0.30) < 0.05 and absf(kinds[2] / float(n_cr) - 0.15) < 0.04,
+			"crate_chance %.2f of blocked cells; contents about 55%% gold / 30%% green / 15%% purple (%d / %d / %d)" % [tuning.crate_chance, kinds[0], kinds[1], kinds[2]])
+	check(tuning.crate_colors[0] != tuning.crate_colors[1] and tuning.crate_colors[1] != tuning.crate_colors[2] and tuning.crate_colors[2] != tuning.crate_colors[0], "glow colours: gold, green, purple")
+	# (b) the ram rules
+	tuning.crate_chance = 0.0
+	main.restart()
+	main.set_process(false)
+	sp.reset(-500.0)
+	pk.enabled = false
+	pk.next_pick = INF
+	var pz: float = main.player.position.z
+	var px: float = main.player.position.x
+	var crow = sp._rows_make_for_test(pz, [px])
+	crow.crate_kind[0] = 1
+	var ccaps: PackedFloat32Array = main.player.hit_capsules()
+	check(sp.break_crates(Vector2(px, pz), ccaps, false).is_empty() and sp.hits(Vector2(px, pz), ccaps) and sp.last_hit_crate, "touching a crate without ramming does not break it: it is a hit")
+	main._process(0.02)
+	check(not main.alive and main.hud._over.text.contains(main.REASON_CRATE), "...it crashes the plane (\"%s\")" % main.REASON_CRATE)
+	main.restart()
+	main.set_process(false)
+	sp.reset(-500.0)
+	pk.enabled = false
+	pk.next_pick = INF
+	pz = main.player.position.z
+	px = main.player.position.x
+	crow = sp._rows_make_for_test(pz - 0.6, [px])
+	crow.crate_kind[0] = 1
+	main.score = 0.0
+	drag_by(main.player, Vector2(0.0, -160.0))   # a fast flick up the screen
+	main._process(0.05)
+	check(main.alive and crow.crate_kind[0] == 0 and crow.xs[0] > 1000.0 and not crow.obs[0].visible and main.score >= tuning.crate_coins, "flying UP faster than ram_speed (%.0f u/s) breaks the crate: it pays and the plane flies on (coins %.0f)" % [tuning.ram_speed, main.score])
+	check(count_visible(main.fx._crate_emitters) >= 1, "...with a break effect")
+	check(not sp.hits(Vector2(px, pz), ccaps), "a broken crate is gone for good")
+	# Battering Ram: any contact breaks it
+	main.restart()
+	main.set_process(false)
+	sp.reset(-500.0)
+	pk.enabled = false
+	pk.next_pick = INF
+	pk.set_perk("battering_ram", 1)
+	pz = main.player.position.z
+	px = main.player.position.x
+	crow = sp._rows_make_for_test(pz, [px])
+	crow.crate_kind[0] = 1
+	main.score = 0.0
+	main._process(0.02)
+	check(main.alive and crow.crate_kind[0] == 0 and main.score >= tuning.crate_coins, "Battering Ram: a crate breaks on any touch")
+	# rewards: coins scale with Battering Ram level and Golden Touch; green = fuel; purple = an extra pick
+	main.score = 0.0
+	main.coin_mult = 1.0
+	pk.set_perk("battering_ram", 3)
+	main._on_crate_break(1, Vector3(0, 0.4, -3))
+	check(is_equal_approx(main.score, tuning.crate_coins * 2.0), "Battering Ram level 3: crate coins x2 (%.0f)" % main.score)
+	pk.set_perk("golden_touch", 3)
+	main.score = 0.0
+	main._on_crate_break(1, Vector3(0, 0.4, -3))
+	check(is_equal_approx(main.score, tuning.crate_coins * 2.0 * 4.0), "Golden Touch level 3 pays x4 on top (%.0f)" % main.score)
+	pk.set_perk("golden_touch", 1)
+	main.fuel = 20.0
+	main._on_crate_break(2, Vector3(0, 0.4, -3))
+	check(is_equal_approx(main.fuel, 20.0 + tuning.crate_fuel * 2.0), "a green crate gives fuel (x Golden Touch level 1 = x2: %.0f)" % main.fuel)
+	pk.set_perk("golden_touch", 0)
+	pk.set_perk("battering_ram", 0)
+	pk.enabled = true
+	pk.start_run(1.0)
+	var taken0: int = pk.picks_taken
+	var next0: float = pk.next_pick
+	main.score = 1.0
+	main._on_crate_break(3, Vector3(0, 0.4, -3))
+	main._process(0.02)
+	check(main.get_tree().paused and main.pick_screen.is_shown() and main._pick_is_extra, "a purple crate gives an instant extra pick (the game pauses)")
+	await real_wait(0.55)
+	main.pick_screen._on_card(0)
+	check(not main.get_tree().paused and pk.picks_taken == taken0 and pk.next_pick == next0, "...and it does not use up the score for the next pick")
+	pk.enabled = false
+	pk.next_pick = INF
+	# Crate Shower
+	main.restart()
+	main.set_process(false)
+	sp.reset(-500.0)
+	main._apply_card({"kind": "supply", "id": "crate_shower"})
+	tuning.crate_chance = 0.0
+	sp.run_time = 30.0
+	var shower_crates := 0
+	var shower_blocked := 0
+	for i in tuning.crate_shower_rows:
+		sp._spawn_row(-30.0)
+		var sr = sp._rows[-1]
+		for k in sr.obs.size():
+			shower_blocked += 1
+			shower_crates += int(sr.crate_kind[k] != 0)
+		sp._release_row(sr)
+	check(sp.crate_shower_rows == 0 and float(shower_crates) / shower_blocked > 0.6, "Crate Shower: the next %d rows are full of crates (%d of %d blocked cells)" % [tuning.crate_shower_rows, shower_crates, shower_blocked])
+	sp._spawn_row(-30.0)
+	var after_sr = sp._rows[-1]
+	var plain_after := 0
+	for k in after_sr.obs.size():
+		plain_after += int(after_sr.crate_kind[k] != 0)
+	sp._release_row(after_sr)
+	check(plain_after == 0, "...then back to normal")
+	# Cat's Cradle through real crate breaks
+	tsave.loadout = ["nine_lives", "", ""]
+	tsave.levels["nine_lives"] = 1
+	main.restart()
+	main.set_process(false)
+	sp.reset(-500.0)
+	pk.enabled = false
+	pk.next_pick = INF
+	pk.set_perk("battering_ram", 3)
+	main._check_combos()
+	var l0: int = main.lives
+	var crates0: float = tsave.stat("crates")
+	for i in 10:
+		main._on_crate_break(1, Vector3(0, 0.4, -3))
+	check(main.combo_on("cats_cradle") and main.lives == l0 + 1 and tsave.stat("crates") == crates0 + 10.0, "ten crate breaks restore a life with Cat's Cradle, and each counts toward the lifetime total")
+	pk.set_perk("battering_ram", 0)
+	tsave.loadout = ["", "", ""]
+	# (c) milestones
+	tsave.reset_all()
+	check(tsave.milestones.is_empty() and not tsave.perk_unlocked("prop_wash") and tsave.perk_unlocked("glide"), "at the start only the starting perks are unlocked")
+	tsave.stats["cans"] = 99.0
+	main.restart()
+	main.set_process(false)
+	main.run_cans = 1
+	main.score = 10.0
+	main._end_run(main.HEADER_CRASH, main.REASON_OBSTACLE)
+	check(tsave.milestones.has("prop_wash") and tsave.perk_unlocked("prop_wash") and main.hud._over.text.contains("Perk unlocked: Prop Wash!"), "collecting the 100th can unlocks Prop Wash (it says so on the game-over screen)")
+	check(main.hud._combo_label.visible and main.hud._combo_label.text == "PROP WASH" and main.hud._combo_sub.text == "PERK UNLOCKED!", "...with an unlock popup")
+	check(pk.perk_offered(tuning.perk_def("prop_wash")), "...and it is now offered on the pick screen")
+	tsave.stats["whiskers"] = 10.0
+	tsave.stats["crates"] = 49.0
+	main.restart()
+	main.set_process(false)
+	main._on_crate_break(1, Vector3(0, 0.4, -3))
+	main._end_run(main.HEADER_CRASH, main.REASON_OBSTACLE)
+	check(tsave.milestones.has("second_wind") and tsave.milestones.has("battering_ram") and not tsave.milestones.has("golden_touch"), "10 Whisker closes unlock Second Wind; the 50th crate unlocks Battering Ram")
+	tsave.unlock_all_maps()
+	main.restart()
+	main.set_process(false)
+	main._end_run(main.HEADER_CRASH, main.REASON_OBSTACLE)
+	check(tsave.milestones.has("golden_touch"), "reaching the Coast unlocks Golden Touch")
+	tsave.save_game()
+	tsave.milestones = {}
+	tsave.load_game()
+	check(tsave.milestones.size() == 4 and tsave.perk_unlocked("golden_touch"), "milestones are saved")
+	tsave.reset_all()
+	tsave.stats["cans"] = 42.0
+	main.hud.refresh_logbook()
+	check((main.hud._milestone_rows[0]["line"] as Label).text.contains("42 / 100") and (main.hud._milestone_rows[0]["title"] as Label).text.contains("locked"), "the Logbook shows each milestone and your progress (\"%s\")" % (main.hud._milestone_rows[0]["line"] as Label).text)
+	tsave.unlock_milestone("prop_wash")
+	main.hud.refresh_logbook()
+	check((main.hud._milestone_rows[0]["title"] as Label).text.contains("unlocked"), "...and which are unlocked")
+	var ubtn: Button = null
+	for bt in main.tune_panel.find_children("*", "Button", true, false):
+		if bt.get_meta("debug", "") == "unlock_milestones":
+			ubtn = bt
+	tsave.reset_all()
+	ubtn.pressed.emit()
+	check(tsave.milestones.size() == 4, "?tune: Unlock all milestones")
+	tsave.reset_all()
+	# (d) nothing new allocated
+	tuning.crate_chance = 0.0
+	main.hud.play_pressed.emit()
+	main.set_process(false)
+	main.fx.clear()
+	var snap_crates := snapshot(main)
+	check(same_world(base, snap_crates), "crates, their bursts, milestones and the Logbook created nothing new  [%s]" % describe(snap_crates))
 	tsave.reset_all()
 
 	print("3. debug flags")
