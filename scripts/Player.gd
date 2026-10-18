@@ -212,6 +212,7 @@ func reset() -> void:
 	_zone_set = false          # set_zone() will put the plane back at its start spot
 	position = Vector3(0.0, PLANE_Y, position.z)
 	_model.rotation = Vector3.ZERO
+	_model.scale = Vector3.ONE
 	_model.visible = true
 
 func crash() -> void:

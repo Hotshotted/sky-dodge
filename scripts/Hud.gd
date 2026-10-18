@@ -16,6 +16,9 @@ var _last_points := 0.0
 var _score_tick_ms := -10000         # when the score number last ticked up while a bonus was active
 ## Menu buttons, wired up by Main.
 signal volume_changed(music: float, sound: float)   # the start screen's sliders
+signal play_again_pressed
+signal hangar_goto(id: String)       # the results screen's "you can afford this" button
+signal result_tick(progress: float)  # the coins counting up
 signal play_pressed
 signal hangar_pressed
 signal map_pressed(index: int)
@@ -84,6 +87,13 @@ const FUEL_BAR_H := 30.0
 const FUEL_BAR_TOP := 255.0
 const FUEL_PULSE_TIME := 0.35
 var _splash: Control
+# ---- the results screen (built once; Main passes a data dictionary, see show_results)
+var _res: Control
+var _res_nodes := {}
+var _res_t := 100.0                  # seconds since the results appeared (100 = finished)
+var _res_data := {}
+var _res_ticks := 0
+var _res_active := false
 var sfx: Sfx = null                  # set by Main: the buttons click through it
 var _volume_sliders: Array[HSlider] = []
 var _perf_label: Label
@@ -402,6 +412,7 @@ func _build_menus() -> void:
 	_over_hangar.visible = false
 	_over_hangar.pressed.connect(func(): hangar_pressed.emit())
 	add_child(_over_hangar)
+	_build_results()
 
 ## The Logbook: every combo, as a row. Found ones show their name and what they do; the rest are silhouettes
 ## with a hint. A scrolling list (drag it).
@@ -644,6 +655,12 @@ func show_menu() -> void:
 	_over_hangar.visible = false
 	_over.visible = false
 	_menu.visible = true
+
+## The Hangar opened straight on the tab of this upgrade (from the results screen).
+func focus_upgrade(id: String) -> void:
+	var d := Tuning.upgrade_def(id)
+	if not d.is_empty():
+		_select_tab(d["tab"])
 
 func show_hangar() -> void:
 	refresh_menus()
@@ -917,6 +934,8 @@ func _update_bonus_look(now: int) -> void:
 	_score.scale = Vector2.ONE * swell
 
 func _process(delta: float) -> void:
+	if _res_active:
+		_update_results(delta)
 	var pulse_now := Time.get_ticks_msec()
 	for pi in PERK_ICONS:   # a pulsing perk icon: grows and settles back
 		var pt := (pulse_now - _perk_pulse_ms[pi]) / 1000.0
@@ -973,9 +992,179 @@ func _process(delta: float) -> void:
 ## End-of-run screen: a header ("CRASHED" / "OUT OF FUEL"), what ended the run, the final score and
 ## the restart hint.
 func show_game_over(header: String, reason: String, earned: float, new_best: bool, best: float, extra: String = "") -> void:
-	_over.text = _game_over_text(header, reason, earned, new_best, best, extra)
+	_over.text = _game_over_text(header, reason, earned, new_best, best, extra)   # (the plain text; the results screen below is what is shown)
 	_over.visible = true
-	_over_hangar.visible = true
+
+# ---------- The results screen ----------
+
+func _res_label(key: String, size: int, y: float, h: float, color: Color = Color.WHITE, x: float = 0.0, w: float = 1080.0) -> Label:
+	var l := _make_label(size)
+	l.position = Vector2(x, y)
+	l.size = Vector2(w, h)
+	l.vertical_alignment = VERTICAL_ALIGNMENT_CENTER
+	l.add_theme_color_override("font_color", color)
+	l.mouse_filter = Control.MOUSE_FILTER_IGNORE
+	_res.add_child(l)
+	_res_nodes[key] = l
+	return l
+
+func _res_bar(key: String, y: float, h: float, color: Color) -> void:
+	var back := Panel.new()
+	var bsb := StyleBoxFlat.new()
+	bsb.bg_color = Color(0.2, 0.25, 0.36)
+	bsb.set_corner_radius_all(int(h * 0.5))
+	back.add_theme_stylebox_override("panel", bsb)
+	back.position = Vector2(90, y)
+	back.size = Vector2(900, h)
+	back.mouse_filter = Control.MOUSE_FILTER_IGNORE
+	_res.add_child(back)
+	var fill := Panel.new()
+	var fsb := StyleBoxFlat.new()
+	fsb.bg_color = color
+	fsb.set_corner_radius_all(int(h * 0.5))
+	fill.add_theme_stylebox_override("panel", fsb)
+	fill.position = Vector2(90, y)
+	fill.size = Vector2(h, h)
+	fill.mouse_filter = Control.MOUSE_FILTER_IGNORE
+	_res.add_child(fill)
+	_res_nodes[key + "_back"] = back
+	_res_nodes[key + "_fill"] = fill
+
+func _build_results() -> void:
+	_res = Control.new()
+	_res.set_anchors_and_offsets_preset(Control.PRESET_FULL_RECT)
+	_res.mouse_filter = Control.MOUSE_FILTER_STOP
+	_res.visible = false
+	var dim := ColorRect.new()
+	dim.color = Color(0.04, 0.05, 0.1, 0.82)
+	dim.set_anchors_and_offsets_preset(Control.PRESET_FULL_RECT)
+	dim.mouse_filter = Control.MOUSE_FILTER_IGNORE
+	_res.add_child(dim)
+	_res_label("header", 100, 80, 120, Color(1.0, 0.45, 0.3))
+	_res_label("cause", 54, 195, 80, Color(0.9, 0.95, 1.0))
+	_res_label("coins", 170, 285, 200, Color(1.0, 0.85, 0.25))
+	_res_label("coins_cap", 48, 480, 60, Color(0.9, 0.8, 0.5))
+	_res_label("dist", 52, 575, 70, Color.WHITE)
+	_res_bar("dist_bar", 650, 46, Color(0.35, 0.85, 0.5))
+	_res_label("pct", 46, 705, 64, Color(0.8, 1.0, 0.85))
+	_res_label("unlock", 46, 800, 60, Color(0.6, 0.85, 1.0))
+	_res_bar("unlock_bar", 862, 30, Color(0.4, 0.7, 1.0))
+	_res_label("medal", 46, 915, 60, Color(1.0, 0.8, 0.45))
+	_res_bar("medal_bar", 977, 30, Color(1.0, 0.75, 0.3))
+	_res_label("extra", 40, 1040, 190, Color(1.0, 0.95, 0.6))
+	_res_label("afford", 48, 1235, 70, Color(0.6, 1.0, 0.7))
+	var go := _make_button("", 46, Vector2(820, 110))
+	go.position = Vector2(130, 1310)
+	go.size = Vector2(820, 110)
+	go.pressed.connect(func(): if _res_data.has("afford_id"): hangar_goto.emit(_res_data["afford_id"]))
+	_res.add_child(go)
+	_res_nodes["afford_btn"] = go
+	var again := _make_button("PLAY AGAIN", 110, Vector2(840, 240))
+	again.position = Vector2(120, 1480)
+	again.size = Vector2(840, 240)
+	again.pressed.connect(func(): play_again_pressed.emit())
+	_res.add_child(again)
+	_res_nodes["again"] = again
+	var hg := _make_button("HANGAR", 50, Vector2(420, 110))
+	hg.position = Vector2(330, 1750)
+	hg.size = Vector2(420, 110)
+	hg.pressed.connect(func(): hangar_pressed.emit())
+	_res.add_child(hg)
+	_res_nodes["hangar"] = hg
+	add_child(_res)
+
+## Show the results: `d` = {header, cause, coins, meters, best_m (before this run), new_best, pct, unlock {text, frac},
+## medal {text, frac}, extra (lines), afford {id, text} }. The screen builds up over about 5 s (a tap skips to the end).
+func show_results(d: Dictionary) -> void:
+	_res_data = d
+	_res_data["afford_id"] = d.get("afford_id", "")
+	(_res_nodes["header"] as Label).text = d["header"]
+	(_res_nodes["cause"] as Label).text = d["cause"]
+	(_res_nodes["coins_cap"] as Label).text = "coins earned"
+	(_res_nodes["dist"] as Label).text = Tuning.fmt_m(d["meters"])
+	(_res_nodes["pct"] as Label).text = "NEW BEST!" if d["new_best"] else "%d%% of your best (%s)" % [int(round(float(d["pct"]) * 100.0)), Tuning.fmt_m(d["best_m"])]
+	(_res_nodes["pct"] as Label).add_theme_color_override("font_color", Color(1.0, 0.85, 0.2) if d["new_best"] else Color(0.8, 1.0, 0.85))
+	(_res_nodes["unlock"] as Label).text = d.get("unlock_text", "")
+	(_res_nodes["medal"] as Label).text = d.get("medal_text", "")
+	(_res_nodes["extra"] as Label).text = d.get("extra", "")
+	(_res_nodes["afford"] as Label).text = "You can afford an upgrade!" if d.get("afford_text", "") != "" else ""
+	(_res_nodes["afford_btn"] as Button).text = d.get("afford_text", "")
+	_res_t = 0.0
+	_res_ticks = 0
+	_res_active = true
+	_res.visible = true
+	_over_hangar.visible = false
+	_update_results(0.0)
+
+func hide_results() -> void:
+	_res.visible = false
+	_res_active = false
+
+func results_visible() -> bool:
+	return _res != null and _res.visible
+
+## Skip to the finished screen.
+func skip_results() -> void:
+	if _res_active:
+		_res_t = 100.0
+		_update_results(0.0)
+
+func _res_fade(key: String, start: float) -> bool:
+	var n := _res_nodes[key] as CanvasItem
+	var a := clampf((_res_t - start) / 0.3, 0.0, 1.0)
+	n.modulate.a = a
+	return a > 0.0
+
+func _res_fill(key: String, frac: float, start: float, length: float) -> void:
+	var back := _res_nodes[key + "_back"] as Panel
+	var fill := _res_nodes[key + "_fill"] as Panel
+	var shown := _res_fade(key + "_back", start)
+	fill.modulate.a = back.modulate.a
+	var k := clampf((_res_t - start) / length, 0.0, 1.0)
+	k = 1.0 - pow(1.0 - k, 3.0)
+	fill.size.x = maxf(back.size.y, back.size.x * clampf(frac, 0.0, 1.0) * k)
+	fill.visible = shown
+
+func _update_results(delta: float) -> void:
+	_res_t += delta
+	var d := _res_data
+	_res_fade("header", 0.0)
+	_res_fade("cause", 0.2)
+	# the coins count up, with a tick every few percent
+	var coins_label := _res_nodes["coins"] as Label
+	var ck := clampf((_res_t - 0.5) / 1.4, 0.0, 1.0)
+	ck = 1.0 - pow(1.0 - ck, 2.5)
+	coins_label.text = "+" + Tuning.fmt(floorf(float(d["coins"]) * ck))
+	_res_fade("coins", 0.45)
+	_res_fade("coins_cap", 0.45)
+	var ticks := int(ck * 32.0)
+	if ticks > _res_ticks and _res_t < 3.0:
+		_res_ticks = ticks
+		result_tick.emit(ck)
+	_res_fade("dist", 2.0)
+	_res_fill("dist_bar", 1.0 if d["new_best"] else float(d["pct"]), 2.0, 0.9)
+	_res_fade("pct", 2.9)
+	var has_unlock: bool = d.get("unlock_text", "") != ""
+	_res_fade("unlock", 3.1)
+	_res_fill("unlock_bar", float(d.get("unlock_frac", 0.0)), 3.1, 0.8)
+	_res_nodes["unlock_bar_back"].visible = has_unlock and _res_t > 3.1
+	_res_nodes["unlock_bar_fill"].visible = has_unlock and _res_t > 3.1
+	_res_nodes["unlock"].visible = has_unlock
+	var has_medal: bool = d.get("medal_text", "") != ""
+	_res_fade("medal", 3.8)
+	_res_fill("medal_bar", float(d.get("medal_frac", 0.0)), 3.8, 0.8)
+	_res_nodes["medal_bar_back"].visible = has_medal and _res_t > 3.8
+	_res_nodes["medal_bar_fill"].visible = has_medal and _res_t > 3.8
+	_res_nodes["medal"].visible = has_medal
+	_res_fade("extra", 4.5)
+	var has_afford: bool = d.get("afford_text", "") != ""
+	_res_fade("afford", 4.6)
+	_res_fade("afford_btn", 4.8)
+	_res_nodes["afford_btn"].visible = has_afford
+	_res_fade("again", 1.0)
+	_res_fade("hangar", 1.6)
+	if _res_t >= 5.6:
+		_res_active = false
 
 ## The score IS the coins earned this run.
 func _game_over_text(header: String, reason: String, earned: float, new_best: bool, best: float, extra: String = "") -> String:
@@ -1116,6 +1305,10 @@ func begin_prewarm(with_popups: bool) -> void:
 	refresh_menus(true)
 	refresh_logbook(true)
 	_logbook.visible = true
+	show_results({"header": "OUT OF FUEL", "cause": "Clipped by a crow flock", "coins": 1234567.0, "meters": 12345.0, "best_m": 13400.0, "new_best": false, "pct": 0.92,
+			"unlock_text": "320 m to the Coast", "unlock_frac": 0.6, "medal_text": "180 m to Silver  (+20K coins)", "medal_frac": 0.4,
+			"extra": "Bronze medal!  +3K coins\nCoast unlocked!\nPerk unlocked: Prop Wash!", "afford_text": "Fuel Tank Lv 3  -  1.2K coins", "afford_id": "fuel_tank"})
+	skip_results()
 	show_combo("Golden Whiskers", Color(1.0, 0.8, 0.2))   # (the banner's biggest text)
 	_combo_ms = Time.get_ticks_msec() + 100000   # (kept on screen for the whole pre-warm)
 	_menu.visible = true      # the start screen, Hangar and Hangar button are drawn too (under the splash)
@@ -1157,6 +1350,7 @@ func prewarm_popups() -> void:
 ## Every label stays alive; nothing is created or freed.
 func reset_for_run() -> void:
 	_over.visible = false
+	hide_results()
 	_combo_label.visible = false
 	_combo_sub.visible = false
 	hide_menus()
@@ -1179,6 +1373,8 @@ func reset_for_run() -> void:
 	clear_bonus()
 
 func end_prewarm() -> void:
+	hide_results()
+	_over.modulate.a = 0.0   # (the plain game-over text stays in the tree, but the results screen is what shows)
 	_combo_label.visible = false
 	_combo_sub.visible = false
 	refresh_logbook()

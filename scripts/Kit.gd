@@ -106,6 +106,8 @@ var warn_mat := StandardMaterial3D.new()
 var warn_line_mat := StandardMaterial3D.new()
 var scroll_speed := 7.0            # set by the Spawner: the dusters time their warning by it   # the crop duster's red edge glow and row line
 var last_hit_hay := false
+var last_hit_kind := -1             # the kind of thing the latest hits() found (the results screen names it)
+const CAUSES := ["Smashed into a barn", "Hit a tractor", "Caught by windmill blades", "Clipped by a crow flock", "Popped into a balloon", "Hit a power line", "Hit by a crop duster", "Tangled in a kite", "Clipped a hay bale"]
 var dropped := 0                   # spawn() calls that found their pool empty (tests expect 0)
 var aim_override := -99.0          # the validator forces where a crow flock aims
 
@@ -877,6 +879,7 @@ func hits(p: Vector2, caps: PackedFloat32Array) -> bool:
 		for o in range(0, caps.size(), 5):
 			if gap(p, caps, o, ci) < 0.0:
 				last_hit_hay = col[q + 8] == F_HAY
+				last_hit_kind = active[int(col[q + 7])].kind
 				return true
 	return false
 

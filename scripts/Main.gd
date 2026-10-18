@@ -7,6 +7,7 @@ extends Node3D
 @onready var camera: Camera3D = $Camera3D
 @onready var sun: DirectionalLight3D = $Sun
 @onready var hud: CanvasLayer = $Hud
+var crash_fx := CrashFx.new()   # the crash sequence's smoke, debris and Whiskers
 var sfx := Sfx.new()   # all sound (see Sfx.gd)
 
 ## What ends a run, shown on the game-over screen as a big header plus a line under it.
@@ -14,6 +15,7 @@ var sfx := Sfx.new()   # all sound (see Sfx.gd)
 ## tunnel through an obstacle or skip a can (the thinnest thing it must not skip is ~1.3 wide).
 const SWEEP_STEP := 0.4
 const MAX_SWEEP_STEPS := 80
+const CRASH_TIME := 1.5      # seconds of crash sequence before the results screen builds up
 const HEADER_CRASH := "CRASHED"
 const REASON_OBSTACLE := "Hit an obstacle"
 const HEADER_FUEL := "OUT OF FUEL"
@@ -48,6 +50,10 @@ var _warming := false
 static var _haptic_warmed := false  # first-touch haptic warm-up done (once per app session)
 static var _warmed := false  # pre-warm only once per app session
 var prof := {}               # profiling (DebugFlags.profile only): part name -> [total us, worst us, calls] this frame run
+var _crash_t := -1.0          # seconds since the crash (-1 = no crash sequence running)
+var _crash_speed := 0.0       # the world's speed when it happened (it rolls to a stop)
+var _cam_ease := 0.0          # 0..1: how far the camera has eased toward the falling plane
+var _results := {}            # what the results screen shows (built in _end_run)
 var last_cue := ""           # the latest speed cue shown on screen (the tests read it)
 var _seen_steps := 0       # Countryside speed steps already announced
 var _ramp_tier := 0        # other maps: speed tiers already announced
@@ -78,6 +84,12 @@ func _ready() -> void:
 	fuel = Tuning.fuel_max()
 	add_child(sfx)
 	hud.sfx = sfx
+	add_child(crash_fx)
+	hud.play_again_pressed.connect(_on_play_again)
+	hud.hangar_goto.connect(func(id: String):
+		_open_hangar()
+		hud.focus_upgrade(id))
+	hud.result_tick.connect(func(p: float): sfx.play("tick", 0.5, 0.8 + 0.9 * p))
 	hud.volume_changed.connect(func(_m: float, _s: float): sfx.apply_volumes())
 	add_child(fx)
 	add_child(trail)
@@ -137,6 +149,7 @@ func _prewarm() -> void:
 	var spot := Vector3(0.0, 1.2, 1.0)
 	hud.begin_prewarm(not DebugFlags.off("popup"))
 	sfx.prewarm_start()   # every sound decoded once, silently
+	crash_fx.prewarm_show(Vector3(0.0, 1.2, 1.0))   # smoke, debris, Whiskers and his parachute
 	spawner.prewarm_show(not DebugFlags.off("flash"), not DebugFlags.off("clouds"))
 	pick_screen.prewarm_show()      # the pick cards are drawn too
 	if tune_panel:
@@ -184,6 +197,7 @@ func _prewarm() -> void:
 			break
 	fx.clear()
 	sfx.prewarm_end()
+	crash_fx.stop()
 	trail.clear()
 	spawner.prewarm_hide()
 	pick_screen.hide_cards()
@@ -199,6 +213,9 @@ func _prewarm() -> void:
 ## material and UI node stays alive (and warm) across runs; only the game state is reset.
 func restart() -> void:
 	screen = SCREEN_PLAY
+	_crash_t = -1.0
+	_cam_ease = 0.0
+	crash_fx.stop()
 	sfx.set_phase(0)
 	sfx.start_music()
 	sim_time = 0.0
@@ -354,6 +371,8 @@ func _process(raw_delta: float) -> void:
 	hud.graph_push(raw_delta * 1000.0)
 	_update_camera()
 	_update_plane_zone()
+	if not _warming and not alive and _crash_t >= 0.0 and screen == SCREEN_OVER:
+		_update_crash(_frame_delta(raw_delta))
 	if _warming or not alive:
 		return
 	var delta := _frame_delta(raw_delta)
@@ -374,6 +393,7 @@ func _process(raw_delta: float) -> void:
 	if spawner.kit_on:
 		spawner.base_speed_now = _kit_speed
 	var step := speed * delta
+	_crash_speed = speed
 	score += step * Tuning.coins_per_unit * distance_pay() * earn_mult()
 	spawner.near_miss_scale = 1.0 + picks.value("daredevil") * 0.01
 	spawner.plane_z = player.position.z   # clouds fade as they near the plane,
@@ -725,20 +745,113 @@ func _end_run(header: String, reason: String) -> void:
 	_death_time = Time.get_ticks_msec() / 1000.0
 	player.crash()
 	player.set_flicker(false)
+	_crash_t = 0.0
+	if not DebugFlags.off("sparks"):
+		crash_fx.start(player.global_position, -1.0 if player.position.x > 0.0 else 1.0)
+	var cause := reason
+	if reason == REASON_OBSTACLE and spawner.kit_on and spawner.kit.last_hit_kind >= 0:   # name what it hit
+		cause = Kit.CAUSES[spawner.kit.last_hit_kind]
 	_reset_bonus()   # a crash / the end of the run ends the streak
 	hud.clear_bonus()
 	screen = SCREEN_OVER
 	last_earned = floorf(score)   # the score IS the coins: a crash keeps every one of them
 	Save.add_stat("cans", run_cans)
 	var meters_run := Tuning.meters(run_distance)
+	var prev_best_m: float = float(Save.map_stat(map)["best_distance"])
+	var coins_before: float = Save.coins
 	last_was_best = last_earned > float(Save.map_stat(map)["best_score"])
 	Save.record_run(score)
 	last_result = Save.record_map_run(map, meters_run, score)
 	last_result["milestones"] = Save.check_milestones()
-	hud.show_game_over(header, reason, last_earned, last_was_best, float(Save.map_stat(map)["best_score"]), _result_text(meters_run))
+	hud.show_game_over(header, cause, last_earned, last_was_best, float(Save.map_stat(map)["best_score"]), _result_text(meters_run))
+	_results = _build_results(header, cause, meters_run, prev_best_m, coins_before)
 	var unlocked_now: Array = last_result["milestones"]
 	if not unlocked_now.is_empty():   # a popup for the new perk
 		hud.show_combo(Tuning.perk_def(unlocked_now[0]["perk"])["name"], Color(1.0, 0.85, 0.3), "PERK UNLOCKED!")
+
+## What the results screen shows: coins, distance against the best, how far the next map unlock and medal are, the
+## milestones just earned, and an upgrade that can be afforded now.
+func _build_results(header: String, cause: String, meters_run: float, prev_best_m: float, coins_before: float) -> Dictionary:
+	var d := {"header": header, "cause": cause, "coins": last_earned, "meters": meters_run, "best_m": maxf(prev_best_m, 0.0),
+			"new_best": bool(last_result.get("new_best_distance", false))}
+	d["pct"] = clampf(meters_run / prev_best_m, 0.0, 1.0) if prev_best_m > 0.0 else 1.0
+	var best_now: float = Save.map_stat(map)["best_distance"]
+	for j in Tuning.maps.size():   # the next map to unlock
+		if not Save.maps_unlocked[j]:
+			var from_map: int = Tuning.maps[j]["unlock_from"]
+			var need: float = Tuning.maps[j]["unlock_meters"]
+			var have: float = Save.map_stat(from_map)["best_distance"]
+			d["unlock_text"] = "%s to the %s" % [Tuning.fmt_m(maxf(need - have, 0.0)), Tuning.maps[j]["name"]]
+			d["unlock_frac"] = clampf(have / maxf(need, 1.0), 0.0, 1.0)
+			break
+	var medals: Array = Tuning.map_def(map)["medals"]
+	for k in medals.size():   # the next medal on this map
+		var target: float = medals[k][0]
+		if best_now < target:
+			d["medal_text"] = "%s to %s  (+%s coins)" % [Tuning.fmt_m(target - best_now), MEDAL_NAMES[k], Tuning.fmt(medals[k][1])]
+			d["medal_frac"] = clampf(best_now / target, 0.0, 1.0)
+			break
+	d["extra"] = _result_extra()
+	var best_cost := -1.0   # an upgrade that can be bought now (one that just became affordable first)
+	var best_new := false
+	for u in Tuning.upgrades:
+		var id: String = u["id"]
+		if Save.is_maxed(id):
+			continue
+		var cost := Save.cost_of_next(id)
+		if cost > Save.coins:
+			continue
+		var is_new := cost > coins_before
+		if best_cost < 0.0 or (is_new and not best_new) or (is_new == best_new and cost > best_cost):
+			best_cost = cost
+			best_new = is_new
+			d["afford_id"] = id
+			d["afford_text"] = "%s  Lv %d  -  %s coins" % [u["name"], Save.level(id) + 1, Tuning.fmt(cost)]
+	return d
+
+## The milestone lines for the results screen (medals, unlocks, perks).
+func _result_extra() -> String:
+	var lines: Array[String] = []
+	for k in last_result.get("medals", []):
+		lines.append("%s medal!  +%s coins" % [MEDAL_NAMES[k], Tuning.fmt(Tuning.map_def(map)["medals"][k][1])])
+	for j in last_result.get("unlocked", []):
+		lines.append("%s unlocked!" % Tuning.map_def(j)["name"])
+	for m in last_result.get("milestones", []):
+		lines.append("Perk unlocked: %s!" % Tuning.perk_def(m["perk"])["name"])
+	return "\n".join(lines)
+
+## The crash sequence, one frame: the plane spins down trailing smoke, debris has popped, the camera eases in, Whiskers
+## has ejected; the world rolls to a stop (its own speed ramp, no time scaling). Then the results build up.
+func _update_crash(delta: float) -> void:
+	if delta <= 0.0:
+		return
+	_crash_t += delta
+	var k := clampf(_crash_t / CRASH_TIME, 0.0, 1.0)
+	_cam_ease = smoothstep(0.0, 0.9, _crash_t)
+	player._model.rotation = Vector3(_crash_t * 2.5, _crash_t * lerpf(11.0, 5.0, k), _crash_t * 4.0)
+	player._model.scale = Vector3.ONE * lerpf(1.0, 0.7, k)
+	player.position.y = player.PLANE_Y - 1.8 * k * k
+	crash_fx.update(delta, _crash_t, player.position)
+	var slow := maxf(1.0 - _crash_t / 1.2, 0.0)
+	if slow > 0.0:
+		spawner.advance(_crash_speed * slow * delta)
+		spawner.update_hazards(delta)
+	fx.wind_update(delta, player.position, false)
+	if _crash_t >= CRASH_TIME and not hud.results_visible() and not _results.is_empty():
+		hud.show_results(_results)
+		sfx.play("pick_open", 0.7)
+
+## ?tune: crash now.
+func debug_crash() -> void:
+	if alive:
+		_end_run(HEADER_CRASH, REASON_OBSTACLE)
+
+## ?tune: show the results screen with sample numbers.
+func debug_results() -> void:
+	if not alive:
+		return
+	_end_run(HEADER_CRASH, REASON_OBSTACLE)
+	_crash_t = CRASH_TIME
 
 ## The extra game-over lines: distance, medals, unlocks.
 func _result_text(meters_run: float) -> String:
@@ -895,8 +1008,8 @@ func _reset_bonus() -> void:
 ## screen centre always looks at world z = 0. Screen-up = world -Z.
 func _update_camera() -> void:
 	var tilt := deg_to_rad(Tuning.camera_tilt_deg)
-	camera.size = Tuning.ortho_size
-	camera.position = Vector3(0, cos(tilt), sin(tilt)) * 30.0
+	camera.size = Tuning.ortho_size * (1.0 - 0.2 * _cam_ease)   # (a crash: the camera eases in toward the plane)
+	camera.position = Vector3(player.position.x * 0.55 * _cam_ease, 0, player.position.z * 0.35 * _cam_ease) + Vector3(0, cos(tilt), sin(tilt)) * 30.0
 	camera.rotation = Vector3(-(PI / 2 - tilt), 0, 0)
 
 ## Screen spans z = -half .. +half (stretched slightly by the camera tilt).
@@ -933,9 +1046,13 @@ func _input(event: InputEvent) -> void:
 		_haptic_warmed = true
 		if not DebugFlags.off("haptic"):
 			Input.vibrate_handheld(1)
-	# Tap to restart (small delay so the crash-causing drag can't restart instantly).
-	if screen == SCREEN_OVER and event is InputEventScreenTouch and event.pressed \
-			and Time.get_ticks_msec() / 1000.0 - _death_time > 0.5 and not hud.over_hangar_hit(event.position):
+	# A tap on the results screen skips its build-up (PLAY AGAIN restarts).
+	if screen == SCREEN_OVER and event is InputEventScreenTouch and event.pressed and hud.results_visible():
+		hud.skip_results()
+
+## PLAY AGAIN on the results screen.
+func _on_play_again() -> void:
+	if screen == SCREEN_OVER and Time.get_ticks_msec() / 1000.0 - _death_time > 0.4:
 		restart()
 
 ## The start screen: the world waits (nothing scrolls) behind it.

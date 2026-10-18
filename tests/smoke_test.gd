@@ -332,10 +332,10 @@ func _initialize() -> void:
 		check(shown.begins_with(header + "\n") and shown.contains(reason) and shown.contains("+1.2K coins") and not shown.contains(other_header),
 				"game-over header is \"%s\" with \"%s\" and the score, not \"%s\"  (\"%s\")" % [header, reason, other_header, shown.replace("\n", " | ")])
 		check(run != 2 or main.fuel <= 0.0, "out-of-fuel run ended with an empty tank")
-		await real_wait(0.6)   # Main ignores taps for 0.5 s after a crash
-		tap()
+		await real_wait(0.6)   # Main ignores PLAY AGAIN for 0.4 s after a crash
+		main.hud.play_again_pressed.emit()
 		await real_wait(0.3)
-		check(main == first_instance and current_scene == first_instance, "tap restarted the run IN PLACE (same scene instance)")
+		check(main == first_instance and current_scene == first_instance, "PLAY AGAIN restarted the run IN PLACE (same scene instance)")
 		check(main.alive and main.score < 100.0 and main.bonus == 1, "restart reset score and bonus")
 		check(main.fuel > tuning.fuel_start - tuning.fuel_drain, "restart refilled the tank (%.1f / %.0f)" % [main.fuel, tuning.fuel_start])
 		check(absf(main.hud._fuel_frac - main.fuel / tuning.fuel_start) < 0.05, "fuel gauge shows the full tank again")
@@ -460,7 +460,9 @@ func _initialize() -> void:
 	elsewhere.pressed = true
 	elsewhere.position = Vector2(100.0, 900.0)
 	main._input(elsewhere)
-	check(main.alive, "a tap anywhere else restarts")
+	check(not main.alive, "a tap on the results screen only skips its build-up")
+	main.hud.play_again_pressed.emit()
+	check(main.alive, "PLAY AGAIN restarts")
 
 	main.set_process(false)   # freeze the game loop: no real obstacles or near misses while the rest pokes at things
 
@@ -3536,6 +3538,87 @@ func _initialize() -> void:
 	so_save.audio_music = 0.7
 	so_save.audio_sound = 0.8
 	so.apply_volumes()
+
+	print("13. crash sequence and results screen")
+	var cr_save = root.get_node("Save")
+	main.set_process(false)
+	main.spawner.kit_enabled = true
+	main.spawner.apply_map(0)
+	cr_save.reset_all()
+	cr_save.map_stats[tuning.maps[0]["id"]]["best_distance"] = 1000.0
+	cr_save.coins = 500.0
+	main.restart()
+	main.picks.enabled = false
+	var cr_base := snapshot(main)
+	main.spawner.kit.last_hit_kind = 3   # a crow flock
+	main.score = 777.0
+	main.run_distance = 920.0 / tuning.meters_per_unit
+	main.player.position.x = 2.0
+	main._end_run(main.HEADER_CRASH, main.REASON_OBSTACLE)
+	check(main._crash_t == 0.0 and main.crash_fx.active and not main.hud.results_visible() and Engine.time_scale == 1.0, "a crash starts the crash sequence (no results yet, time scale untouched)")
+	check(main._results["cause"] == "Clipped by a crow flock" and main.hud._over.text.contains("Clipped by a crow flock"), "the run says what ended it: \"%s\"" % main._results["cause"])
+	var cr_h0: float = main.player.position.y
+	for i in 8:   # 0.4 s
+		main._update_crash(0.05)
+	check(main.crash_fx._whiskers.visible and main.crash_fx._chute.visible, "Whiskers ejects (after about 0.2 s)")
+	var cr_y_eject: float = main.crash_fx._whiskers.position.y
+	for i in 12:   # 1.0 s in
+		main._update_crash(0.05)
+	check(main.player._model.rotation.y > 5.0 and main.player.position.y < cr_h0 - 0.3 and main.player._model.scale.x < 0.95, "the plane spins and falls (spin %.1f rad, down %.2f)" % [main.player._model.rotation.y, cr_h0 - main.player.position.y])
+	check(main.crash_fx._chute.scale.x > 0.9 and main.crash_fx._whiskers.position.y > -1.7, "the parachute is open and he drifts down (y %.2f)" % main.crash_fx._whiskers.position.y)
+	check(main.camera.size < tuning.ortho_size - 0.5 or main._cam_ease > 0.5, "the camera eases toward the plane (ease %.2f)" % main._cam_ease)
+	main._update_camera()
+	check(main.camera.size < tuning.ortho_size * 0.9, "...zooming in (%.2f of %.1f)" % [main.camera.size, tuning.ortho_size])
+	check(not main.hud.results_visible(), "the results wait for the crash sequence (%.1f s)" % main.CRASH_TIME)
+	for i in 12:
+		main._update_crash(0.05)
+	check(main.hud.results_visible() and not main.hud._over_hangar.visible and main.hud._over.modulate.a == 0.0, "then the results screen takes over")
+	# the build-up: coins count up with ticks
+	var cr_ticks := [0]
+	main.hud.result_tick.connect(func(_p: float): cr_ticks[0] += 1)
+	main.hud.show_results(main._results)
+	var cr_prev := -1.0
+	var cr_mono := true
+	for i in 45:   # 2.25 s
+		main.hud._update_results(0.05)
+		var shown_coins: float = float(main.hud._res_nodes["coins"].text.trim_prefix("+").replace(",", "").replace("K", "000"))
+		cr_mono = cr_mono and shown_coins >= cr_prev - 0.001
+		cr_prev = shown_coins
+	check(cr_mono and main.hud._res_nodes["coins"].text == "+" + tuning.fmt(floorf(main.last_earned)) and cr_ticks[0] >= 20, "coins count up to %s with ticks (%d)" % [main.hud._res_nodes["coins"].text, cr_ticks[0]])
+	check(absf(float(main._results["pct"]) - 0.92) < 0.001 and main.hud._res_nodes["pct"].text.begins_with("92% of your best") and not main._results["new_best"], "distance against the best: \"%s\"" % main.hud._res_nodes["pct"].text)
+	main.hud.skip_results()
+	var cr_bar_w: float = main.hud._res_nodes["dist_bar_fill"].size.x
+	check(absf(cr_bar_w - 900.0 * 0.92) < 2.0, "...with a progress bar to it (%.0f of 900 px)" % cr_bar_w)
+	check(main._results["unlock_text"].contains("to the Coast") and main.hud._res_nodes["unlock"].visible, "progress to the next map: \"%s\"" % main._results["unlock_text"])
+	check(main._results["medal_text"].contains("to Bronze"), "progress to the next medal: \"%s\"" % main._results["medal_text"])
+	check(main._results.has("afford_id") and main.hud._res_nodes["afford_btn"].visible and main.hud._res_nodes["afford_btn"].text != "", "an upgrade you can afford is highlighted: \"%s\"" % main.hud._res_nodes["afford_btn"].text)
+	var cr_again: Button = main.hud._res_nodes["again"]
+	check(cr_again.visible and cr_again.size.x >= 800.0 and cr_again.size.y >= 200.0 and cr_again.text == "PLAY AGAIN", "a big PLAY AGAIN button")
+	var goto_id: String = main._results["afford_id"]
+	main.hud._res_nodes["afford_btn"].pressed.emit()
+	check(main.screen == main.SCREEN_HANGAR and main.hud._hangar.visible and main.hud._tab == tuning.upgrade_def(goto_id)["tab"], "the upgrade button goes straight to its Hangar tab")
+	main.restart()
+	check(main.alive and not main.hud.results_visible() and main._crash_t < 0.0 and main._cam_ease == 0.0 and not main.crash_fx.active and main.player._model.scale.x == 1.0 and absf(main.player.position.y - 1.2) < 0.001, "PLAY AGAIN: a fresh run, camera and plane back to normal")
+	# a new best reads differently
+	main.run_distance = 1500.0 / tuning.meters_per_unit
+	main._end_run(main.HEADER_CRASH, main.REASON_OBSTACLE)
+	main.hud.show_results(main._results)
+	check(main._results["new_best"] and main.hud._res_nodes["pct"].text == "NEW BEST!", "a new best distance says NEW BEST!")
+	main.restart()
+	# the debug buttons
+	main.debug_crash()
+	check(not main.alive and main._crash_t >= 0.0, "?tune: Crash now")
+	main.restart()
+	main.debug_results()
+	main._update_crash(0.05)
+	check(main.hud.results_visible(), "?tune: Preview results")
+	main.restart()
+	main.spawner.kit_enabled = false
+	main.spawner.apply_map(0)
+	check(same_world(cr_base, snapshot(main)), "crashing, the sequence and the results created nothing new  [%s]" % describe(snapshot(main)))
+	cr_save.reset_all()
+	main.restart()
+	main.set_process(false)
 
 	DirAccess.remove_absolute(ProjectSettings.globalize_path("user://smoke_test_save.json"))
 	print("")

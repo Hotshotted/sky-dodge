@@ -69,6 +69,7 @@ save("pick_open", x)
 t = t_(0.28); save("pick_select", (sine(988 , t) * (t < 0.09) + sine(1319, t) * (t >= 0.09)) * decay(t % 0.09, 14) * env(len(t), 0.002, 0.05))
 x = whoosh(1.2, 250, 4500) + 0.5 * lowpass(noise(int(SR * 1.2)), 1200) * np.sin(np.pi * t_(1.2) / 1.2)
 save("speed_whoosh", x)
+t = t_(0.035); save("tick", (sine(2400, t) * decay(t, 90)))
 t = t_(0.06); save("tap", (sine(1500, t) + 0.5 * noise(len(t)) * 0.3) * decay(t, 70))
 
 # ---- loops
