@@ -75,7 +75,7 @@ func _prewarm() -> void:
 	_warming = true
 	var spot := Vector3(0.0, 1.2, 1.0)
 	hud.begin_prewarm(not DebugFlags.off("popup"))
-	spawner.prewarm_show(not DebugFlags.off("flash"))
+	spawner.prewarm_show(not DebugFlags.off("flash"), not DebugFlags.off("clouds"))
 	if tune_panel:
 		tune_panel.prewarm_show(true)   # drawn under the splash like everything else
 	if not DebugFlags.off("punch"):
@@ -130,6 +130,7 @@ func restart() -> void:
 	_mult_timer = 0.0
 	elapsed = 0.0
 	alive = true
+	spawner.run_time = 0.0
 	fuel = Tuning.fuel_start
 	fx.clear()
 	trail.clear()
@@ -150,6 +151,9 @@ func _process(delta: float) -> void:
 	var speed := minf(Tuning.base_speed + Tuning.speed_ramp * elapsed, Tuning.max_speed)
 	var step := speed * delta
 	score += step * (multiplier if Tuning.score_uses_multiplier else 1)
+	spawner.plane_z = player.position.z   # clouds fade as they near the plane,
+	spawner.run_time = elapsed            # start late in the run,
+	spawner.scroll_speed = speed          # and come more often the faster it goes
 	spawner.advance(step)
 	hud.set_score(int(score))
 	var plane := Vector2(player.position.x, player.position.z)

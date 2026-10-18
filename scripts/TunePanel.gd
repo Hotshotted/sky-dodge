@@ -21,6 +21,11 @@ const ENTRIES := [
 	["near_miss_distance", "Near-miss distance", 0.1, 1.5, 0.05],
 	["obstacle_scale", "Obstacle scale", 0.3, 0.9, 0.01],
 	["plane_tip_radius", "Plane tip radius", 0.05, 0.35, 0.01],
+	["cloud_start_time", "Cloud start time (s)", 0.0, 120.0, 1.0],
+	["cloud_frequency", "Cloud frequency", 0.0, 1.0, 0.01],
+	["cloud_reveal_distance", "Cloud reveal distance", 4.0, 24.0, 0.5],
+	["cloud_min_opacity", "Cloud min opacity", 0.0, 1.0, 0.05],
+	["fuel_can_under_cloud_chance", "Can-under-cloud chance", 0.0, 1.0, 0.01],
 	["sensitivity", "Sensitivity (1.0 = 1:1)", 0.3, 2.5, 0.05],
 	["visual_smoothing", "Visual smoothing (s)", 0.0, 0.1, 0.005],
 ]
@@ -70,6 +75,8 @@ func build() -> void:
 	fill.content_margin_top = 8
 	fill.content_margin_bottom = 8
 	var knob := _circle_texture(52, Color(0.95, 0.97, 1.0))
+	var tick_off := _ring_texture(52, Color(0.7, 0.75, 0.85))   # big, readable on/off icons for the switch
+	var tick_on := _circle_texture(52, Color(0.25, 0.9, 0.5))
 	# The panel: a dark overlay over the whole screen. Hidden until opened; layer 0 so that during
 	# the start-up pre-warm it is drawn UNDER the splash screen.
 	_panel_layer = CanvasLayer.new()
@@ -136,6 +143,8 @@ func build() -> void:
 		check.add_theme_font_size_override("font_size", 32)
 		check.custom_minimum_size = Vector2(0, 76)
 		check.button_pressed = Tuning.get(t[0])
+		check.add_theme_icon_override("unchecked", tick_off)
+		check.add_theme_icon_override("checked", tick_on)
 		check.toggled.connect(_on_toggle.bind(t[0]))
 		list.add_child(check)
 		_toggles[t[0]] = check
@@ -280,6 +289,17 @@ func _make_button(text: String, size: int) -> Button:
 	b.custom_minimum_size = Vector2(170, 76)
 	b.size_flags_horizontal = Control.SIZE_EXPAND_FILL
 	return b
+
+## A hollow ring, used as the "off" icon of the switch.
+func _ring_texture(diameter: int, color: Color) -> ImageTexture:
+	var img := Image.create(diameter, diameter, false, Image.FORMAT_RGBA8)
+	var c := (diameter - 1) * 0.5
+	for y in diameter:
+		for x in diameter:
+			var d := Vector2(x - c, y - c).length()
+			var edge := clampf(c + 0.5 - d, 0.0, 1.0) * clampf(d - (c - 6.5), 0.0, 1.0)
+			img.set_pixel(x, y, Color(color.r, color.g, color.b, edge))
+	return ImageTexture.create_from_image(img)
 
 ## A filled circle, used as the slider handle.
 func _circle_texture(diameter: int, color: Color) -> ImageTexture:

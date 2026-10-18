@@ -14,6 +14,9 @@ extends SceneTree
 ##   2g. controls: the plane moves 1:1 with the finger (no momentum), clamps to the play area, banks from
 ##       its real velocity, snap and visual smoothing work; a fast flick through a cube still crashes and
 ##       through a can still collects it (swept collision)
+##   2h. clouds: none before cloud_start_time, more of them with speed, never cover every open column of a
+##       row (thousands of generated rows), fade in late, sit above obstacles/cans but below the plane,
+##       hide cans more often, ?nofx=clouds disables them, restart clears them, nothing new is allocated
 ##   3. ?debug flags parse, and switching an effect off really skips it
 ##   4. plane collision capsules: span matches the wings, rounded corners graze past a cube corner
 ##   5. closest-approach near-miss detection reports the right side
@@ -140,6 +143,11 @@ func _initialize() -> void:
 	for r in main.spawner._all_rows:
 		cans.append(r.can)
 	check(count_visible(cans) == main.spawner.POOL_ROWS, "every pooled fuel can (%d) is drawn during the pre-warm" % cans.size())
+	var blobs: Array = []
+	for r in main.spawner._all_rows:
+		blobs.append_array(r.cloud_blobs)
+	check(blobs.size() == main.spawner.POOL_ROWS * main.spawner.BLOBS_PER_ROW and count_visible(blobs) == blobs.size(),
+			"every pooled cloud puff (%d) is drawn during the pre-warm" % blobs.size())
 	check(count_visible(main.fx._pickup_emitters) == main.fx.PICKUP_EMITTERS, "both fuel-pickup emitters are drawing during the pre-warm")
 	var waited := 0.0
 	while main._warming and waited < 12.0:
@@ -158,6 +166,7 @@ func _initialize() -> void:
 	for r in main.spawner._rows:
 		cans_in_play += int(r.has_can)
 	check(count_visible(cans) == cans_in_play and count_visible(main.fx._pickup_emitters) == 0, "no pre-warm cans or pickup puffs left behind")
+	check(count_visible(blobs) == 0, "no pre-warm cloud puffs left behind (no clouds in the first %.0f s)" % tuning.cloud_start_time)
 	check(count_visible(cubes) == in_play and count_visible(main.fx._streak_nodes) == 0 and main.trail._pts.is_empty()
 			and count_visible(main.fx._emitters) == 0, "no pre-warm effects left behind (only the live game's own cubes are showing: %d)" % in_play)
 	check(main.alive, "run starts alive")
@@ -261,7 +270,7 @@ func _initialize() -> void:
 		defaults[e[0]] = tuning.get(e[0])
 	for t in panel.TOGGLES:
 		defaults[t[0]] = tuning.get(t[0])
-	check(panel.ENTRIES.size() == 11 and panel._sliders.size() == 11 and panel._toggles.size() == 1, "11 sliders and 1 on/off switch for the tuned values")
+	check(panel.ENTRIES.size() == 16 and panel._sliders.size() == 16 and panel._toggles.size() == 1, "16 sliders and 1 on/off switch for the tuned values")
 	var all_match := true
 	for e in panel.ENTRIES:
 		if not is_equal_approx(panel._sliders[e[0]].value, tuning.get(e[0])):
@@ -579,6 +588,173 @@ func _initialize() -> void:
 	tuning.fuel_risk_bias = saved_bias
 	tuning.blocked_columns_min = saved_blk_min
 	tuning.blocked_columns_max = saved_blk_max
+
+	print("2h. clouds")
+	var cl_saved := {"start": tuning.cloud_start_time, "freq": tuning.cloud_frequency, "chance": tuning.fuel_can_chance,
+			"under": tuning.fuel_can_under_cloud_chance, "bias": tuning.fuel_risk_bias, "bmin": tuning.blocked_columns_min, "bmax": tuning.blocked_columns_max}
+	tuning.blocked_columns_min = 2
+	tuning.blocked_columns_max = 3
+	var ncol: int = tuning.column_count
+	sp.reset()
+	# (a) nothing before cloud_start_time
+	tuning.cloud_start_time = 25.0
+	tuning.cloud_frequency = 0.9
+	sp.run_time = 5.0
+	sp.scroll_speed = 12.0
+	var early := 0
+	for i in 600:
+		sp._spawn_row(-30.0)
+		var er = sp._rows[-1]
+		early += int(er.cloud_on)
+		sp._release_row(er)
+	check(early == 0, "no clouds before cloud_start_time (%d of 600 rows)" % early)
+	# (b) the frequency grows with speed
+	tuning.cloud_frequency = 0.10
+	sp.run_time = 30.0
+	var at_start_speed: float = tuning.base_speed + tuning.speed_ramp * tuning.cloud_start_time
+	var frac := []
+	for spd in [at_start_speed, tuning.max_speed]:
+		sp.scroll_speed = spd
+		sp._cloud_rows_left = 0
+		var with_cloud := 0
+		for i in 6000:
+			sp._spawn_row(-30.0)
+			var br = sp._rows[-1]
+			with_cloud += int(br.cloud_on)
+			sp._release_row(br)
+		frac.append(float(with_cloud) / 6000.0)
+	check(frac[0] > 0.05 and frac[1] > frac[0] * 1.4, "clouds come more often at speed: %.0f%% of rows at start speed, %.0f%% at top speed" % [frac[0] * 100.0, frac[1] * 100.0])
+	# (c) fairness over thousands of rows, with clouds as frequent as possible
+	tuning.cloud_frequency = 0.6
+	sp.scroll_speed = tuning.max_speed
+	sp.run_time = 100.0
+	tuning.fuel_can_chance = 0.18
+	tuning.fuel_can_under_cloud_chance = 0.45
+	tuning.fuel_risk_bias = 1.0
+	var rows_n := 8000
+	var cloud_rows := 0
+	var hid_obstacle := 0
+	var hid_open := 0
+	var unfair := 0
+	var bad_blobs := 0
+	var widest := 0
+	var eligible := 0
+	var can_under := 0
+	var can_on_safe := 0
+	sp._cloud_rows_left = 0
+	for i in rows_n:
+		sp._spawn_row(-30.0)
+		var fr = sp._rows[-1]
+		var safe_c: int = sp._safe_col
+		var open_cols: Array[bool] = []
+		for c in ncol:
+			open_cols.append(not fr.xs.any(func(x): return absf(x - tuning.column_center(c)) < 0.01))
+		var any_open_uncovered := false
+		var covered_n := 0
+		var covered_open_not_safe := false
+		for c in ncol:
+			if open_cols[c] and not fr.cloud_cov[c]:
+				any_open_uncovered = true
+			if fr.cloud_cov[c]:
+				covered_n += 1
+				if open_cols[c]:
+					hid_open += 1
+					if c != safe_c:
+						covered_open_not_safe = true
+				else:
+					hid_obstacle += 1
+		if not any_open_uncovered:
+			unfair += 1
+		if fr.cloud_on:
+			cloud_rows += 1
+			widest = maxi(widest, covered_n)
+			var visible_blobs := 0
+			for b in fr.cloud_blobs:
+				visible_blobs += int(b.visible)
+			if visible_blobs != covered_n * sp.BLOBS_PER_COLUMN or covered_n < 1 or covered_n > 3:
+				bad_blobs += 1
+			if covered_open_not_safe:
+				eligible += 1
+				if fr.has_can:
+					for c in ncol:
+						if fr.cloud_cov[c] and open_cols[c] and absf(fr.can_x - tuning.column_center(c)) < 0.01:
+							can_under += 1
+		elif covered_n > 0:
+			bad_blobs += 1
+		if fr.has_can and absf(fr.can_x - tuning.column_center(safe_c)) < 0.01:
+			can_on_safe += 1
+		sp._release_row(fr)
+	check(unfair == 0, "FAIRNESS: in %d generated rows (%d with cloud) every row keeps at least one open column uncovered" % [rows_n, cloud_rows])
+	check(cloud_rows > rows_n * 0.3 and hid_obstacle > 500 and hid_open > 500,
+			"(not vacuous) clouds covered %d obstacles and %d open gaps across %d cloud rows" % [hid_obstacle, hid_open, cloud_rows])
+	check(bad_blobs == 0 and widest <= 3, "every cloud row shows exactly 3 puffs per covered column, 1-3 columns (widest %d)" % widest)
+	check(eligible > 500 and float(can_under) / eligible > 0.4, "cans are placed under clouds %.0f%% of the time they can be (chance %.2f) (%d of %d rows)" % [100.0 * can_under / maxf(eligible, 1.0), tuning.fuel_can_under_cloud_chance, can_under, eligible])
+	check(can_on_safe == 0, "...and still never on the safe path")
+	# (d) late reveal
+	tuning.cloud_frequency = 0.9
+	sp.plane_z = 3.0
+	var cr = null
+	while cr == null or not cr.cloud_on:
+		if cr != null:
+			sp._release_row(cr)
+		sp._spawn_row(-30.0)
+		cr = sp._rows[-1]
+	var reveal: float = tuning.cloud_reveal_distance
+	var alphas := []
+	for z in [sp.plane_z - reveal - 10.0, sp.plane_z - reveal, sp.plane_z - reveal * 0.5, sp.plane_z, sp.plane_z + 8.0]:
+		cr.position.z = z
+		sp._update_cloud_alpha(cr)
+		alphas.append(cr.cloud_mat.albedo_color.a)
+	check(is_equal_approx(alphas[0], tuning.cloud_max_opacity) and is_equal_approx(alphas[1], tuning.cloud_max_opacity),
+			"far from the plane a cloud is nearly opaque (%.2f)" % alphas[0])
+	check(alphas[2] < alphas[1] and alphas[2] > alphas[3], "it fades as it approaches (%.2f at half the reveal distance)" % alphas[2])
+	check(is_equal_approx(alphas[3], tuning.cloud_min_opacity) and is_equal_approx(alphas[4], tuning.cloud_min_opacity),
+			"at the plane (and after passing it) it is at cloud_min_opacity (%.2f)" % alphas[3])
+	sp._release_row(cr)
+	# (e) vertical layering: above obstacles and cans, below the plane
+	var puff_aabb: AABB = sp._cloud_mesh.get_aabb()
+	var cloud_bottom: float = sp.CLOUD_Y + puff_aabb.position.y
+	var cloud_top: float = sp.CLOUD_Y + puff_aabb.end.y
+	var obstacle_top: float = tuning.column_width() * tuning.obstacle_scale * 0.5 + tuning.outline_thickness
+	var can_top: float = 0.25 + 0.12 + tuning.fuel_can_size * 0.5
+	var plane_bottom := INF
+	for part in pl._model.get_children():
+		var pa: AABB = part.global_transform * part.mesh.get_aabb()
+		plane_bottom = minf(plane_bottom, pa.position.y)
+	check(cloud_bottom >= obstacle_top and cloud_bottom >= can_top - 0.001, "clouds sit above the obstacles (top %.2f) and cans (top %.2f): slab starts at %.2f" % [obstacle_top, can_top, cloud_bottom])
+	check(cloud_top < plane_bottom, "...and below the plane (cloud top %.2f < plane bottom %.2f), so the plane always draws on top" % [cloud_top, plane_bottom])
+	# (f) ?nofx=clouds
+	DebugFlags.parse(["nofx=clouds"])
+	var none := 0
+	sp._cloud_rows_left = 0
+	for i in 600:
+		sp._spawn_row(-30.0)
+		var nr = sp._rows[-1]
+		none += int(nr.cloud_on)
+		sp._release_row(nr)
+	DebugFlags.parse([])
+	check(none == 0, "?nofx=clouds: no clouds at all")
+	# (g) restart clears them and nothing new was allocated by any of that
+	sp._cloud_rows_left = 0
+	for i in 5:
+		sp._spawn_row(-30.0 + i)
+	main.restart()
+	var shown := 0
+	for r in sp._all_rows:
+		for b in r.cloud_blobs:
+			shown += int(b.visible)
+	check(shown == 0, "an in-place restart clears every cloud")
+	tuning.cloud_start_time = cl_saved["start"]
+	tuning.cloud_frequency = cl_saved["freq"]
+	tuning.fuel_can_chance = cl_saved["chance"]
+	tuning.fuel_can_under_cloud_chance = cl_saved["under"]
+	tuning.fuel_risk_bias = cl_saved["bias"]
+	tuning.blocked_columns_min = cl_saved["bmin"]
+	tuning.blocked_columns_max = cl_saved["bmax"]
+	sp.run_time = 0.0
+	main.set_process(false)
+	var after_clouds := snapshot(main)
+	check(same_world(base, after_clouds), "generating thousands of cloud rows created nothing new  [%s]" % describe(after_clouds))
 
 	print("3. debug flags")
 	DebugFlags.parse(["nofx=sparks,bogus", "noprewarm", "perf", "v=abc1234"])

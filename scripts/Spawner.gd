@@ -9,6 +9,14 @@ const GROUND_Y := -2.0
 const NEAR_RANGE := 4.0   # only rows within this many units (z) of the plane are collision-checked
 const FAR_X := 3.2        # ...and only obstacles within this sideways distance (the wing reaches ~1.1 + a cube ~1)
 const POOL_ROWS := 12     # rows created once at startup and reused forever (about 6 are alive at a time)
+## Clouds: puffs lie in a thin slab ABOVE the obstacles and fuel cans (tops at 0.67 / 0.77) and BELOW
+## the plane (its lowest point is 1.02), so plain depth testing hides what is under them and keeps
+## the plane drawn on top and fully visible.
+const CLOUD_Y := 0.78
+const CLOUD_HEIGHT := 0.2           # puff top = 0.98
+const CLOUD_COLUMNS := 3            # most columns one row's cloud can cover
+const BLOBS_PER_COLUMN := 3         # puffs along the row's length for each covered column
+const BLOBS_PER_ROW := CLOUD_COLUMNS * BLOBS_PER_COLUMN
 
 ## One row of obstacles: a cube (with its own outline material) per column, created once and
 ## reused, plus the bookkeeping for near-miss detection.
@@ -20,6 +28,10 @@ class Row extends Node3D:
 	var can_outline: ShaderMaterial
 	var has_can := false
 	var can_x := 0.0
+	var cloud_blobs: Array[MeshInstance3D] = []   # pooled cloud puffs for this row (hidden unless cloud_on)
+	var cloud_mat: StandardMaterial3D             # shared by the row's puffs: its alpha is the reveal fade
+	var cloud_on := false                         # this row has cloud over some columns
+	var cloud_cov: Array[bool] = []               # per column: covered by cloud
 	var xs: Array[float] = []             # x of each blocked column this time round
 	var obs: Array[MeshInstance3D] = []   # the cubes in use (same order as xs)
 	var outlines: Array[ShaderMaterial] = []  # their outline materials (same order)
@@ -30,6 +42,9 @@ class Row extends Node3D:
 
 	func clear_state() -> void:
 		has_can = false
+		cloud_on = false
+		for i in cloud_cov.size():
+			cloud_cov[i] = false
 		xs.clear()
 		obs.clear()
 		outlines.clear()
@@ -48,6 +63,13 @@ var _safe_col := 2                 # column of the main safe path through the la
 var _can_mesh := BoxMesh.new()     # unit cube
 var _can_mat := StandardMaterial3D.new()
 var _picked: Array[Vector3] = []   # cans collected by the last collect_cans() call (reused)
+var plane_z := 0.0                 # set by Main each frame: where the plane is (clouds fade as they near it)
+var run_time := 0.0                # set by Main each frame: seconds into the run (clouds start late)
+var scroll_speed := 0.0            # set by Main each frame: world speed (cloud frequency grows with it)
+var _cloud_mesh := ArrayMesh.new() # the shared low-poly puff
+var _cloud_c0 := 0                 # the bank in progress: its first and last column...
+var _cloud_c1 := 0
+var _cloud_rows_left := 0          # ...and how many more rows it covers
 var _last_row_z := 0.0
 var _obstacle_mesh := BoxMesh.new()  # unit cube, scaled per obstacle
 var _obstacle_mat := StandardMaterial3D.new()
@@ -63,6 +85,7 @@ func _ready() -> void:
 	_obstacle_mat.metallic_specular = 0.0
 	_can_mat.roughness = 1.0
 	_can_mat.metallic_specular = 0.0
+	_build_puff_mesh()
 	_update_look()
 	# Ground far below the obstacles; the stripes on each row give a sense of scrolling speed.
 	var ground := MeshInstance3D.new()
@@ -90,6 +113,7 @@ func reset(first_row_z: float = -12.0) -> void:
 	_flashes.clear()
 	_prev_open.clear()
 	_pending_open.clear()
+	_cloud_rows_left = 0
 	_safe_col = Tuning.column_count / 2
 	for i in Tuning.column_count:
 		_prev_open.append(true)  # first row may use any column
@@ -178,6 +202,8 @@ func _process(_delta: float) -> void:
 	for r in _rows:   # fuel cans bob gently so they read as pickups
 		if r.has_can:
 			r.can.position.y = 0.25 + 0.12 * sin(t * 4.0 + r.can_x)
+		if r.cloud_on:
+			_update_cloud_alpha(r)
 
 func _update_flashes() -> void:
 	var now := Time.get_ticks_msec()
@@ -196,7 +222,7 @@ func _new_outline() -> ShaderMaterial:
 
 ## Startup pre-warm: show EVERY pooled cube in view (alternate rows with a white outline) so each
 ## cube's outline material, and the cube material and shader, are drawn before real play.
-func prewarm_show(with_flash: bool) -> void:
+func prewarm_show(with_flash: bool, with_clouds: bool = true) -> void:
 	for idx in _all_rows.size():
 		var row := _all_rows[idx]
 		row.position = Vector3(0.0, 0.0, -8.0 + 1.5 * idx)
@@ -210,6 +236,13 @@ func prewarm_show(with_flash: bool) -> void:
 		row.can.visible = true   # every pooled fuel can is drawn too
 		row.can.position = Vector3(Tuning.column_center(idx % Tuning.column_count), 0.4, 0.5)
 		row.can.scale = Vector3.ONE * Tuning.fuel_can_size
+		if with_clouds:   # every pooled cloud puff is drawn too (over the cubes, at a middling opacity)
+			row.cloud_mat.albedo_color = Color(Tuning.cloud_color, 0.6)
+			for k in row.cloud_blobs.size():
+				var blob := row.cloud_blobs[k]
+				blob.visible = true
+				blob.position = Vector3(Tuning.column_center(k / BLOBS_PER_COLUMN % Tuning.column_count), CLOUD_Y, ((k % BLOBS_PER_COLUMN) - 1) * 3.0)
+				blob.scale = Vector3(2.0, 1.0, 2.0)
 
 ## End of the pre-warm: hide the pooled rows again.
 func prewarm_hide() -> void:
@@ -258,6 +291,23 @@ func _make_row() -> Row:
 	row.can.material_overlay = row.can_outline
 	row.can.visible = false
 	row.add_child(row.can)
+	row.cloud_mat = StandardMaterial3D.new()
+	row.cloud_mat.transparency = BaseMaterial3D.TRANSPARENCY_ALPHA
+	row.cloud_mat.vertex_color_use_as_albedo = true   # the puff's baked facet tones
+	row.cloud_mat.cull_mode = BaseMaterial3D.CULL_DISABLED
+	row.cloud_mat.depth_draw_mode = BaseMaterial3D.DEPTH_DRAW_ALWAYS
+	row.cloud_mat.roughness = 1.0
+	row.cloud_mat.metallic_specular = 0.0
+	for k in BLOBS_PER_ROW:
+		var blob := MeshInstance3D.new()
+		blob.mesh = _cloud_mesh
+		blob.material_override = row.cloud_mat
+		blob.cast_shadow = GeometryInstance3D.SHADOW_CASTING_SETTING_OFF
+		blob.visible = false
+		row.add_child(blob)
+		row.cloud_blobs.append(blob)
+	for i in Tuning.column_count:
+		row.cloud_cov.append(false)
 	row.stripe = MeshInstance3D.new()
 	row.stripe.mesh = _stripe_mesh
 	row.stripe.position = Vector3(0, GROUND_Y, 0)
@@ -286,6 +336,9 @@ func _hide_row(row: Row) -> void:
 	row.visible = false
 	row.can.visible = false
 	row.has_can = false
+	row.cloud_on = false
+	for blob in row.cloud_blobs:
+		blob.visible = false
 	for i in row.cubes.size():
 		row.cubes[i].visible = false
 		row.cube_outlines[i].set_shader_parameter("outline_color", Color.BLACK)
@@ -314,7 +367,8 @@ func _spawn_row(z: float) -> void:
 		row.obs.append(mi)
 		row.outlines.append(row.cube_outlines[i])
 	row.stripe.scale = Vector3(Tuning.ortho_size * 2.0, 0.1, 0.4)
-	var can_col := _choose_can_column(open, next_open, _safe_col)
+	_make_cloud(row, open)
+	var can_col := _choose_can_column(open, next_open, _safe_col, row.cloud_cov)
 	if can_col >= 0:
 		_place_can(row, Tuning.column_center(can_col))
 	_rows.append(row)
@@ -343,12 +397,20 @@ func _pick_safe_col(open: Array[bool], prev_safe: int) -> int:
 			best = c
 	return best
 
-## Which column (if any) gets a fuel can in the row whose open columns are `open`, given the next
+## Which column (if any) gets a fuel can in the row whose open columns are `open` (`covered` = which columns have cloud over them), given the next
 ## row's open columns and the safe-path column `safe`. A can goes in an open column, with chance
 ## fuel_can_chance. Then with probability fuel_risk_bias it is put in a RISKY column (not on the
 ## safe path, and next to an obstacle or in a column that closes next row; the riskier the more
 ## likely), otherwise in any open column. Returns -1 for no can.
-func _choose_can_column(open: Array[bool], next_open: Array[bool], safe: int) -> int:
+func _choose_can_column(open: Array[bool], next_open: Array[bool], safe: int, covered: Array[bool] = []) -> int:
+	# Under a cloud: an extra chance for a can in a covered open column (never on the safe path).
+	if not covered.is_empty():
+		var hidden: Array[int] = []
+		for c in open.size():
+			if open[c] and covered[c] and c != safe:
+				hidden.append(c)
+		if not hidden.is_empty() and randf() < Tuning.fuel_can_under_cloud_chance:
+			return hidden.pick_random()
 	if randf() >= Tuning.fuel_can_chance:
 		return -1
 	var n := open.size()
@@ -411,6 +473,106 @@ func refresh_obstacles() -> void:
 ## Test helper: put a fuel can on a row.
 func _place_can_for_test(row: Row, x: float) -> void:
 	_place_can(row, x)
+
+## Decide whether this row has cloud over it, and set up its pooled puffs. Cloud comes in banks: a
+## run of consecutive rows (cloud_min_rows..cloud_max_rows) covering the same 1..cloud_max_columns
+## columns. None before cloud_start_time; after that a new bank starts with a chance that grows with
+## speed. FAIRNESS: a cloud never covers every open column of a row, so one open gap always stays
+## in plain view.
+func _make_cloud(row: Row, open: Array[bool]) -> void:
+	row.cloud_on = false
+	var n := mini(open.size(), row.cloud_cov.size())
+	for c in n:
+		row.cloud_cov[c] = false
+	if DebugFlags.off("clouds") or run_time < Tuning.cloud_start_time:
+		_cloud_rows_left = 0
+		return
+	if _cloud_rows_left <= 0:
+		var speed_at_start := Tuning.base_speed + Tuning.speed_ramp * Tuning.cloud_start_time
+		var rate := minf(Tuning.cloud_frequency * clampf(scroll_speed / maxf(speed_at_start, 0.1), 1.0, 3.0), 0.9)
+		if randf() < rate:
+			var width := randi_range(1, clampi(Tuning.cloud_max_columns, 1, mini(CLOUD_COLUMNS, n)))
+			_cloud_c0 = randi_range(0, n - width)
+			_cloud_c1 = _cloud_c0 + width - 1
+			_cloud_rows_left = randi_range(maxi(Tuning.cloud_min_rows, 1), maxi(Tuning.cloud_max_rows, Tuning.cloud_min_rows))
+	if _cloud_rows_left <= 0:
+		return
+	_cloud_rows_left -= 1
+	for c in range(_cloud_c0, _cloud_c1 + 1):
+		row.cloud_cov[c] = true
+	var open_uncovered := false
+	for c in n:
+		if open[c] and not row.cloud_cov[c]:
+			open_uncovered = true
+	if not open_uncovered:
+		row.cloud_cov[_safe_col] = false   # the safe path's column stays in plain view
+	# Lay the puffs: three along the row for each covered column, a little irregular.
+	var k := 0
+	for c in n:
+		if not row.cloud_cov[c]:
+			continue
+		for j in BLOBS_PER_COLUMN:
+			var blob := row.cloud_blobs[k]
+			var r := randf_range(1.9, 2.4)
+			blob.position = Vector3(Tuning.column_center(c) + randf_range(-0.3, 0.3), CLOUD_Y, (j - 1) * 3.3 + randf_range(-0.5, 0.5))
+			blob.scale = Vector3(r, 1.0, r)
+			blob.rotation = Vector3(0.0, randf() * TAU, 0.0)
+			blob.visible = true
+			k += 1
+	if k == 0:
+		return   # nothing left to cover (the only covered column was uncovered above)
+	for rest in range(k, row.cloud_blobs.size()):
+		row.cloud_blobs[rest].visible = false
+	row.cloud_on = true
+	_update_cloud_alpha(row)
+
+## Late reveal: nearly opaque while far above the plane, fading to cloud_min_opacity as it reaches it.
+func _update_cloud_alpha(row: Row) -> void:
+	var ahead := plane_z - row.position.z   # > 0: the row is above the plane (not reached yet)
+	var t := clampf(1.0 - ahead / maxf(Tuning.cloud_reveal_distance, 0.1), 0.0, 1.0)
+	t = t * t * (3.0 - 2.0 * t)   # smoothstep: eases in and out
+	row.cloud_mat.albedo_color = Color(Tuning.cloud_color, lerpf(Tuning.cloud_max_opacity, Tuning.cloud_min_opacity, t))
+
+## The shared puff: a flat, low-poly dome (about 45 triangles) with its facets tinted a touch
+## differently, so it reads as a soft, puffy, flat-shaded shape. Built once.
+func _build_puff_mesh() -> void:
+	const N := 9
+	var rings := [[0.55, 0.85, 1.0], [0.9, 0.45, 0.97], [1.0, 0.0, 0.92]]   # radius, height fraction, tone
+	var st := SurfaceTool.new()
+	st.begin(Mesh.PRIMITIVE_TRIANGLES)
+	var ring_pts: Array = []
+	for ri in rings.size():
+		var pts: Array[Vector3] = []
+		for i in N:
+			var a := TAU * (i + 0.5 * (ri % 2)) / N
+			var rad: float = rings[ri][0] * (0.93 + 0.14 * absf(sin(i * 2.7 + ri * 1.3)))   # a lumpy outline
+			pts.append(Vector3(cos(a) * rad, rings[ri][1] * CLOUD_HEIGHT, sin(a) * rad))
+		ring_pts.append(pts)
+	var top := Vector3(0.0, CLOUD_HEIGHT, 0.0)
+	for i in N:
+		var j := (i + 1) % N
+		var tint := 1.0 if i % 2 == 0 else 0.965
+		_puff_tri(st, top, ring_pts[0][j], ring_pts[0][i], Color(1, 1, 1) * tint)
+		for r in 2:
+			var tone: float = rings[r + 1][2] * tint
+			var c := Color(tone * 0.97, tone * 0.985, tone)   # a hint of blue in the shade
+			_puff_tri(st, ring_pts[r][i], ring_pts[r][j], ring_pts[r + 1][i], c)
+			_puff_tri(st, ring_pts[r][j], ring_pts[r + 1][j], ring_pts[r + 1][i], c)
+	st.commit(_cloud_mesh)
+
+## One flat-shaded triangle (its own normal, one colour), wound so it faces up/out.
+func _puff_tri(st: SurfaceTool, a: Vector3, b: Vector3, c: Vector3, color: Color) -> void:
+	var n := (b - a).cross(c - a)
+	if n.y < 0.0:
+		var tmp := b
+		b = c
+		c = tmp
+		n = -n
+	n = n.normalized()
+	for v in [a, c, b]:   # Godot's front faces wind clockwise
+		st.set_normal(n)
+		st.set_color(color)
+		st.add_vertex(v)
 
 ## Pick which columns are open: choose one guaranteed-open column that is reachable from the
 ## previous row's open columns, then block a random number of the others.

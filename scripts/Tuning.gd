@@ -80,6 +80,30 @@ var fuel_pop_count := 14
 var fuel_low_fraction := 0.25
 var fuel_can_color := Color(0.2, 0.95, 0.45)
 
+# ---------- Clouds (hide obstacles and fuel cans) ----------
+## No clouds until the run has lasted this many seconds (the first rows with clouds then appear a
+## few seconds later, since rows are made ahead of the screen).
+var cloud_start_time := 25.0
+## Chance per row that a new cloud bank starts (when none is in progress), measured at the speed the
+## run has when clouds begin. It grows with speed (about 2x at top speed). At 0.07, about 17% of rows
+## have cloud over them when clouds begin and about 31% at top speed.
+var cloud_frequency := 0.07
+## Reveal: a cloud is nearly opaque (cloud_max_opacity) while it is farther than this many units
+## above the plane, then fades as it approaches, so what is under it shows up late...
+var cloud_reveal_distance := 12.0
+## ...down to this opacity (0 = invisible, 1 = solid) when it reaches the plane, and it stays that
+## faint as it passes.
+var cloud_min_opacity := 0.2
+var cloud_max_opacity := 0.95
+## A bank covers 1..cloud_max_columns columns (3 at most) for cloud_min_rows..cloud_max_rows rows.
+var cloud_max_columns := 3
+var cloud_min_rows := 2
+var cloud_max_rows := 4
+## Chance that a row with cloud over some of its open columns gets a fuel can UNDER the cloud (off the
+## safe path), on top of the normal fuel_can_chance. Entering a cloud blind can pay off.
+var fuel_can_under_cloud_chance := 0.45
+var cloud_color := Color(1.0, 1.0, 1.0)
+
 # ---------- Near miss & multiplier ----------
 ## A row counts as a near miss if the plane passed it with less than this gap (units) between the
 ## plane's hit box and the closest obstacle edge (0 = touching = crash).
