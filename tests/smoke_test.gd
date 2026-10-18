@@ -19,7 +19,7 @@ extends SceneTree
 ##       generated rows, checked every step), fade in late, sit above obstacles/cans but below the plane,
 ##       hide cans more often, ?nofx=clouds disables them, restart clears them, nothing new is allocated
 ##   2i. bonus: step-table streak bonus, cap (gold glowing label), steps coming off one by one, number-only text, reset on crash, huge caps
-##   2m. in-run picks: prices, pause + three cards, card odds, every perk / boost / supply effect\n##   2l. maps: unlocks, medals, palettes, gulls / wind gusts / lightning and their fairness rules
+##   2n. combos: each of the seven triggers (perk 3 + partner) and its effect, the banner, the Logbook\n##   2m. in-run picks: prices, pause + three cards, card odds, every perk / boost / supply effect\n##   2l. maps: unlocks, medals, palettes, gulls / wind gusts / lightning and their fairness rules
 ##   2k. Whisker close: doubled step, popup/burst, decay, cap, detection by clearance
 ##   2j. progression: save file round trip (versioned), coin award, Hangar purchases apply, ?tune save buttons
 ##   3. ?debug flags parse, and switching an effect off really skips it
@@ -160,6 +160,7 @@ func _initialize() -> void:
 	check(count_visible(main.fx._pickup_emitters) == main.fx.PICKUP_EMITTERS, "both fuel-pickup emitters are drawing during the pre-warm")
 	check(count_visible(main.spawner.hazards._all_gusts) == main.spawner.hazards.GUST_POOL and count_visible(main.spawner.hazards._bolts) == main.spawner.hazards.BOLT_POOL, "every pooled wind gust and lightning strip is drawn during the pre-warm")
 	check(main.pick_screen.is_shown() and count_visible(main.pick_screen._cards) == 3, "the pick cards are drawn during the pre-warm")
+	check(main.hud._combo_label.visible and main.hud._logbook.visible, "the combo banner and the Logbook are drawn during the pre-warm")
 	check(count_visible(main.fx._whisker_emitters) == main.fx.WHISKER_EMITTERS, "both Whisker-close burst emitters are drawing during the pre-warm")
 	var whisker_popup_drawn := false
 	for pl_ in main.hud._pop_labels:
@@ -1887,6 +1888,216 @@ func _initialize() -> void:
 	var snap_picks := snapshot(main)
 	snap_picks["mats"].erase(sp._gull_mat.get_instance_id())
 	check(same_world(base, snap_picks), "picks, perks, boosts and supplies created nothing new  [%s]" % describe(snap_picks))
+	tsave.reset_all()
+
+	print("2n. combos and the Logbook")
+	tsave.reset_all()
+	var cb: Array = tuning.combos
+	var pairs := {"deadstick": ["glide", "magnet"], "cloud_surfer": ["cloud_diver", "cloud_eye"], "barnstormer": ["hot_streak", "steady_nerves"], "fuel_overflow": ["fuel_miser", "reserve_tank"],
+			"golden_whiskers": ["lucky_whiskers", "head_start"], "cats_cradle": ["battering_ram", "nine_lives"], "wingwalker": ["prop_wash", "daredevil"]}
+	var pairs_ok := cb.size() == 7
+	for c in cb:
+		pairs_ok = pairs_ok and pairs.has(c["id"]) and c["perk"] == pairs[c["id"]][0] and c["partner"] == pairs[c["id"]][1] and c["line"] != "" and c["hint"] != ""
+	check(pairs_ok and cb[6]["partner_kind"] == "perk" and cb[0]["partner_kind"] == "gear", "seven combos with their partners: Deadstick, Cloud Surfer, Barnstormer, Fuel Overflow, Golden Whiskers, Cat's Cradle, Wingwalker (the last is perk + perk)")
+	var fresh2 := func():
+		main.restart()
+		main.set_process(false)
+		sp.reset(-500.0)
+		pk.enabled = false
+		pk.next_pick = INF
+	tsave.add_coins(1e12)
+	for g in ["magnet", "cloud_eye", "steady_nerves", "reserve_tank", "head_start", "nine_lives"]:
+		tsave.buy(g)
+	tsave.buy_slot()
+	tsave.buy_slot()
+	check(tsave.slots == 3, "(setup: all gear owned, three slots)")
+	# (a) triggering: level 3 + the partner, either order; a banner and a Logbook entry
+	tsave.loadout = ["magnet", "", ""]
+	fresh2.call()
+	pk.set_perk("glide", 2)
+	main._check_combos()
+	check(not main.combo_on("deadstick") and not main.hud._combo_label.visible, "Glide level 2 with the magnet: no combo yet")
+	var cardG: Dictionary = pk.perk_card(tuning.perk_def("glide"), 3, true)
+	check(pk.would_complete(cardG) == "deadstick", "a card that would complete a combo is recognised (so the pick screen can highlight it)")
+	main._apply_card(cardG)
+	main._check_combos()
+	check(main.combo_on("deadstick") and main.hud._combo_label.visible and main.hud._combo_label.text == "DEADSTICK" and main.hud._combo_sub.text == "COMBO!"
+			and main.hud._combo_label.get_theme_color("font_color").is_equal_approx(cb[0]["color"]), "Glide reaches level 3 with the Can Magnet equipped: the DEADSTICK banner")
+	check(count_visible(main.fx._whisker_emitters) >= 1 and tsave.combos_found.has("deadstick"), "...with its own burst, and the Logbook records it")
+	var hints2: Array = []
+	var cardsG: Array[Dictionary] = [pk.perk_card(tuning.perk_def("cloud_diver"), 1, false)]
+	for c in cardsG:
+		hints2.append(pk.would_complete(c))
+	check(hints2 == [""], "an ordinary card is not marked")
+	fresh2.call()
+	check(not main.combo_on("deadstick"), "combos reset with each run")
+	tsave.loadout = ["", "", ""]
+	pk.set_perk("glide", 3)
+	main._check_combos()
+	check(not main.combo_on("deadstick"), "level 3 without the partner gear equipped: nothing")
+	tsave.loadout = ["magnet", "", ""]
+	main._check_combos()
+	check(main.combo_on("deadstick"), "...equip it and the combo is there (either order works)")
+	main.pick_screen.show_cards(pk.roll(1.0, 3), ["wingwalker", "", ""])
+	check(main.pick_screen._parts[0]["combo"].visible and not main.pick_screen._parts[1]["combo"].visible, "on the pick screen a combo-completing card shows COMBO!")
+	main.pick_screen.hide_cards()
+	# (b) Deadstick
+	fresh2.call()
+	pk.set_perk("glide", 3)
+	main._check_combos()
+	main.fuel = 0.001
+	for i in 3:
+		main._process(0.05)
+	var droww = sp._rows_make_for_test(main.player.position.z - 1.0, [])
+	sp._place_can_for_test(droww, 4.3)
+	var glide0: float = main._glide_left
+	var cans0: int = main.run_cans
+	for i in 25:
+		main._process(0.03)
+	check(main.run_cans == cans0 + 1 and main.fuel == 0.0 and main._gliding and main._glide_left > glide0 - 1.0 + 1.5, "Deadstick: while gliding a can far across the screen is pulled in, and it ADDS to the glide (+%.0f s) instead of refuelling" % tuning.deadstick_extend)
+	# (c) Cloud Surfer
+	tsave.loadout = ["cloud_eye", "", ""]
+	fresh2.call()
+	pk.set_perk("cloud_diver", 3)
+	main._check_combos()
+	check(main.combo_on("cloud_surfer"), "Cloud Diver 3 + Cloud Eye: CLOUD SURFER")
+	var csrow = sp._rows_make_for_test(-5.0, [1.0])
+	var evc := {"side": 1, "node": csrow.obs[0], "outline": csrow.outlines[0], "whisker": false}
+	main._on_near_miss(evc)
+	check(is_equal_approx(main.bonus, 1.5), "a close call out in the open: a plain step (x1.5)")
+	main._reset_bonus()
+	sp.run_time = 100.0
+	sp._spawn_cloud(main.player.position.z)
+	var scl = sp._clouds[-1]
+	scl.position = Vector3(main.player.position.x, 0.0, main.player.position.z)
+	scl.ox[0] = 0.0
+	scl.oz[0] = 0.0
+	scl.rad[0] = 3.0
+	scl.on[0] = true
+	main._on_near_miss(evc)
+	check(is_equal_approx(main.bonus, 2.0), "...under a cloud it counts as a Whisker close (x2.0)")
+	sp.reset(-500.0)
+	# (d) Barnstormer
+	tsave.loadout = ["steady_nerves", "", ""]
+	fresh2.call()
+	pk.set_perk("hot_streak", 3)
+	main._check_combos()
+	main._steps.clear()
+	for v in [0.5, 0.4, 0.3, 0.2]:
+		main._steps.append(v)
+	main._refresh_bonus()
+	main._bonus_timer = 0.0
+	main._decay_acc = 5.0
+	for i in 20:
+		main._decay_bonus(0.5)
+	check(main.combo_on("barnstormer") and is_equal_approx(main.bonus, 2.4), "Barnstormer: above x2 the bonus never fades (still x%.1f after 10 s)" % main.bonus)
+	main._steps.clear()
+	for v in [0.5, 0.4]:
+		main._steps.append(v)
+	main._refresh_bonus()
+	main._decay_acc = 1.0
+	main._decay_bonus(0.01)
+	check(main.bonus < 1.9, "...at x2 or below it fades as usual (x%.1f)" % main.bonus)
+	# (e) Fuel Overflow
+	tsave.loadout = ["reserve_tank", "", ""]
+	fresh2.call()
+	pk.set_perk("fuel_miser", 3)
+	main._check_combos()
+	main.coin_mult = 2.0
+	main.score = 0.0
+	main.fuel = tuning.fuel_max()
+	main._on_pickup(Vector3(0, 0.4, -3))
+	check(main.combo_on("fuel_overflow") and is_equal_approx(main.score, tuning.refill_amount() * tuning.overflow_coin_rate * 2.0), "Fuel Overflow: a can on a full tank turns its fuel into coins (%.0f)" % main.score)
+	main.score = 0.0
+	main.fuel = tuning.fuel_max() - 5.0
+	main._on_pickup(Vector3(0, 0.4, -3))
+	check(is_equal_approx(main.score, (tuning.refill_amount() - 5.0) * tuning.overflow_coin_rate * 2.0) and main.fuel == tuning.fuel_max(), "...only the part beyond a full tank")
+	# (f) Golden Whiskers
+	tsave.loadout = ["head_start", "", ""]
+	fresh2.call()
+	pk.set_perk("lucky_whiskers", 3)
+	main._check_combos()
+	check(main.combo_on("golden_whiskers"), "Lucky Whiskers 3 + Head Start: GOLDEN WHISKERS")
+	var gwrow = sp._rows_make_for_test(main.player.position.z - 12.0, [])
+	for c in tuning.column_count:
+		gwrow.open.append(true)
+	check(sp.drop_can_ahead(0.0, true) and gwrow.can_golden and gwrow.can.material_override == sp._golden_can_mat, "a Whisker-dropped can is golden (its own material)")
+	main.coin_mult = 1.0
+	main.score = 0.0
+	main.hud.reset_for_run()
+	var gcans: Array[Vector3] = [Vector3(gwrow.can_x, 0.4, gwrow.position.z)]
+	main._on_pickup(gcans[0], true)
+	check(is_equal_approx(main.score, tuning.golden_can_coins) and main.run_cans == 1, "collecting a golden can pays fuel plus %.0f coins" % tuning.golden_can_coins)
+	gwrow.can_golden = false
+	# (g) Cat's Cradle
+	tsave.loadout = ["nine_lives", "", ""]
+	fresh2.call()
+	pk.set_perk("battering_ram", 3)
+	main._check_combos()
+	var lives0: int = main.lives
+	for i in 9:
+		main._on_crate_broken()
+	check(main.combo_on("cats_cradle") and main.lives == lives0, "Cat's Cradle: nine crates give nothing yet")
+	main._on_crate_broken()
+	check(main.lives == lives0 + 1 and main.hud._lives_pips[lives0].visible, "...the tenth restores a life")
+	# (h) Wingwalker (perk + perk)
+	tsave.loadout = ["", "", ""]
+	fresh2.call()
+	pk.set_perk("prop_wash", 3)
+	main._check_combos()
+	check(not main.combo_on("wingwalker"), "Prop Wash 3 alone: no combo")
+	pk.set_perk("daredevil", 1)
+	main._check_combos()
+	check(main.combo_on("wingwalker"), "Prop Wash 3 + any Daredevil: WINGWALKER (a perk partner counts)")
+	var wwr = sp._rows_make_for_test(-5.0, [-4.0, -2.0, 0.0, 2.0])
+	var pays: Array[float] = []
+	var bump_cb := func(_pos, depth): pays.append(depth)
+	sp.bump.connect(bump_cb)
+	main.score = 0.0
+	sp.nudge_obstacle(wwr, 0, 1, tuning.prop_wash_push, 0)
+	for i in 60:
+		main._process(0.02)
+		wwr.position.z = -5.0
+	check(pays.size() >= 3 and pays[0] == 0 and pays[1] == 1 and pays[2] == 2, "Wingwalker: the shoved obstacle bumps the next, which bumps the next (chain depths %s)" % str(pays))
+	var expect_pay: float = 0.0
+	for d in pays:
+		expect_pay += tuning.perk_value("prop_wash", 3) * (1.0 + d)
+	check(main.score >= expect_pay and main.score - expect_pay < 30.0 and expect_pay > tuning.perk_value("prop_wash", 3) * pays.size(), "...and each link pays more (%.0f coins for %d links)" % [main.score, pays.size()])
+	sp.bump.disconnect(bump_cb)
+	pk.set_perk("daredevil", 0)
+	# (i) the Logbook
+	tsave.reset_all()
+	main.hud.show_menu()
+	check(main.hud._logbook != null and not main.hud._logbook.visible, "the Logbook starts closed")
+	main.hud.logbook_pressed.emit()
+	check(main.screen == main.SCREEN_LOGBOOK and main.hud._logbook.visible and not main.hud._menu.visible, "the start screen's LOGBOOK button opens it")
+	var r0: Dictionary = main.hud._logbook_rows[0]
+	check((r0["title"] as Label).text == "???" and (r0["line"] as Label).text.begins_with("Hint: "), "an undiscovered combo is a silhouette with a hint (\"%s\")" % (r0["line"] as Label).text)
+	tsave.discover_combo("deadstick")
+	main.hud.refresh_logbook()
+	check((r0["title"] as Label).text == "Deadstick" and (r0["line"] as Label).text.contains("glid") and not (main.hud._logbook_rows[1]["title"] as Label).text == "Cloud Surfer", "a discovered one shows its name and what it does; the others stay hidden")
+	tsave.save_game()
+	tsave.combos_found = {}
+	tsave.load_game()
+	check(tsave.combos_found.has("deadstick") and not tsave.combos_found.has("wingwalker"), "discovered combos are saved")
+	var v4 := FileAccess.open(tsave.path, FileAccess.WRITE)
+	v4.store_string(JSON.stringify({"version": 4, "high_score": 1, "coins": 5, "levels": {}, "slots": 1, "loadout": ["", "", ""], "milestones": {"prop_wash": true}}))
+	v4.close()
+	tsave.load_game()
+	check(tsave.VERSION == 5 and tsave.milestones.has("prop_wash") and tsave.combos_found.is_empty() and tsave.coins == 5.0, "a v4 save migrates to v5 (milestones kept, no combos yet)")
+	main.hud.back_pressed.emit()
+	check(main.screen == main.SCREEN_MENU and not main.hud._logbook.visible, "BACK returns to the start screen")
+	tsave.reset_all()
+	# (j) none of it allocated anything
+	tsave.loadout = ["", "", ""]
+	main.hud.play_pressed.emit()
+	main.set_process(false)
+	main.fx.clear()
+	pk.enabled = false
+	var snap_combo := snapshot(main)
+	snap_combo["mats"].erase(sp._gull_mat.get_instance_id())
+	snap_combo["mats"].erase(sp._golden_can_mat.get_instance_id())
+	check(same_world(base, snap_combo), "combos, banners and the Logbook created nothing new  [%s]" % describe(snap_combo))
 	tsave.reset_all()
 
 	print("3. debug flags")

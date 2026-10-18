@@ -11,7 +11,8 @@ signal changed
 ##   2: coins and high_score are floats (score IS coins), upgrade tabs, gear slots + loadout, stats
 ##   3: maps: unlocked flags, the selected map, and per map the best distance, best score and medals
 ##   4: milestones (unlocked perks etc.)
-const VERSION := 4
+##   5: combos discovered (the Logbook)
+const VERSION := 5
 
 var path := "user://save.json"      # (tests point this somewhere else)
 var high_score := 0.0               # most coins earned in one run
@@ -22,6 +23,7 @@ var loadout: Array = ["", "", ""]   # gear id equipped in each slot ("" = empty)
 var stats := {}                     # lifetime counters (cans, close calls ...)
 var maps_unlocked: Array = [true, false, false, false]
 var selected_map := 0
+var combos_found := {}              # combo id -> true (the Logbook shows them)
 var milestones := {}                # milestone id -> true (unlocks perks etc.)
 var map_stats := {}                 # map id -> {"best_distance": meters, "best_score": coins, "medals": 0..3 earned}
 
@@ -40,6 +42,7 @@ func _defaults() -> void:
 	maps_unlocked = [true, false, false, false]
 	selected_map = 0
 	milestones = {}
+	combos_found = {}
 	map_stats = {}
 	for m in Tuning.maps:
 		map_stats[m["id"]] = {"best_distance": 0.0, "best_score": 0.0, "medals": 0}
@@ -82,6 +85,9 @@ func _migrate(d: Dictionary) -> Dictionary:
 	if v < 4:
 		d["milestones"] = {}   # v3 -> v4: milestones (none earned yet)
 		d["version"] = 4
+	if v < 5:
+		d["combos_found"] = {}   # v4 -> v5: the Logbook (no combos discovered yet)
+		d["version"] = 5
 	return d
 
 func _apply(d: Dictionary) -> void:
@@ -107,6 +113,11 @@ func _apply(d: Dictionary) -> void:
 		for k in mi:
 			if bool(mi[k]):
 				milestones[String(k)] = true
+	var cf: Variant = d.get("combos_found", {})
+	if cf is Dictionary:
+		for k in cf:
+			if bool(cf[k]):
+				combos_found[String(k)] = true
 	var mu: Variant = d.get("maps_unlocked", [])
 	if mu is Array:
 		for i in 4:
@@ -128,7 +139,7 @@ func _is_gear(id: String) -> bool:
 func to_dict() -> Dictionary:
 	return {"version": VERSION, "high_score": high_score, "coins": coins, "levels": levels.duplicate(),
 			"slots": slots, "loadout": loadout.duplicate(), "stats": stats.duplicate(),
-			"milestones": milestones.duplicate(), "maps_unlocked": maps_unlocked.duplicate(), "selected_map": selected_map, "map_stats": map_stats.duplicate(true)}
+			"milestones": milestones.duplicate(), "combos_found": combos_found.duplicate(), "maps_unlocked": maps_unlocked.duplicate(), "selected_map": selected_map, "map_stats": map_stats.duplicate(true)}
 
 func save_game() -> void:
 	var f := FileAccess.open(path, FileAccess.WRITE)
@@ -218,6 +229,10 @@ func record_run(earned: float) -> bool:
 func perk_unlocked(id: String) -> bool:
 	var d := Tuning.perk_def(id)
 	return not d.is_empty() and (d["unlock"] == "" or bool(milestones.get(d["unlock"], false)))
+
+## A combo was triggered in a run (written to the file when the run ends).
+func discover_combo(id: String) -> void:
+	combos_found[id] = true
 
 func unlock_milestone(id: String) -> void:
 	milestones[id] = true

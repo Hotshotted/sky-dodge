@@ -18,6 +18,7 @@ var _score_tick_ms := -10000         # when the score number last ticked up whil
 signal play_pressed
 signal hangar_pressed
 signal map_pressed(index: int)
+signal logbook_pressed
 signal back_pressed
 signal upgrade_pressed(id: String)
 var _menu: Control                   # start screen: title, best score, coins, PLAY, HANGAR
@@ -34,6 +35,13 @@ var _effect_labels: Array[Label] = []     # active boosts (and Glide) with secon
 var _effect_shown := PackedInt32Array()
 var _flash_rect: ColorRect
 var _flash_ms := -10000
+var _flash_color := Color.WHITE
+var _combo_label: Label                   # the big banner when a combo switches on
+var _combo_sub: Label
+var _combo_ms := -100000
+var _logbook_box: VBoxContainer
+var _logbook: Control                     # the Logbook: discovered combos (and milestones)
+var _logbook_rows: Array[Dictionary] = [] # per combo: icon style, glyph, title, line
 var _last_meters := -1
 var _hangar: Control                 # upgrade screen
 var _hangar_coins: Label
@@ -140,6 +148,15 @@ func _ready() -> void:
 	_flash_rect.set_anchors_and_offsets_preset(Control.PRESET_FULL_RECT)
 	_flash_rect.mouse_filter = Control.MOUSE_FILTER_IGNORE
 	add_child(_flash_rect)
+	_combo_sub = _make_label(48)
+	_combo_sub.set_anchors_and_offsets_preset(Control.PRESET_TOP_WIDE)
+	_combo_sub.offset_top = 560
+	_combo_sub.visible = false
+	_combo_label = _make_label(104)
+	_combo_label.set_anchors_and_offsets_preset(Control.PRESET_TOP_WIDE)
+	_combo_label.offset_top = 620
+	_combo_label.add_theme_constant_override("outline_size", 22)
+	_combo_label.visible = false
 	_build_fuel_gauge()
 	for i in POPUP_POOL:
 		var l := _make_label(64)
@@ -252,6 +269,10 @@ func _build_menus() -> void:
 	_place(hangar, (W - 560.0) * 0.5, 1350, 560, 130)
 	hangar.pressed.connect(func(): hangar_pressed.emit())
 	_menu.add_child(hangar)
+	var logbook := _make_button("LOGBOOK", 50, Vector2(560, 110))
+	_place(logbook, (W - 560.0) * 0.5, 1510, 560, 110)
+	logbook.pressed.connect(func(): logbook_pressed.emit())
+	_menu.add_child(logbook)
 
 	_hangar = _screen_root()
 	_screen_label(_hangar, "HANGAR", 100, 0, 60, W, 120, HORIZONTAL_ALIGNMENT_CENTER)
@@ -329,6 +350,7 @@ func _build_menus() -> void:
 	go.pressed.connect(func(): play_pressed.emit())
 	_hangar.add_child(go)
 
+	_build_logbook()
 	_over_hangar = _make_button("Hangar", 48, Vector2(320, 100))
 	_over_hangar.set_anchors_and_offsets_preset(Control.PRESET_CENTER_BOTTOM)
 	_over_hangar.offset_left = -160.0
@@ -338,6 +360,108 @@ func _build_menus() -> void:
 	_over_hangar.visible = false
 	_over_hangar.pressed.connect(func(): hangar_pressed.emit())
 	add_child(_over_hangar)
+
+## The Logbook: every combo, as a row. Found ones show their name and what they do; the rest are silhouettes
+## with a hint. A scrolling list (drag it).
+func _build_logbook() -> void:
+	const W := 1080.0
+	_logbook = _screen_root()
+	_screen_label(_logbook, "LOGBOOK", 100, 0, 50, W, 120, HORIZONTAL_ALIGNMENT_CENTER)
+	var scroll := ScrollContainer.new()
+	_place(scroll, 30, 190, W - 60.0, 1480)
+	scroll.horizontal_scroll_mode = ScrollContainer.SCROLL_MODE_DISABLED
+	_logbook.add_child(scroll)
+	_logbook_box = VBoxContainer.new()
+	_logbook_box.custom_minimum_size = Vector2(W - 80.0, 0)
+	_logbook_box.add_theme_constant_override("separation", 14)
+	scroll.add_child(_logbook_box)
+	_logbook_heading("COMBOS  (pick a perk to level 3 with the right partner)")
+	for c in Tuning.combos:
+		_logbook_rows.append(_logbook_row(150.0))
+	var back := _make_button("BACK", 56, Vector2(380, 110))
+	_place(back, (W - 380.0) * 0.5, 1730, 380, 110)
+	back.pressed.connect(func(): back_pressed.emit())
+	_logbook.add_child(back)
+
+func _logbook_heading(text: String) -> Label:
+	var l := _make_label(30)
+	remove_child(l)
+	_logbook_box.add_child(l)
+	l.text = text
+	l.horizontal_alignment = HORIZONTAL_ALIGNMENT_LEFT
+	l.custom_minimum_size = Vector2(0, 50)
+	l.add_theme_color_override("font_color", Color(0.75, 0.88, 1.0))
+	return l
+
+## One list row (a panel, a round icon with a letter, a title and a description).
+func _logbook_row(height: float) -> Dictionary:
+	var row := Control.new()
+	row.custom_minimum_size = Vector2(960, height)
+	var panel := ColorRect.new()
+	panel.color = Color(1, 1, 1, 0.07)
+	panel.size = Vector2(960, height)
+	panel.mouse_filter = Control.MOUSE_FILTER_IGNORE
+	row.add_child(panel)
+	var icon := Panel.new()
+	var sbox := StyleBoxFlat.new()
+	sbox.set_corner_radius_all(42)
+	icon.add_theme_stylebox_override("panel", sbox)
+	icon.position = Vector2(24, (height - 84.0) * 0.5)
+	icon.size = Vector2(84, 84)
+	icon.mouse_filter = Control.MOUSE_FILTER_IGNORE
+	row.add_child(icon)
+	var glyph := Label.new()
+	glyph.add_theme_font_size_override("font_size", 50)
+	glyph.add_theme_constant_override("outline_size", 8)
+	glyph.add_theme_color_override("font_outline_color", Color.BLACK)
+	glyph.horizontal_alignment = HORIZONTAL_ALIGNMENT_CENTER
+	glyph.vertical_alignment = VERTICAL_ALIGNMENT_CENTER
+	glyph.position = icon.position
+	glyph.size = icon.size
+	glyph.mouse_filter = Control.MOUSE_FILTER_IGNORE
+	row.add_child(glyph)
+	var title := Label.new()
+	title.add_theme_font_size_override("font_size", 44)
+	title.add_theme_constant_override("outline_size", 8)
+	title.add_theme_color_override("font_outline_color", Color.BLACK)
+	title.position = Vector2(132, 10)
+	title.size = Vector2(800, 56)
+	title.mouse_filter = Control.MOUSE_FILTER_IGNORE
+	row.add_child(title)
+	var line := Label.new()
+	line.add_theme_font_size_override("font_size", 30)
+	line.add_theme_constant_override("outline_size", 6)
+	line.add_theme_color_override("font_outline_color", Color.BLACK)
+	line.autowrap_mode = TextServer.AUTOWRAP_WORD_SMART
+	line.position = Vector2(132, 68)
+	line.size = Vector2(800, height - 76.0)
+	line.mouse_filter = Control.MOUSE_FILTER_IGNORE
+	row.add_child(line)
+	_logbook_box.add_child(row)
+	return {"row": row, "style": sbox, "glyph": glyph, "title": title, "line": line}
+
+## Redraw the Logbook from the save.
+func refresh_logbook(all_found: bool = false) -> void:
+	if _logbook == null:
+		return
+	for i in Tuning.combos.size():
+		var c: Dictionary = Tuning.combos[i]
+		var r := _logbook_rows[i]
+		var found: bool = all_found or bool(Save.combos_found.get(c["id"], false))
+		(r["style"] as StyleBoxFlat).bg_color = c["color"] if found else Color(0.16, 0.18, 0.24)
+		(r["glyph"] as Label).text = String(c["name"]).substr(0, 1) if found else "?"
+		(r["title"] as Label).text = c["name"] if found else "???"
+		(r["title"] as Label).add_theme_color_override("font_color", Color.WHITE if found else Color(0.55, 0.6, 0.7))
+		(r["line"] as Label).text = c["line"] if found else "Hint: %s" % c["hint"]
+		(r["line"] as Label).add_theme_color_override("font_color", Color(0.85, 0.93, 1.0) if found else Color(0.5, 0.55, 0.65))
+
+func show_logbook() -> void:
+	refresh_logbook()
+	_menu.visible = false
+	_hangar.visible = false
+	_over_hangar.visible = false
+	_over.visible = false
+	_logbook.visible = true
 
 func _select_tab(tab: String) -> void:
 	_tab = tab
@@ -413,6 +537,7 @@ func refresh_menus(all_tabs: bool = false) -> void:
 
 func show_menu() -> void:
 	refresh_menus()
+	_logbook.visible = false
 	_hangar.visible = false
 	_over_hangar.visible = false
 	_over.visible = false
@@ -420,12 +545,14 @@ func show_menu() -> void:
 
 func show_hangar() -> void:
 	refresh_menus()
+	_logbook.visible = false
 	_menu.visible = false
 	_over_hangar.visible = false
 	_over.visible = false
 	_hangar.visible = true
 
 func hide_menus() -> void:
+	_logbook.visible = false
 	_menu.visible = false
 	_hangar.visible = false
 	_over_hangar.visible = false
@@ -484,9 +611,21 @@ func set_distance(meters_value: float) -> void:
 		_last_meters = n
 		_distance_label.text = Tuning.fmt_m(n)
 
-## A lightning flash across the whole screen.
-func flash() -> void:
+## A flash across the whole screen (lightning is white; a combo flashes its colour).
+func flash(color: Color = Color.WHITE) -> void:
 	_flash_ms = Time.get_ticks_msec()
+	_flash_color = color
+
+## The combo banner: its name in big letters in the combo's colour, with "COMBO!" above, for a couple of seconds.
+func show_combo(combo_name: String, color: Color) -> void:
+	_combo_label.text = combo_name.to_upper()
+	_combo_label.add_theme_color_override("font_color", color)
+	_combo_label.add_theme_color_override("font_outline_color", Color(color.r * 0.5, color.g * 0.4, color.b * 0.3).darkened(0.3))
+	_combo_sub.text = "COMBO!"
+	_combo_sub.add_theme_color_override("font_color", Color(1.0, 0.95, 0.6))
+	_combo_ms = Time.get_ticks_msec()
+	_combo_label.visible = true
+	_combo_sub.visible = true
 
 ## Lives (Nine Lives, Patch): small red pips under the fuel gauge.
 func set_lives(n: int) -> void:
@@ -689,7 +828,19 @@ func _process(delta: float) -> void:
 		l.modulate.a = 1.0 if t < 0.5 else 1.0 - (t - 0.5) / 0.5
 
 	var fa := 1.0 - (now - _flash_ms) / 1000.0 / 0.22
-	_flash_rect.color.a = 0.6 * clampf(fa, 0.0, 1.0)
+	_flash_rect.color = Color(_flash_color.r, _flash_color.g, _flash_color.b, 0.6 * clampf(fa, 0.0, 1.0))
+	if _combo_label.visible:   # banner: pops in, holds, fades
+		var bt := (now - _combo_ms) / 1000.0 / Tuning.combo_banner_time
+		if bt >= 1.0:
+			_combo_label.visible = false
+			_combo_sub.visible = false
+		else:
+			var pop := 0.4 + 0.8 * minf(bt / 0.05, 1.0) if bt < 0.05 else lerpf(1.2, 1.0, minf((bt - 0.05) / 0.1, 1.0))
+			_combo_label.pivot_offset = _combo_label.size * 0.5
+			_combo_label.scale = Vector2.ONE * pop
+			var a := 1.0 if bt < 0.75 else 1.0 - (bt - 0.75) / 0.25
+			_combo_label.modulate.a = a
+			_combo_sub.modulate.a = a
 	# Coin pops: rise a little and fade.
 	for i in COIN_POP_POOL:
 		if _coin_born[i] == 0:
@@ -806,6 +957,10 @@ func begin_prewarm(with_popups: bool) -> void:
 			+ Main.HEADER_STRUCK + " " + Main.REASON_STRUCK + " Silver Gold Mountains Stormfront Countryside LOCKED Reach 0123456789"
 	_over.visible = true
 	refresh_menus(true)
+	refresh_logbook(true)
+	_logbook.visible = true
+	show_combo("Golden Whiskers", Color(1.0, 0.8, 0.2))   # (the banner's biggest text)
+	_combo_ms = Time.get_ticks_msec() + 100000   # (kept on screen for the whole pre-warm)
 	_menu.visible = true      # the start screen, Hangar and Hangar button are drawn too (under the splash)
 	_hangar.visible = true
 	_over_hangar.visible = true
@@ -865,6 +1020,9 @@ func reset_for_run() -> void:
 	clear_bonus()
 
 func end_prewarm() -> void:
+	_combo_label.visible = false
+	_combo_sub.visible = false
+	refresh_logbook()
 	set_next(0.0)
 	set_perks({})
 	refresh_effects({}, 0.0)

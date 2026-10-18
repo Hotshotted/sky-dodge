@@ -239,6 +239,44 @@ var supplies: Array[Dictionary] = [
 	{"id": "crate_shower", "name": "Crate Shower", "glyph": "C", "color": Color(0.9, 0.7, 0.3), "needs": "crates", "line": "The next rows are full of crates."},
 	{"id": "coin_bag", "name": "Coin Bag", "glyph": "$", "color": Color(1.0, 0.8, 0.2), "line": "Instant coins: {v}."},
 ]
+## COMBOS: a combo switches on the moment its perk reaches level 3 AND its partner is there (partner gear
+## equipped, or partner perk held). A banner announces it. `partner_kind` is "gear" or "perk".
+var deadstick_extend := 3.0        # Deadstick: seconds a can adds to the glide
+var overflow_coin_rate := 6.0      # Fuel Overflow: coins per unit of fuel gained beyond a full tank
+var golden_can_coins := 40.0       # Golden Whiskers: coins a golden can pays (x the earn multiplier) on top of fuel
+var cradle_crates := 10            # Cat's Cradle: crates broken per life restored
+var chain_max := 4                 # Wingwalker: how many obstacles a nudge can chain through
+var combo_banner_time := 2.4
+var combos: Array[Dictionary] = [
+	{"id": "deadstick", "name": "Deadstick", "perk": "glide", "partner_kind": "gear", "partner": "magnet", "color": Color(0.6, 0.85, 1.0),
+			"line": "While gliding, cans fly to you from anywhere and each one adds seconds to the glide.",
+			"hint": "A glider that never gives up, with a magnet on board."},
+	{"id": "cloud_surfer", "name": "Cloud Surfer", "perk": "cloud_diver", "partner_kind": "gear", "partner": "cloud_eye", "color": Color(0.85, 0.95, 1.0),
+			"line": "Close calls made under clouds count as Whisker closes.",
+			"hint": "Ride the clouds, and see through them."},
+	{"id": "barnstormer", "name": "Barnstormer", "perk": "hot_streak", "partner_kind": "gear", "partner": "steady_nerves", "color": Color(1.0, 0.55, 0.2),
+			"line": "Your close-call bonus never fades while it is above x2.",
+			"hint": "A streak that will not cool, and nerves of steel."},
+	{"id": "fuel_overflow", "name": "Fuel Overflow", "perk": "fuel_miser", "partner_kind": "gear", "partner": "reserve_tank", "color": Color(0.4, 0.9, 0.5),
+			"line": "Fuel you gain beyond a full tank turns into coins.",
+			"hint": "Sip the fuel, and keep a spare tank."},
+	{"id": "golden_whiskers", "name": "Golden Whiskers", "perk": "lucky_whiskers", "partner_kind": "gear", "partner": "head_start", "color": Color(1.0, 0.8, 0.2),
+			"line": "Cans dropped by Whisker closes are golden: fuel plus a big burst of coins.",
+			"hint": "Luck on the whiskers, and a flying start."},
+	{"id": "cats_cradle", "name": "Cat's Cradle", "perk": "battering_ram", "partner_kind": "gear", "partner": "nine_lives", "color": Color(0.85, 0.6, 0.35),
+			"line": "Every 10 crates you break restores a life.",
+			"hint": "Break crates like a ram, with lives to spare."},
+	{"id": "wingwalker", "name": "Wingwalker", "perk": "prop_wash", "partner_kind": "perk", "partner": "daredevil", "color": Color(0.6, 0.9, 0.7),
+			"line": "Shoved obstacles chain-react, and every link in the chain pays more.",
+			"hint": "Blow obstacles around, and fly close enough to do it."},
+]
+
+func combo_def(id: String) -> Dictionary:
+	for c in combos:
+		if c["id"] == id:
+			return c
+	return {}
+
 ## Crates exist only once Phase 5 turns this on (the crate perks and the Crate Shower need them).
 var crates_enabled := false
 

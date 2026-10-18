@@ -133,3 +133,23 @@ func take(card: Dictionary) -> void:
 		"boost":
 			boosts[card["id"]] = Tuning.boost_time
 	changed.emit()
+
+## Is the combo's condition met right now? (Its perk at level 3 and the partner equipped / held.)
+func combo_ready(c: Dictionary, levels_override: Dictionary = {}) -> bool:
+	var lv: Dictionary = levels if levels_override.is_empty() else levels_override
+	if int(lv.get(c["perk"], 0)) < 3:
+		return false
+	if c["partner_kind"] == "gear":
+		return Save.is_equipped(c["partner"])
+	return int(lv.get(c["partner"], 0)) > 0
+
+## The combo that taking this card would complete (not active yet), or "".
+func would_complete(card: Dictionary) -> String:
+	if card["kind"] != "perk":
+		return ""
+	var after := levels.duplicate()
+	after[card["id"]] = card["level"]
+	for c in Tuning.combos:
+		if combo_ready(c, after) and not combo_ready(c):
+			return c["id"]
+	return ""

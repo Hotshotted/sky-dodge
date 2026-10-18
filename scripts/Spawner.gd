@@ -40,6 +40,8 @@ class Row extends Node3D:
 	var gull_phase: Array[float] = []
 	var nudge_k: Array[int] = []          # obstacles being shoved sideways by Prop Wash (index into xs / obs)
 	var nudge_v: Array[float] = []        # ...and their sideways velocity (units/second)
+	var nudge_d: Array[int] = []          # ...and how far down a Wingwalker chain each one is (0 = the first)
+	var can_golden := false               # the can is a golden one (Golden Whiskers)
 	var cloud_cov: Array[bool] = []       # per column: cloud will cover that column's centre line (for can placement)
 	var xs: Array[float] = []             # x of each blocked column this time round
 	var ghosts: Array[MeshInstance3D] = []        # one Cloud Eye outline frame per column (hidden unless needed)
@@ -65,6 +67,8 @@ class Row extends Node3D:
 		gull_phase.clear()
 		nudge_k.clear()
 		nudge_v.clear()
+		nudge_d.clear()
+		can_golden = false
 		xs.clear()
 		obs.clear()
 		obs_ghosts.clear()
@@ -128,7 +132,10 @@ var _gull_share := 0.0
 var _cloud_mult := 1.0
 var crate_shower_rows := 0          # Crate Shower supply: how many of the next rows are crate-rich (Phase 5)
 var near_miss_scale := 1.0         # Daredevil: close calls count from this much farther
-signal bump(pos: Vector3)           # a shoved obstacle hit another one (Prop Wash)
+signal bump(pos: Vector3, depth: int)   # a shoved obstacle hit another one (Prop Wash); depth = 0 for the first, 1+ down a chain
+var chain_nudges := false           # Wingwalker: a bump shoves the obstacle it hit, too
+var picked_golden: Array[bool] = [] # for each can in the last collect_cans() result: was it golden?
+var _golden_can_mat := StandardMaterial3D.new()
 
 func _ready() -> void:
 	# One shared material for every cube. Each cube gets its OWN outline material (same shader),
@@ -156,6 +163,9 @@ func _ready() -> void:
 	add_child(ground)
 	_stripe_mat.albedo_color = Color(0.3, 0.38, 0.5)
 	_stripe_mesh.material = _stripe_mat
+	_golden_can_mat.albedo_color = Color(1.0, 0.82, 0.15)
+	_golden_can_mat.roughness = 1.0
+	_golden_can_mat.metallic_specular = 0.0
 	_gull_mat.albedo_color = Color(0.96, 0.97, 1.0)
 	_gull_mat.roughness = 1.0
 	_gull_mat.metallic_specular = 0.0
@@ -348,6 +358,7 @@ func prewarm_show(with_flash: bool, with_clouds: bool = true) -> void:
 			g.position = Vector3(Tuning.column_center(row.ghosts.find(g)), GHOST_Y, 0.0)
 			g.scale = Vector3(1.0, 1.0, 1.0)
 		row.can.visible = true   # every pooled fuel can is drawn too
+		row.can.material_override = _golden_can_mat if idx == 0 else _can_mat   # (one golden, so that material is warm)
 		row.can.position = Vector3(Tuning.column_center(idx % Tuning.column_count), 0.4, 0.5)
 		row.can.scale = Vector3.ONE * Tuning.fuel_can_size
 	if with_clouds:   # every pooled cloud puff is drawn too (over the cubes, at a middling opacity)
@@ -368,6 +379,7 @@ func prewarm_hide() -> void:
 	for row in _all_rows:
 		for cube in row.cubes:
 			cube.material_override = _obstacle_mat
+		row.can.material_override = _can_mat
 		_hide_row(row)
 	for cl in _all_clouds:
 		_hide_cloud(cl)
@@ -507,6 +519,8 @@ func _place_can(row: Row, x: float) -> void:
 	row.has_can = true
 	row.can_x = x
 	row.can_dz = 0.0
+	row.can_golden = false
+	row.can.material_override = _can_mat
 	row.can.position = Vector3(x, 0.25, 0.0)
 	row.can.scale = Vector3.ONE * Tuning.fuel_can_size
 	row.can_outline.set_shader_parameter("outline_color", Color.BLACK)
@@ -577,6 +591,7 @@ func _choose_can_column(open: Array[bool], next_open: Array[bool], safe: int, co
 ## (the same array object every call: nothing is allocated).
 func collect_cans(p: Vector2, caps: PackedFloat32Array) -> Array[Vector3]:
 	_picked.clear()
+	picked_golden.clear()
 	for r in _rows:
 		var cz := r.position.z + r.can_dz
 		if not r.has_can or absf(cz - p.y) > NEAR_RANGE:
@@ -589,6 +604,7 @@ func collect_cans(p: Vector2, caps: PackedFloat32Array) -> Array[Vector3]:
 				r.has_can = false
 				r.can.visible = false
 				_picked.append(Vector3(r.can_x, 0.4, cz))
+				picked_golden.append(r.can_golden)
 				break
 	return _picked
 
@@ -668,15 +684,17 @@ func _make_gulls(row: Row, width: float) -> void:
 		row.gull_phase.append(randf() * TAU)
 
 ## Prop Wash: shove obstacle `k` of `row` sideways (dir = -1 / +1) at `speed` units/second. Gulls keep to their own drift.
-func nudge_obstacle(row: Row, k: int, dir: int, speed: float) -> void:
+func nudge_obstacle(row: Row, k: int, dir: int, speed: float, depth: int = 0) -> void:
 	if k < 0 or k >= row.xs.size() or row.gull_k.has(k):
 		return
 	var i := row.nudge_k.find(k)
 	if i < 0:
 		row.nudge_k.append(k)
 		row.nudge_v.append(dir * speed)
+		row.nudge_d.append(depth)
 	else:
 		row.nudge_v[i] = dir * speed
+		row.nudge_d[i] = depth
 
 func _update_nudges(r: Row, delta: float, width: float) -> void:
 	var half := Tuning.ortho_size * 0.5
@@ -693,19 +711,24 @@ func _update_nudges(r: Row, delta: float, width: float) -> void:
 		r.obs[k].position.x = x
 		r.obs_ghosts[k].position.x = x
 		if hit_other >= 0:
-			bump.emit(Vector3(x, 0.4, r.position.z))
+			var depth: int = r.nudge_d[i]
 			r.nudge_k.remove_at(i)
 			r.nudge_v.remove_at(i)
+			r.nudge_d.remove_at(i)
+			bump.emit(Vector3(x, 0.4, r.position.z), depth)
+			if chain_nudges and depth + 1 < Tuning.chain_max:   # Wingwalker: the one that was hit is shoved on
+				nudge_obstacle(r, hit_other, 1 if v > 0.0 else -1, maxf(absf(v), Tuning.prop_wash_push * 0.6), depth + 1)
 			continue
 		v *= exp(-Tuning.prop_wash_friction * delta)
 		if absf(v) < 0.3 or absf(x) >= half:
 			r.nudge_k.remove_at(i)
 			r.nudge_v.remove_at(i)
+			r.nudge_d.remove_at(i)
 		else:
 			r.nudge_v[i] = v
 
 ## Lucky Whiskers: put a fuel can in the nearest row ahead of the plane that has none, in the open column closest to x.
-func drop_can_ahead(x: float) -> bool:
+func drop_can_ahead(x: float, golden: bool = false) -> bool:
 	var best: Row = null
 	for r in _rows:
 		if r.has_can or r.open.is_empty() or r.position.z > plane_z - 4.0 or r.position.z < plane_z - 24.0:
@@ -721,6 +744,9 @@ func drop_can_ahead(x: float) -> bool:
 	if col < 0:
 		return false
 	_place_can(best, Tuning.column_center(col))
+	if golden:
+		best.can_golden = true
+		best.can.material_override = _golden_can_mat
 	return true
 
 ## Per-frame hazard update (Main calls it during a run): gulls drift and flap, gusts and lightning run.

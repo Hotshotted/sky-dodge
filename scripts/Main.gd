@@ -21,7 +21,7 @@ const HEADER_STRUCK := "STRUCK"
 const REASON_STRUCK := "Hit by lightning"
 
 ## Which screen is up. A run is only on while screen == SCREEN_PLAY and alive.
-enum { SCREEN_MENU, SCREEN_HANGAR, SCREEN_PLAY, SCREEN_OVER }
+enum { SCREEN_MENU, SCREEN_HANGAR, SCREEN_PLAY, SCREEN_OVER, SCREEN_LOGBOOK }
 var screen := SCREEN_MENU
 const MEDAL_NAMES := ["Bronze", "Silver", "Gold"]
 var map := 0            # the map this run is on (Tuning.maps)
@@ -58,6 +58,8 @@ var _pick_cards: Array[Dictionary] = []
 var _glide_left := 0.0                # Glide: seconds left in the glide (0 = not gliding)
 var _gliding := false
 var _second_wind_used := false
+var _combos := {}                     # combo id -> true: the combos that have switched on this run
+var _crates_broken := 0               # crates broken this run (Cat's Cradle counts them)
 
 func _ready() -> void:
 	fuel = Tuning.fuel_max()
@@ -92,6 +94,7 @@ func _ready() -> void:
 			_prewarm()
 	hud.play_pressed.connect(restart)
 	hud.map_pressed.connect(func(i: int): Save.select_map(i))
+	hud.logbook_pressed.connect(_open_logbook)
 	spawner.hazards.lightning_struck.connect(hud.flash)
 	hud.hangar_pressed.connect(_open_hangar)
 	hud.back_pressed.connect(_show_menu)
@@ -193,6 +196,9 @@ func restart() -> void:
 	pick_screen.hide_cards()
 	get_tree().paused = false
 	picks.start_run(coin_mult)
+	_combos.clear()
+	_crates_broken = 0
+	spawner.chain_nudges = false
 	_reset_bonus()
 	var head := Tuning.gear_value("head_start")   # Head Start: begin at x1.5 / x2 (it fades like any bonus)
 	if head > 1.0:
@@ -210,6 +216,7 @@ func restart() -> void:
 	hud.set_lives(lives)
 	hud.set_next(picks.next_pick)
 	hud.set_perks(picks.levels)   # (?tune can grant perks for every run)
+	_check_combos()
 	if bonus > 1.0:
 		hud.set_bonus(bonus)
 	player.reset()
@@ -251,7 +258,7 @@ func _process(delta: float) -> void:
 		fuel = maxf(fuel - Tuning.drain_rate() * (1.0 - picks.value("fuel_miser") * 0.01) * delta, 0.0)
 	var cd := picks.value("cloud_diver")      # Cloud Diver: fuel back while under a cloud
 	if cd > 0.0 and spawner._cloud_over(plane.x, plane.y):
-		fuel = minf(fuel + cd * delta, Tuning.fuel_max())
+		_add_fuel(cd * delta)
 
 	# Swept collision: the plane can move any distance in one frame (a fast flick), so test the whole
 	# path from where it was to where it is, in small steps, instead of only the end point. Obstacles,
@@ -261,6 +268,9 @@ func _process(delta: float) -> void:
 	var reach := Tuning.pickup_reach()   # Can Magnet gear: cans inside the radius fly to the plane
 	if picks.has_boost("magnet_storm"):
 		reach = maxf(reach, Tuning.storm_radius)
+	if combo_on("deadstick") and _gliding:   # Deadstick: while gliding, cans come from anywhere on screen
+		reach = 60.0
+	spawner.chain_nudges = combo_on("wingwalker")
 	if reach > 0.0:
 		spawner.pull_cans(plane, reach, Tuning.magnet_pull_speed * delta)
 	if _invuln > 0.0:
@@ -295,8 +305,9 @@ func _process(delta: float) -> void:
 			return
 		for ev in spawner.update_near_misses(p, caps):
 			_on_near_miss(ev)
-		for pos in spawner.collect_cans(p, caps):   # a can grabbed in the last moment still saves you
-			_on_pickup(pos)
+		var cans: Array[Vector3] = spawner.collect_cans(p, caps)   # a can grabbed in the last moment still saves you
+		for ci in cans.size():
+			_on_pickup(cans[ci], spawner.picked_golden[ci])
 	hud.set_fuel(fuel / Tuning.fuel_max())
 	_check_fuel(delta)
 	if score >= picks.next_pick and not _picking:
@@ -308,7 +319,7 @@ func _check_fuel(delta: float) -> void:
 	var sw := picks.value("second_wind")
 	if sw > 0.0 and not _second_wind_used and fuel > 0.0 and fuel < Tuning.fuel_max() * Tuning.second_wind_below:
 		_second_wind_used = true
-		fuel = minf(fuel + Tuning.fuel_max() * sw * 0.01, Tuning.fuel_max())
+		_add_fuel(Tuning.fuel_max() * sw * 0.01)
 		hud.fuel_pulse()
 	if fuel > 0.0:
 		_gliding = false
@@ -347,7 +358,10 @@ func _begin_pick() -> void:
 	_pick_cards = picks.roll(fuel / Tuning.fuel_max(), Tuning.pick_cards)
 	if tune_panel:
 		tune_panel.set_available(false)
-	pick_screen.show_cards(_pick_cards)
+	var hints: Array = []
+	for c in _pick_cards:
+		hints.append(picks.would_complete(c))   # a card that would complete a combo is highlighted
+	pick_screen.show_cards(_pick_cards, hints)
 	get_tree().paused = true
 
 func _on_pick_chosen(i: int) -> void:
@@ -362,6 +376,7 @@ func _on_pick_chosen(i: int) -> void:
 	_apply_card(card)
 	picks.advance()
 	hud.set_next(picks.next_pick)
+	_check_combos()
 
 ## Take a card: a perk levels up, a boost starts, a supply happens at once.
 func _apply_card(card: Dictionary) -> void:
@@ -382,15 +397,48 @@ func _apply_card(card: Dictionary) -> void:
 		"crate_shower":
 			spawner.crate_shower_rows = 6
 
-## Prop Wash: a shoved obstacle bumped another one: coins.
-func _on_bump(pos: Vector3) -> void:
-	var pay := picks.value("prop_wash") * earn_mult()
+## Prop Wash: a shoved obstacle bumped another one: coins (each link of a Wingwalker chain pays one more time).
+func _on_bump(pos: Vector3, depth: int) -> void:
+	var pay := picks.value("prop_wash") * earn_mult() * (1.0 + depth)
 	if pay <= 0.0:
 		return
 	score += pay
 	hud.coin_pop("+" + Tuning.fmt(pay), camera.unproject_position(pos))
 	if not DebugFlags.off("sparks"):
 		fx.coins(pos)
+
+## ---- Combos ----
+
+func combo_on(id: String) -> bool:
+	return _combos.has(id)
+
+## Switch on every combo whose condition is now met: banner, a burst, and the effect from then on.
+func _check_combos() -> void:
+	for c in Tuning.combos:
+		if _combos.has(c["id"]) or not picks.combo_ready(c):
+			continue
+		_combos[c["id"]] = true
+		Save.discover_combo(c["id"])
+		hud.show_combo(c["name"], c["color"])
+		hud.flash(c["color"])
+		if not DebugFlags.off("sparks"):
+			fx.whisker(player.position + Vector3(-1.0, 0.0, -0.5))
+			fx.whisker(player.position + Vector3(1.0, 0.0, -0.5))
+			fx.coins(player.position + Vector3(0.0, 0.0, -1.5))
+
+## Fuel in: never above a full tank. Fuel Overflow turns what would have spilled into coins.
+func _add_fuel(amount: float) -> void:
+	var room := Tuning.fuel_max() - fuel
+	fuel += minf(amount, room)
+	if amount > room and combo_on("fuel_overflow"):
+		score += (amount - room) * Tuning.overflow_coin_rate * earn_mult()
+
+## A crate was broken (crates come in Phase 5): Cat's Cradle gives a life back for every N of them.
+func _on_crate_broken() -> void:
+	_crates_broken += 1
+	if combo_on("cats_cradle") and _crates_broken % Tuning.cradle_crates == 0:
+		lives += 1
+		hud.set_lives(lives)
 
 ## A hit the plane survives: sputter (brief invulnerability), keep going, and the close-call streak
 ## drops (Steady Nerves keeps half or all of it). The obstacle it hit gives no close-call credit.
@@ -451,9 +499,19 @@ func _apply_palette() -> void:
 	_env.ambient_light_color = m["ambient"]
 
 ## A fuel can was collected at `pos`: refill (never past a full tank) and pop.
-func _on_pickup(pos: Vector3) -> void:
+func _on_pickup(pos: Vector3, golden: bool = false) -> void:
 	run_cans += 1
-	fuel = minf(fuel + Tuning.refill_amount(), Tuning.fuel_max())
+	if combo_on("deadstick") and _gliding:   # Deadstick: a can extends the glide instead of refuelling
+		_glide_left += Tuning.deadstick_extend
+	else:
+		_add_fuel(Tuning.refill_amount())
+	if golden:   # Golden Whiskers: fuel plus a big burst of coins
+		var gold := Tuning.golden_can_coins * earn_mult()
+		score += gold
+		hud.coin_pop("+" + Tuning.fmt(gold), camera.unproject_position(pos) + Vector2(0, -60))
+		if not DebugFlags.off("sparks"):
+			fx.coins(pos)
+			fx.whisker(pos)
 	var bounty := (Tuning.can_bounty_pay() + picks.value("scavenger")) * earn_mult()   # Can Bounty + Scavenger
 	if bounty > 0.0:
 		score += bounty
@@ -470,9 +528,11 @@ func _on_pickup(pos: Vector3) -> void:
 func _on_near_miss(ev: Dictionary) -> void:
 	var t0 := Time.get_ticks_usec()
 	var whisker: bool = ev.get("whisker", false) or picks.has_boost("whisker_window")   # Whisker Window: every close call counts
+	if combo_on("cloud_surfer") and spawner._cloud_over(player.position.x, player.position.z):   # Cloud Surfer: under a cloud counts too
+		whisker = true
 	_add_step(whisker)
 	if whisker and randf() * 100.0 < picks.value("lucky_whiskers"):   # Lucky Whiskers: a can drops ahead
-		spawner.drop_can_ahead(player.position.x)
+		spawner.drop_can_ahead(player.position.x, combo_on("golden_whiskers"))
 	var wash := picks.level("prop_wash")      # Prop Wash: the obstacle you just passed gets shoved aside
 	if wash > 0 and ev.has("row"):
 		spawner.nudge_obstacle(ev["row"], ev["k"], ev["side"], Tuning.prop_wash_push * (1.0 + 0.25 * (wash - 1)))
@@ -518,6 +578,8 @@ func _on_tuning_changed(property: String) -> void:
 ## first (x2.6 -> x2.5 -> x2.4 -> x2.2 ...), bonus_decay_rate per second, down to x1.
 func _decay_bonus(delta: float) -> void:
 	if streak <= 0:
+		return
+	if combo_on("barnstormer") and bonus > 2.0:   # Barnstormer: nothing fades while you are above x2
 		return
 	_bonus_timer -= delta
 	if _bonus_timer > 0.0:
@@ -609,6 +671,11 @@ func _show_menu() -> void:
 	screen = SCREEN_MENU
 	alive = false
 	hud.show_menu()
+
+func _open_logbook() -> void:
+	screen = SCREEN_LOGBOOK
+	alive = false
+	hud.show_logbook()
 
 func _open_hangar() -> void:
 	screen = SCREEN_HANGAR
