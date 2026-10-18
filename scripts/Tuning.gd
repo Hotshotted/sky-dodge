@@ -129,6 +129,15 @@ var kite_rate := 1.6
 ## hay bale in each hay slot (0.10 x 4 = 0.4).
 var pattern_can_chance := 0.3
 var hay_slot_factor := 4.0
+## Intensity waves (Countryside): CALM -> BUILD -> PEAK -> BREATHER, repeating. Per phase: how long it lasts (seconds),
+## the pattern difficulty range it draws from, and how many cans / hay bales its slots give (a multiplier). Every finished
+## cycle adds wave_rise to the difficulty range of CALM, BUILD and PEAK (the BREATHER stays almost empty).
+var wave_seconds: Array[float] = [14.0, 14.0, 12.0, 4.0]
+var wave_diff_lo: Array[float] = [1.0, 2.0, 3.0, 1.0]
+var wave_diff_hi: Array[float] = [2.0, 3.0, 4.0, 1.0]
+var wave_rise := 0.5
+var wave_can: Array[float] = [1.8, 1.0, 0.6, 2.5]
+var wave_hay: Array[float] = [1.8, 1.0, 0.5, 2.5]
 
 # ---------- Maps ----------
 ## Four maps, each a separate run chosen on the start screen. Fields: id, name, unlock_from (the map whose

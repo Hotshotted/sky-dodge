@@ -60,6 +60,7 @@ var _panel_layer: CanvasLayer
 var _button: Button
 var _panel: Control
 var _out: Label
+var _status: Label                # top-left: the pattern being played and the wave phase
 
 func _init() -> void:
 	process_mode = Node.PROCESS_MODE_ALWAYS   # keeps working while the game is paused
@@ -204,6 +205,10 @@ func build() -> void:
 	grant_row.add_child(level_btn)
 	grant_row.add_child(grant_btn)
 	column.add_child(grant_row)
+	var wave_btn := _make_button("Next wave phase", 30)
+	wave_btn.pressed.connect(cycle_wave)
+	wave_btn.set_meta("debug", "wave_cycle")
+	column.add_child(wave_btn)
 	add_coins.set_meta("debug", "add_coins")
 	reset_save.set_meta("debug", "reset_save")
 	_out = _make_label("", 26, HORIZONTAL_ALIGNMENT_LEFT)
@@ -221,11 +226,23 @@ func build() -> void:
 	_button.offset_top = 20.0
 	_button.offset_bottom = 96.0
 	_button.pressed.connect(toggle)
+	_status = _make_label("", 24, HORIZONTAL_ALIGNMENT_LEFT)
+	_status.position = Vector2(20.0, 150.0)
+	_status.add_theme_color_override("font_color", Color(1.0, 0.95, 0.5))
+	_button_layer.add_child(_status)
 	_button.visible = false
 	_button_layer.add_child(_button)
 
 func _process(_delta: float) -> void:
 	_button_rect = _button.get_global_rect() if _button.visible else Rect2()
+	var sp = get_parent().spawner
+	_status.text = ("%s | %s" % [sp.pattern_name, sp.wave_name()]) if (sp.kit_on and _button.visible) else ""
+
+## Jump to the next intensity-wave phase (CALM, BUILD, PEAK, BREATHER) now.
+func cycle_wave() -> void:
+	var sp = get_parent().spawner
+	sp.cycle_wave()
+	_out.text = "Wave phase: %s" % sp.wave_name()
 
 ## Show or hide the TUNE button (hidden while the game is still starting up).
 func set_available(on: bool) -> void:

@@ -25,6 +25,8 @@ extends SceneTree
 ##   3. ?debug flags parse, and switching an effect off really skips it
 ##   4. plane collision capsules: span matches the wings, rounded corners graze past a cube corner
 ##   5. closest-approach near-miss detection reports the right side
+##   7. Countryside kit: models, hit shapes, close calls for every kind (moving ones too), hay rules, nothing allocated
+##   8. Countryside patterns (data, mirroring, every pattern flyable at its speeds, chaining, ?pattern=) and the intensity waves
 
 var failures: Array[String] = []
 
@@ -2880,23 +2882,67 @@ func _initialize() -> void:
 		pz_gsp.kit.release_all()
 	check(pz_only_funnel, "with ?pattern=funnel the Countryside plays only that pattern")
 	DebugFlags.parse([])
-	# difficulty follows the run
-	var pz_early := 0.0
-	var pz_late := 0.0
-	for i in 200:
-		pz_gsp.run_time = 1.0
-		pz_gsp.scroll_speed = 9.0
+	# intensity waves: CALM -> BUILD -> PEAK -> BREATHER, repeating, lengths from Tuning
+	pz_gsp.reset(-14.0)
+	pz_gsp.scroll_speed = 10.0
+	var wv_seq: Array[int] = []
+	var wv_starts: Array[float] = []
+	var wv_last := -1
+	var t_w := 0.0
+	while t_w < 130.0:
+		pz_gsp.run_time = t_w
 		pz_gsp._pat = {}
-		pz_gsp._spawn_row(-30.0)
-		pz_early += float(pz_gsp._pat["diff"])
-		pz_gsp._release_row(pz_gsp._rows[-1])
-		pz_gsp.run_time = 200.0
-		pz_gsp._pat = {}
-		pz_gsp._spawn_row(-30.0)
-		pz_late += float(pz_gsp._pat["diff"])
-		pz_gsp._release_row(pz_gsp._rows[-1])
-		pz_gsp.kit.release_all()
-	check(pz_late > pz_early + 100.0, "patterns get harder as the run goes on (mean difficulty %.1f early, %.1f late)" % [pz_early / 200.0, pz_late / 200.0])
+		pz_gsp._choose_pattern()
+		if pz_gsp.wave_phase != wv_last:
+			wv_seq.append(pz_gsp.wave_phase)
+			wv_starts.append(t_w)
+			wv_last = pz_gsp.wave_phase
+		t_w += 0.5
+	var wv_order := wv_seq.size() >= 8
+	for i in wv_seq.size():
+		wv_order = wv_order and wv_seq[i] == i % 4
+	check(wv_order, "the waves run CALM, BUILD, PEAK, BREATHER, CALM ... (%s)" % str(wv_seq))
+	var wv_len_ok := true
+	for i in range(1, mini(wv_starts.size(), 6)):
+		wv_len_ok = wv_len_ok and absf((wv_starts[i] - wv_starts[i - 1]) - tuning.wave_seconds[wv_seq[i - 1]]) < 0.51
+	check(wv_len_ok, "...each phase lasts its wave_seconds %s" % str(tuning.wave_seconds))
+	var wv_mean := {}
+	for cyc in [0, 4]:
+		for ph in 4:
+			pz_gsp.wave_cycle = cyc
+			pz_gsp.wave_phase = ph
+			pz_gsp.run_time = 0.0
+			pz_gsp._wave_start = 0.0
+			var tot := 0.0
+			var calm_n := 0
+			for i in 300:
+				pz_gsp._pat = {}
+				pz_gsp._pat_last = ""
+				var chosen: Dictionary = pz_gsp._choose_pattern()
+				tot += float(chosen["diff"])
+				calm_n += int(P.has_tag(chosen, "calm"))
+			wv_mean[cyc * 10 + ph] = tot / 300.0
+			if ph == 3 and cyc == 0:
+				check(calm_n > 150, "the BREATHER is nearly empty (%d of 300 picks are calm patterns)" % calm_n)
+	check(wv_mean[0] < wv_mean[1] and wv_mean[1] < wv_mean[2] and wv_mean[3] < wv_mean[1], "difficulty climbs CALM < BUILD < PEAK, and the BREATHER is easy (%.1f %.1f %.1f %.1f)" % [wv_mean[0], wv_mean[1], wv_mean[2], wv_mean[3]])
+	check(wv_mean[41] > wv_mean[1] + 0.3 and wv_mean[42] > wv_mean[2] + 0.2 and wv_mean[40] > wv_mean[0], "every phase gets harder over the run (BUILD %.1f -> %.1f, PEAK %.1f -> %.1f)" % [wv_mean[1], wv_mean[41], wv_mean[2], wv_mean[42]])
+	pz_gsp.reset(-14.0)
+	check(pz_gsp.wave_can_mult == tuning.wave_can[0] and tuning.wave_can[0] > tuning.wave_can[2] and tuning.wave_can[3] > tuning.wave_can[1], "CALM and the BREATHER give more cans / hay, the PEAK fewer")
+	# ?tune: the wave button and the status line
+	pz_gsp.run_time = 3.0
+	pz_gsp.cycle_wave()
+	check(pz_gsp.wave_phase == 1 and pz_gsp._pat.is_empty(), "the ?tune button jumps to the next phase and drops the current pattern")
+	for i in 3:
+		pz_gsp.cycle_wave()
+	check(pz_gsp.wave_phase == 0 and pz_gsp.wave_cycle == 1, "...four presses make a full cycle")
+	pz_gsp.apply_map(0)
+	pz_gsp._pat = {}
+	pz_gsp._spawn_row(-30.0)
+	main.tune_panel.set_available(true)
+	main.tune_panel._process(0.0)
+	check(main.tune_panel._status.text == "%s | %s" % [pz_gsp.pattern_name, pz_gsp.wave_name()] and pz_gsp.pattern_name != "", "the ?tune status shows the pattern and the wave phase: \"%s\"" % main.tune_panel._status.text)
+	pz_gsp._release_row(pz_gsp._rows[-1])
+	pz_gsp.kit.release_all()
 	pz_gsp.reset()
 	pz_gsp.kit_enabled = false
 

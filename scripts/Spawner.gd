@@ -233,6 +233,10 @@ func reset(first_row_z: float = -12.0) -> void:
 	_pat = {}
 	_pat_row = 0
 	pattern_name = ""
+	wave_phase = 0
+	wave_cycle = 0
+	_wave_start = 0.0
+	_wave_apply()
 	_safe_col = Tuning.column_count / 2
 	for i in Tuning.column_count:
 		_prev_open.append(true)  # first row may use any column
@@ -655,6 +659,42 @@ func _hay_probability() -> float:
 
 var wave_can_mult := 1.0            # the intensity wave scales how many cans / hay bales the slots give
 var wave_hay_mult := 1.0
+const WAVE_NAMES := ["CALM", "BUILD", "PEAK", "BREATHER"]
+var wave_phase := 0
+var wave_cycle := 0                 # finished CALM-BUILD-PEAK-BREATHER rounds this run
+var _wave_start := 0.0              # run_time when the current phase began
+
+func wave_name() -> String:
+	return "%s #%d" % [WAVE_NAMES[wave_phase], wave_cycle + 1]
+
+## Phases change when a new pattern is about to be chosen (catching up if time jumped).
+func _wave_update() -> void:
+	var guard := 0
+	while guard < 64 and run_time - _wave_start >= Tuning.wave_seconds[wave_phase]:
+		_wave_start += Tuning.wave_seconds[wave_phase]
+		_wave_step()
+		guard += 1
+
+func _wave_step() -> void:
+	wave_phase = (wave_phase + 1) % WAVE_NAMES.size()
+	if wave_phase == 0:
+		wave_cycle += 1
+	_wave_apply()
+
+func _wave_apply() -> void:
+	wave_can_mult = Tuning.wave_can[wave_phase]
+	wave_hay_mult = Tuning.wave_hay[wave_phase]
+
+## ?tune button: jump to the next phase now (the pattern after the current one comes from it).
+func cycle_wave() -> void:
+	_wave_step()
+	_wave_start = run_time
+	_pat = {}
+
+## The pattern difficulty range of the current phase (rises with every finished cycle, except in the BREATHER).
+func wave_range() -> Vector2:
+	var rise := Tuning.wave_rise * wave_cycle if wave_phase != 3 else 0.0
+	return Vector2(minf(Tuning.wave_diff_lo[wave_phase] + rise, 5.0), minf(Tuning.wave_diff_hi[wave_phase] + rise, 5.0))
 
 ## Which columns this row's things block (for Lucky Whiskers cans, cloud fairness and the safe path).
 func _kit_open_flags(row: Row, open: Array[bool]) -> void:
@@ -682,38 +722,45 @@ func _kit_open_flags(row: Row, open: Array[bool]) -> void:
 	if not open.has(true):   # (never a fully blocked row on paper: the widest gap stays "open")
 		open[open.size() / 2] = true
 
-## The next pattern: difficulty follows the run (a gentle rise; the intensity waves steer it), only patterns built for
-## the current scroll speed, never the same one twice in a row. ?pattern=<name> repeats one pattern.
+## The next pattern, from the current wave phase: its difficulty range, only patterns built for the current scroll speed,
+## never the same one twice in a row. ?pattern=<name> repeats one pattern (the phases still run).
 func _choose_pattern() -> Dictionary:
+	_wave_update()
 	if DebugFlags.pattern != "":
 		var forced := Patterns.find(DebugFlags.pattern)
 		if not forced.is_empty():
 			return forced
-	var target := clampf(1.0 + run_time / 40.0, 1.0, 5.0)
-	var pool: Array[Dictionary] = []
-	var weights: Array[float] = []
-	for p in Patterns.all():
-		if p["name"] == _pat_last:
-			continue
-		if scroll_speed < float(p["speed"][0]) - 1.0 or scroll_speed > float(p["speed"][1]):
-			continue
-		pool.append(p)
-		weights.append(maxf(0.1, 2.0 - absf(float(p["diff"]) - target)))
-	if pool.is_empty():   # faster than anything built for: the patterns that hold up best at speed
-		var best: Dictionary = {}
+	var rng := wave_range()
+	var slack := 0.5
+	while slack < 6.0:
+		var pool: Array[Dictionary] = []
+		var weights: Array[float] = []
 		for p in Patterns.all():
-			if best.is_empty() or float(p["speed"][1]) > float(best["speed"][1]):
-				best = p
-		return best
-	var total := 0.0
-	for w in weights:
-		total += w
-	var roll := randf() * total
-	for i in pool.size():
-		roll -= weights[i]
-		if roll <= 0.0:
-			return pool[i]
-	return pool[-1]
+			if p["name"] == _pat_last or float(p["diff"]) < rng.x - slack or float(p["diff"]) > rng.y + slack:
+				continue
+			if scroll_speed < float(p["speed"][0]) - 1.0 or scroll_speed > float(p["speed"][1]):
+				continue
+			pool.append(p)
+			var w := 1.0 + 0.5 * (float(p["diff"]) - rng.x)
+			if wave_phase == 3 and Patterns.has_tag(p, "calm"):
+				w *= 4.0   # the breather is nearly empty
+			weights.append(maxf(w, 0.1))
+		if not pool.is_empty():
+			var total := 0.0
+			for w in weights:
+				total += w
+			var roll := randf() * total
+			for i in pool.size():
+				roll -= weights[i]
+				if roll <= 0.0:
+					return pool[i]
+			return pool[-1]
+		slack += 1.0
+	var best: Dictionary = {}   # faster than anything built for: the pattern that holds up best at speed
+	for p in Patterns.all():
+		if best.is_empty() or float(p["speed"][1]) > float(best["speed"][1]):
+			best = p
+	return best
 
 func _place_can(row: Row, x: float) -> void:
 	row.has_can = true
