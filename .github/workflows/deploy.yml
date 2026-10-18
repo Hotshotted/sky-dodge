@@ -67,7 +67,7 @@ jobs:
         shell: bash
         run: |
           set -o pipefail
-          timeout 180 godot --headless --path . --script res://tests/smoke_test.gd 2>&1 | tee smoke.log
+          timeout 300 godot --headless --path . --script res://tests/smoke_test.gd 2>&1 | tee smoke.log
           ! grep -q "SCRIPT ERROR" smoke.log
 
       # Cache-busting: export under a name containing the commit hash (so .js/.wasm/.pck are new

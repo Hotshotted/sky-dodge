@@ -39,13 +39,14 @@ func _kit_pass(kit, carrier: Node3D, kind: int, d: float, kpz: float, kcaps: Pac
 	kit.release_all()
 	kit.plane_x = 0.0
 	kit.plane_z = kpz
-	var moving := kind != 3 and kind != 6
-	carrier.position.z = kpz - 9.0 if moving else -8.0
+	var moving := kind != 3
+	carrier.position.z = (-12.0 if kind == 6 else kpz - 9.0) if moving else -8.0
+	var vscroll := 7.0 if kind == 6 else 14.0
 	match kind:
 		0: kit.spawn(kind, carrier, 2.0 + d, 0.0, 1.2)
 		5: kit.spawn(kind, carrier, -5.0, 0.0, -d - 1.5); kit.spawn(kind, carrier, d + 1.5, 0.0, 5.0)
 		3: kit.spawn(kind, carrier, 0.0, 0.0, 0.0, 0.0, d)
-		6: kit.spawn(kind, carrier, 0.0, d, 0.0, 0.0, 0.0, 0.0, 0.0, 1.0)
+		6: kit.spawn(kind, carrier, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 1.0, (d + 0.5) * 0.4)
 		4: kit.spawn(kind, carrier, 2.5 + d, 0.0, 0.0, 0.0, 1.0, 0.8, 0.0)
 		2: kit.spawn(kind, carrier, 3.2 + d, 0.0, 0.0, 0.0, 0.0, 0.0, 0.7, 1.0)
 		8: kit.spawn(kind, carrier, 1.4 + d, 0.0, 0.0, 1.0)
@@ -61,7 +62,7 @@ func _kit_pass(kit, carrier: Node3D, kind: int, d: float, kpz: float, kcaps: Pac
 	while steps < 600 and not hit:
 		steps += 1
 		if moving:
-			carrier.position.z += 14.0 / 60.0
+			carrier.position.z += vscroll / 60.0
 		kit.update(1.0 / 60.0)
 		if kit.hits(Vector2(0.0, kpz), kcaps):
 			hit = true
@@ -2779,6 +2780,125 @@ func _initialize() -> void:
 	ksp.reset()
 	ksp.kit_enabled = false
 	k_carrier.queue_free()
+
+	print("8. Countryside patterns: data, mirroring, flyable at their speeds, chaining")
+	var P = load("res://scripts/Patterns.gd")
+	var pz_pats: Array = P.all()
+	var pz_names_seen := {}
+	var pz_data_ok := true
+	var kinds_ok := ["barn", "silo", "windmill", "balloon", "kite", "powerline", "crow", "duster"]
+	for vpt in pz_pats:
+		pz_data_ok = pz_data_ok and not pz_names_seen.has(vpt["name"]) and int(vpt["diff"]) >= 1 and int(vpt["diff"]) <= 5 and int(vpt["rows"]) >= 2 and int(vpt["rows"]) <= 6
+		pz_data_ok = pz_data_ok and float(vpt["speed"][0]) < float(vpt["speed"][1]) and (vpt["tags"] as Array).size() >= 1
+		pz_names_seen[vpt["name"]] = true
+		for it in vpt["items"]:
+			pz_data_ok = pz_data_ok and kinds_ok.has(it["t"]) and int(it["r"]) >= 0 and int(it["r"]) < int(vpt["rows"])
+		for slot in (vpt.get("cans", []) as Array) + (vpt.get("hay", []) as Array):
+			pz_data_ok = pz_data_ok and int(slot["r"]) >= 0 and int(slot["r"]) < int(vpt["rows"]) and absf(float(slot["x"])) <= 4.5
+	check(pz_data_ok, "every pattern has a unique name, difficulty 1-5, 2-6 rows, speeds, tags, valid items and slots")
+	check(pz_pats.size() >= 25, "at least 25 patterns (%d)" % pz_pats.size())
+	var pz_wanted := ["slalom", "windmill", "crow", "balloon", "powerline", "duster", "funnel", "barn_maze", "bait", "combo"]
+	var pz_missing: Array[String] = []
+	for w in pz_wanted:
+		var found_tag := false
+		for vpt in pz_pats:
+			found_tag = found_tag or P.has_tag(vpt, w)
+		if not found_tag:
+			pz_missing.append(w)
+	check(pz_missing.is_empty(), "the required kinds of pattern are all there (missing: %s)" % str(pz_missing))
+	var pz_diffs := {}
+	for vpt in pz_pats:
+		pz_diffs[int(vpt["diff"])] = true
+	check(pz_diffs.size() == 5, "all five difficulty levels are used")
+	# mirroring
+	var pz_mir_ok := true
+	for vpt in pz_pats:
+		for it in vpt["items"]:
+			var m1: Dictionary = P.mirror_item(it)
+			var m2: Dictionary = P.mirror_item(m1)
+			pz_mir_ok = pz_mir_ok and str(m2) == str(it)
+			if it.has("x"):
+				pz_mir_ok = pz_mir_ok and absf(float(m1["x"]) + float(it["x"])) < 0.0001
+	check(pz_mir_ok, "mirroring twice gives the pattern back; x is negated")
+	# the checker itself: an empty sky is flyable, a solid wall is not
+	var wall_pat := {"name": "wall", "diff": 5, "rows": 2, "tags": [], "speed": [7.0, 8.0], "items": [{"t": "powerline", "r": 0, "gaps": []}, {"t": "barn", "r": 0, "x": -3.2, "hx": 1.6}, {"t": "barn", "r": 0, "x": 0.0, "hx": 1.6}, {"t": "barn", "r": 0, "x": 3.2, "hx": 1.6}], "cans": [], "hay": []}
+	var vcarriers: Array = []
+	for i in 8:
+		var vn := Node3D.new()
+		main.add_child(vn)
+		vcarriers.append(vn)
+	var vcaps: PackedFloat32Array = P.simple_caps(main.player.hit_capsules())
+	var vlim: float = tuning.ortho_size * 0.5 - tuning.plane_edge_margin
+	var vkit = main.spawner.kit
+	check(not P.check(vkit, wall_pat, false, 10.0, 7.6, -9.1, vcaps, vlim, vcarriers)["ok"], "the checker rejects a wall across the whole lane")
+	check(P.check(vkit, P.find("open_sky"), false, 10.0, 7.6, -9.1, vcaps, vlim, vcarriers)["ok"], "...and accepts an empty sky")
+	# FAIRNESS: every pattern can be flown at the speeds it is built for (mirrored too, on a short and a tall screen, plane high and low)
+	var t_pat := Time.get_ticks_msec()
+	var pz_unflyable: Array[String] = []
+	for vpt in pz_pats:
+		var lo2: float = vpt["speed"][0]
+		var hi2: float = vpt["speed"][1]
+		var pz_speeds2: Array[float] = [lo2, lo2 + (hi2 - lo2) * 0.25, (lo2 + hi2) * 0.5, lo2 + (hi2 - lo2) * 0.75, hi2]
+		for mir2 in [false, true]:
+			for sp2 in pz_speeds2:
+				for cfg2 in [[-9.1, 7.6], [-10.4, 8.9], [-9.1, 2.0], [-10.4, 2.4]]:
+					var vres: Dictionary = P.check(vkit, vpt, mir2, sp2, cfg2[1], cfg2[0], vcaps, vlim, vcarriers)
+					if not vres["ok"]:
+						pz_unflyable.append("%s (%s, v=%.1f, plane z %.1f): %s" % [vpt["name"], "mirrored" if mir2 else "plain", sp2, cfg2[1], vres["why"]])
+	check(pz_unflyable.is_empty(), "FAIRNESS: all %d patterns can be flown at every speed they are built for, mirrored or not (%d s)  %s" % [pz_pats.size(), (Time.get_ticks_msec() - t_pat) / 1000, str(pz_unflyable.slice(0, 3))])
+	for vn in vcarriers:
+		vn.queue_free()
+	# chaining: rows of one pattern come in order, then another pattern; ?pattern= repeats one; nothing runs dry
+	var pz_gsp = main.spawner
+	DebugFlags.parse([])
+	pz_gsp.kit_enabled = true
+	pz_gsp.apply_map(0)
+	pz_gsp.reset(-14.0)
+	pz_gsp.run_time = 10.0
+	pz_gsp.scroll_speed = 10.0
+	pz_gsp.kit.dropped = 0
+	var pz_seen_names := {}
+	var pz_chain_ok := true
+	var pz_last_name := ""
+	for i in 300:
+		pz_gsp._spawn_row(-30.0)
+		pz_seen_names[pz_gsp.pattern_name] = true
+		var rr2 = pz_gsp._rows[-1]
+		pz_gsp._release_row(rr2)
+		pz_gsp.kit.update(0.0)
+		if i % 6 == 0:
+			pz_gsp.kit.release_all()
+	check(pz_seen_names.size() >= 8 and pz_gsp.kit.dropped == 0, "300 rows chain %d different patterns and the kit pools never ran dry (%d dropped)" % [pz_seen_names.size(), pz_gsp.kit.dropped])
+	DebugFlags.parse(["pattern=funnel"])
+	check(DebugFlags.pattern == "funnel" and DebugFlags.summary().contains("pattern=funnel"), "?pattern=<name> is read and shown in the summary")
+	pz_gsp.reset(-14.0)
+	var pz_only_funnel := true
+	for i in 40:
+		pz_gsp._spawn_row(-30.0)
+		pz_only_funnel = pz_only_funnel and pz_gsp.pattern_name == "funnel"
+		pz_gsp._release_row(pz_gsp._rows[-1])
+		pz_gsp.kit.release_all()
+	check(pz_only_funnel, "with ?pattern=funnel the Countryside plays only that pattern")
+	DebugFlags.parse([])
+	# difficulty follows the run
+	var pz_early := 0.0
+	var pz_late := 0.0
+	for i in 200:
+		pz_gsp.run_time = 1.0
+		pz_gsp.scroll_speed = 9.0
+		pz_gsp._pat = {}
+		pz_gsp._spawn_row(-30.0)
+		pz_early += float(pz_gsp._pat["diff"])
+		pz_gsp._release_row(pz_gsp._rows[-1])
+		pz_gsp.run_time = 200.0
+		pz_gsp._pat = {}
+		pz_gsp._spawn_row(-30.0)
+		pz_late += float(pz_gsp._pat["diff"])
+		pz_gsp._release_row(pz_gsp._rows[-1])
+		pz_gsp.kit.release_all()
+	check(pz_late > pz_early + 100.0, "patterns get harder as the run goes on (mean difficulty %.1f early, %.1f late)" % [pz_early / 200.0, pz_late / 200.0])
+	pz_gsp.reset()
+	pz_gsp.kit_enabled = false
 
 	DirAccess.remove_absolute(ProjectSettings.globalize_path("user://smoke_test_save.json"))
 	print("")

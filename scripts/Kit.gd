@@ -16,7 +16,7 @@ extends Node3D
 
 enum { BARN, SILO, WINDMILL, CROW, BALLOON, POWERLINE, DUSTER, KITE, HAY }
 const NAMES := ["barn", "silo", "windmill", "crow", "balloon", "powerline", "duster", "kite", "hay"]
-const POOL := [5, 5, 3, 12, 2, 2, 2, 3, 8]
+const POOL := [10, 8, 6, 14, 6, 10, 3, 6, 10]
 const STRIDE := 9            # collider floats: type, cx, cz, hx (radius for circles), hz, cos, sin, owner, flags
 const MAX_COLLIDERS := 96
 const T_RECT := 0.0
@@ -46,6 +46,9 @@ class Ent extends Node3D:
 	var rate := 0.0
 	var phase := 0.0
 	var dir := 1.0
+	var leader: Ent = null             # crows: the first of the flock (its aim is shared)
+	var aim_x := 0.0
+	var aim_set := false
 	var delay := 0.0                   # extra seconds before a crow / duster starts its telegraph
 	var age := 0.0
 	var state := 0                     # crow / duster: 0 waiting for its row, 1 telegraph, 2 flying
@@ -90,7 +93,8 @@ var _meshes := {}
 var glow_mats: Array[StandardMaterial3D] = []
 var arrow_mat := StandardMaterial3D.new()
 var last_hit_hay := false
-var bumps := 0
+var dropped := 0                   # spawn() calls that found their pool empty (tests expect 0)
+var aim_override := -99.0          # the validator forces where a crow flock aims
 
 func _ready() -> void:
 	col.resize(MAX_COLLIDERS * STRIDE)
@@ -369,6 +373,7 @@ func _build(kind: int) -> Ent:
 func spawn(kind: int, row, x0: float, dz: float, a: float = 0.0, b: float = 0.0, amp: float = 0.0, rate: float = 0.0, phase: float = 0.0, dir: float = 1.0, delay: float = 0.0) -> Ent:
 	var lst: Array = _free[kind]
 	if lst.is_empty():
+		dropped += 1
 		return null
 	var e: Ent = lst.pop_back()
 	e.row = row
@@ -381,6 +386,8 @@ func spawn(kind: int, row, x0: float, dz: float, a: float = 0.0, b: float = 0.0,
 	e.phase = phase
 	e.dir = dir
 	e.delay = delay
+	e.leader = null
+	e.aim_set = false
 	e.age = 0.0
 	e.state = 0
 	e.state_age = 0.0
@@ -529,7 +536,7 @@ func _pose_crow(e: Ent, delta: float) -> void:
 			e.visible = false
 			e.px = e.x0 + e.a
 			e.pz = screen_top_z - 3.0 + e.b
-			if _carrier_z(e) >= _trigger_z() - e.rate * 0.0 + 0.0 and e.row != null and e.row.position.z + e.dz >= _trigger_z():
+			if e.row != null and _carrier_z(e) >= _trigger_z():
 				e.state = 1
 				e.state_age = 0.0
 				e.visible = true
@@ -541,7 +548,11 @@ func _pose_crow(e: Ent, delta: float) -> void:
 			e.wing_r.rotation.z = -sin(e.age * 22.0) * 0.6
 			if e.state_age >= Tuning.crow_telegraph + e.delay:
 				# the swoop: toward where the plane IS right now, then a straight line. Never re-aimed.
-				var aim := Vector2(plane_x + e.amp, plane_z)
+				var lead: Ent = e.leader if e.leader != null else e
+				if not lead.aim_set:
+					lead.aim_x = aim_override if aim_override > -90.0 else plane_x
+					lead.aim_set = true
+				var aim := Vector2(lead.aim_x + e.amp, plane_z)
 				var d := (aim - Vector2(e.px, e.pz))
 				d = d.normalized() if d.length() > 0.001 else Vector2(0, 1)
 				e.vx = d.x * Tuning.crow_speed
@@ -563,24 +574,20 @@ func _pose_crow(e: Ent, delta: float) -> void:
 func _pose_duster(e: Ent, delta: float) -> void:
 	e.state_age += delta
 	var edge := Tuning.ortho_size * 0.5 + 1.4
+	e.pz = _carrier_z(e)
 	match e.state:
-		0:
+		0:   # waiting for the row to come into view
 			e.solid = false
 			e.visible = false
-			e.arrow.visible = false
 			e.px = -e.dir * edge
-			e.pz = plane_z + e.dz
-			if e.row != null and e.row.position.z + 0.0 >= _trigger_z():
+			if e.pz >= _trigger_z():
 				e.state = 1
 				e.state_age = 0.0
-				e.visible = false
-				e.pz = plane_z + e.dz
 		1:   # the arrow at the edge it will come from
 			e.solid = false
 			e.visible = false
 			e.px = -e.dir * edge
 			e.arrow.visible = true
-			e.arrow.position = Vector3(-e.dir * (edge - 0.9) - e.px, 0.5, 0.0)
 			e.arrow.rotation.y = 0.0 if e.dir > 0.0 else PI
 			var blink := 0.6 + 0.4 * sin(e.state_age * 14.0)
 			arrow_mat.albedo_color = Color(1.0, 0.35, 0.1) * blink
@@ -591,10 +598,10 @@ func _pose_duster(e: Ent, delta: float) -> void:
 				e.solid = true
 				e.visible = true
 		2:
-			e.px += e.dir * Tuning.duster_speed * delta
+			e.px = -e.dir * edge + e.dir * Tuning.duster_speed * e.state_age
 			e.pivot.rotation.x += delta * 40.0
-	if e.state == 1:
-		e.arrow.position = Vector3(-e.dir * (edge - 0.9) - e.px, 0.5, 0.0)
+	if e.state == 1:   # (the arrow stays at the top corner of the screen, whatever the body's own position)
+		e.arrow.position = Vector3(-e.dir * (edge - 1.6) - e.px, 0.5, screen_top_z + 1.4 - e.pz)
 
 ## Advance everything (called each frame by the Spawner after the rows have moved).
 func update(delta: float) -> void:
@@ -602,9 +609,11 @@ func update(delta: float) -> void:
 		var e := active[i]
 		e.age += delta
 		_pose(e, delta)
-		if e.kind == CROW and e.state == 2 and (e.pz > plane_z + 9.0 or absf(e.px) > 12.0):
+		if e.kind != CROW and e.kind != DUSTER and e.pz - e.reach.y > plane_z + 12.0:   # long gone off the bottom
 			release(e)
-		elif e.kind == DUSTER and e.state == 2 and absf(e.px) > Tuning.ortho_size * 0.5 + 2.0 and e.px * e.dir > 0.0:
+		elif e.kind == CROW and e.state == 2 and (e.pz > plane_z + 9.0 or absf(e.px) > 12.0):
+			release(e)
+		elif e.kind == DUSTER and e.state == 2 and e.px * e.dir > Tuning.ortho_size * 0.5 + 2.0:
 			release(e)
 	_fill_colliders()
 
@@ -716,7 +725,7 @@ func update_near_misses(p: Vector2, caps: PackedFloat32Array, limit: float, behi
 			CROW:
 				gone = e.pz - e.reach.y > p.y + behind or absf(e.px) > 11.0
 			DUSTER:
-				gone = (e.px - p.x) * e.dir > e.reach.x + 1.0 + 1.1 and e.entered
+				gone = (e.px - p.x) * e.dir > e.reach.x + 1.0 + 1.1 and e.entered or e.pz - e.reach.y > p.y + behind
 			_:
 				gone = e.pz - e.reach.y > p.y + behind
 		if gone:

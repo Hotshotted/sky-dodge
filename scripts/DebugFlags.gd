@@ -22,6 +22,7 @@ static var perf := false
 static var tune := false
 static var start_map := -1
 static var god := false
+static var pattern := ""            # ?pattern=<name>: the Countryside repeats this one pattern
 
 ## True if the named near-miss effect has been switched off.
 static func off(effect: String) -> bool:
@@ -60,6 +61,8 @@ static func summary() -> String:
 		parts.append("map=%d" % start_map)
 	if god:
 		parts.append("god")
+	if pattern != "":
+		parts.append("pattern=" + pattern)
 	for b in _bad:
 		parts.append("?" + b)
 	return " ".join(parts)
@@ -87,6 +90,7 @@ static func parse(args: Array[String]) -> void:
 	tune = false
 	start_map = -1
 	god = false
+	pattern = ""
 	for a in args:
 		var kv := a.split("=", true, 1)
 		var key := kv[0].uri_decode().to_lower()
@@ -101,6 +105,8 @@ static func parse(args: Array[String]) -> void:
 						_off[name] = true
 					else:
 						_bad.append(name)
+			"pattern":
+				pattern = val
 			"noprewarm":
 				noprewarm = true
 			"perf":

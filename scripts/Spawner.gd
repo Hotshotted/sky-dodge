@@ -230,6 +230,9 @@ func reset(first_row_z: float = -12.0) -> void:
 		_release_cloud(c)
 	hazards.reset()
 	kit.release_all()
+	_pat = {}
+	_pat_row = 0
+	pattern_name = ""
 	_safe_col = Tuning.column_count / 2
 	for i in Tuning.column_count:
 		_prev_open.append(true)  # first row may use any column
@@ -582,16 +585,37 @@ func _spawn_row(z: float) -> void:
 	if can_col >= 0:
 		_place_can(row, Tuning.column_center(can_col))
 
-## Countryside row: place kit things (a temporary random mix until the pattern generator takes over).
+## Countryside row: the next row of the current pattern (a new pattern is chosen when one has been played out).
+## The row only carries things (cans, clouds, its kit things) and says which columns are free.
+var _pat: Dictionary = {}
+var _pat_row := 0
+var _pat_mirror := false
+var _pat_last := ""
+var pattern_name := ""              # the pattern being played (the ?tune panel shows it)
+var _carriers: Array = [null, null, null, null, null, null, null, null]   # the current pattern's rows (reused)
+var _hay_fill: Array[bool] = []
+
 func _spawn_kit_row(z: float) -> void:
+	if _pat.is_empty() or _pat_row >= int(_pat["rows"]):
+		_pat = _choose_pattern()
+		_pat_row = 0
+		_pat_mirror = randf() < 0.5
+		_pat_last = _pat["name"]
+		pattern_name = _pat["name"]
+		_hay_fill.clear()
+		var hay_p := _hay_probability()
+		for h in (_pat.get("hay", []) as Array):
+			_hay_fill.append(randf() < hay_p)
 	var row := _acquire_row()
 	row.position = Vector3(0.0, 0.0, z)
 	row.visible = true
 	row.stripe.scale = Vector3(Tuning.ortho_size * 2.0, 0.1, 0.4)
+	_carriers[_pat_row] = row
+	Patterns.realize(kit, _pat, _pat_mirror, _carriers, _hay_fill, _pat_row)
 	var open: Array[bool] = []
 	for c in Tuning.column_count:
 		open.append(true)
-	_kit_generate(row, open)
+	_kit_open_flags(row, open)
 	for c in open.size():
 		row.open.append(open[c])
 	_safe_col = _pick_safe_col(open, _safe_col)
@@ -600,42 +624,96 @@ func _spawn_kit_row(z: float) -> void:
 	_pending_open = open.duplicate()
 	_rows.append(row)
 	hazards.on_row_spawned(z)
+	if not DebugFlags.off("clouds") and run_time >= Tuning.cloud_start_time:
+		_keep_row_fair(row)
 	_spawn_clouds_for_row(z)
 	for c in mini(open.size(), row.cloud_cov.size()):
 		row.cloud_cov[c] = open[c] and _covered(z, Tuning.column_center(c))
-	var can_col := _choose_can_column(open, open, _safe_col, row.cloud_cov)
-	if can_col >= 0:
-		_place_can(row, Tuning.column_center(can_col))
+	# a can in one of the pattern's can slots (an extra chance under cloud)
+	var slots := Patterns.can_slots(_pat, _pat_row, _pat_mirror)
+	if not slots.is_empty():
+		var x: float = slots.pick_random()
+		var chance := _can_probability()
+		if _covered(z, x):
+			chance = maxf(chance, Tuning.fuel_can_under_cloud_chance)
+		if randf() < chance:
+			_place_can(row, x)
+	_pat_row += 1
 
-var _kit_rows := 0
-func _kit_generate(row: Row, open: Array[bool]) -> void:
-	_kit_rows += 1
-	if _kit_rows % 2 == 0:
-		return
-	var col := randi() % Tuning.column_count
-	var x := Tuning.column_center(col)
-	var roll := randi() % 9
-	match roll:
-		0: _kit_put(Kit.BARN, row, x, 0.0, 1.6, 0.0, open, col, 1)
-		1: _kit_put(Kit.SILO, row, x, 0.0, 0.0, 0.0, open, col, 0)
-		2: _kit_put(Kit.WINDMILL, row, x, 0.0, 0.0, 0.0, open, col, 1, 0.0, 0.0, randf() * TAU, 1.0 if randf() < 0.5 else -1.0)
-		3:
-			for i in 3:
-				kit.spawn(Kit.CROW, row, Tuning.column_center(randi() % 5), 0.0, (i - 1) * 0.9, i * 0.5, 0.0, 0.0, 0.0, 1.0, i * 0.15)
-		4: _kit_put(Kit.BALLOON, row, x, 0.0, 0.0, 0.0, open, col, 0, Tuning.balloon_amp, Tuning.balloon_rate, randf() * TAU)
-		5:
-			var gx := Tuning.column_center(clampi(col, 1, 3))
-			kit.spawn(Kit.POWERLINE, row, -5.0, 0.0, gx - 1.2)
-			kit.spawn(Kit.POWERLINE, row, gx + 1.2, 0.0, 5.0)
-		6: kit.spawn(Kit.DUSTER, row, 0.0, 3.0 * (randf() - 0.5), 0.0, 0.0, 0.0, 0.0, 0.0, 1.0 if randf() < 0.5 else -1.0)
-		7: _kit_put(Kit.KITE, row, x, 0.0, 0.0, 0.0, open, col, 0, Tuning.kite_amp, Tuning.kite_rate, randf() * TAU)
-		8: _kit_put(Kit.HAY, row, x, 0.0, 0.0, 0.0, open, col, 0)
+func _can_probability() -> float:
+	return clampf(Tuning.pattern_can_chance * wave_can_mult, 0.0, 1.0)
 
-func _kit_put(kind: int, row: Row, x: float, dz: float, a: float, b: float, open: Array[bool], col: int, wide: int, amp: float = 0.0, rate: float = 0.0, phase: float = 0.0, dir: float = 1.0) -> void:
-	kit.spawn(kind, row, x, dz, a, b, amp, rate, phase, dir)
-	for c in range(col - wide, col + wide + 1):
-		if c >= 0 and c < open.size():
-			open[c] = false
+func _hay_probability() -> float:
+	if not Tuning.crates_enabled or DebugFlags.off("crates"):
+		return 0.0
+	if crate_shower_rows > 0:
+		crate_shower_rows -= 1
+		return 1.0
+	if run_time < Tuning.crate_start_time:
+		return 0.0
+	return clampf(Tuning.crate_chance * Tuning.hay_slot_factor * wave_hay_mult, 0.0, 1.0)
+
+var wave_can_mult := 1.0            # the intensity wave scales how many cans / hay bales the slots give
+var wave_hay_mult := 1.0
+
+## Which columns this row's things block (for Lucky Whiskers cans, cloud fairness and the safe path).
+func _kit_open_flags(row: Row, open: Array[bool]) -> void:
+	for e in kit.active:
+		if e.row != row:
+			continue
+		var lo := 0.0
+		var hi := 0.0
+		match e.kind:
+			Kit.BARN, Kit.SILO, Kit.BALLOON, Kit.KITE, Kit.HAY:
+				lo = e.px - e.reach.x - 0.8
+				hi = e.px + e.reach.x + 0.8
+			Kit.WINDMILL:
+				lo = e.px - 1.6
+				hi = e.px + 1.6
+			Kit.POWERLINE:
+				lo = e.x0 - 0.3
+				hi = e.a + 0.3
+			_:
+				continue
+		for c in open.size():
+			var cx := Tuning.column_center(c)
+			if cx > lo and cx < hi:
+				open[c] = false
+	if not open.has(true):   # (never a fully blocked row on paper: the widest gap stays "open")
+		open[open.size() / 2] = true
+
+## The next pattern: difficulty follows the run (a gentle rise; the intensity waves steer it), only patterns built for
+## the current scroll speed, never the same one twice in a row. ?pattern=<name> repeats one pattern.
+func _choose_pattern() -> Dictionary:
+	if DebugFlags.pattern != "":
+		var forced := Patterns.find(DebugFlags.pattern)
+		if not forced.is_empty():
+			return forced
+	var target := clampf(1.0 + run_time / 40.0, 1.0, 5.0)
+	var pool: Array[Dictionary] = []
+	var weights: Array[float] = []
+	for p in Patterns.all():
+		if p["name"] == _pat_last:
+			continue
+		if scroll_speed < float(p["speed"][0]) - 1.0 or scroll_speed > float(p["speed"][1]):
+			continue
+		pool.append(p)
+		weights.append(maxf(0.1, 2.0 - absf(float(p["diff"]) - target)))
+	if pool.is_empty():   # faster than anything built for: the patterns that hold up best at speed
+		var best: Dictionary = {}
+		for p in Patterns.all():
+			if best.is_empty() or float(p["speed"][1]) > float(best["speed"][1]):
+				best = p
+		return best
+	var total := 0.0
+	for w in weights:
+		total += w
+	var roll := randf() * total
+	for i in pool.size():
+		roll -= weights[i]
+		if roll <= 0.0:
+			return pool[i]
+	return pool[-1]
 
 func _place_can(row: Row, x: float) -> void:
 	row.has_can = true

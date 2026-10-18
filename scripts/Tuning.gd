@@ -125,6 +125,10 @@ var balloon_amp := 2.2
 var balloon_rate := 0.55
 var kite_amp := 0.9
 var kite_rate := 1.6
+## Patterns: chance that a can slot of a pattern row gets a can, and the factor that turns crate_chance into the chance of a
+## hay bale in each hay slot (0.10 x 4 = 0.4).
+var pattern_can_chance := 0.3
+var hay_slot_factor := 4.0
 
 # ---------- Maps ----------
 ## Four maps, each a separate run chosen on the start screen. Fields: id, name, unlock_from (the map whose
