@@ -180,6 +180,13 @@ func bonus_cap_now() -> float:
 ## A row counts as a near miss if the plane passed it with less than this gap (units) between the
 ## plane's hit box and the closest obstacle edge (0 = touching = crash).
 var near_miss_distance := 0.30
+## A close call with this much clearance or less is a "Whisker close": the step it earns is doubled
+## (a +0.3 step becomes +0.6; the streak still advances one step, and decay removes the doubled amount).
+## It gets its own bigger popup (colour and size below) and a gold burst.
+var whisker_close_distance := 0.10
+var whisker_text := "Whisker close!"
+var whisker_color := Color(1.0, 0.3, 0.85)
+var whisker_size := 124
 ## The points bonus grows with the streak of close calls. Each close call in the streak adds the next
 ## entry of bonus_steps, and every close call after the table runs out adds bonus_step_tail:
 ##   bonus = 1 + (sum of the steps earned), never above bonus_cap.
@@ -295,6 +302,14 @@ func streak_bonus(n: int) -> float:
 	for i in maxi(n, 0):
 		total += bonus_steps[i] if i < bonus_steps.size() else bonus_step_tail
 	return clampf(total, 1.0, maxf(bonus_cap_now(), 1.0))
+
+## The bonus step the (index+1)th close call of a streak earns (before any Whisker doubling).
+func step_for(index: int) -> float:
+	return bonus_steps[index] if index < bonus_steps.size() else bonus_step_tail
+
+## The bonus for a sum of earned steps, clamped to the cap.
+func bonus_for_sum(total: float) -> float:
+	return clampf(1.0 + total, 1.0, maxf(bonus_cap_now(), 1.0))
 
 ## The smallest streak that reaches the cap (the streak is never counted above it, so the bonus
 ## starts easing down as soon as the hold time ends).

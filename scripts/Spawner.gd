@@ -179,7 +179,8 @@ func hits(p: Vector2, caps: PackedFloat32Array) -> bool:
 ## Call every frame with the plane position (x, z) and its shapes. Each row remembers the
 ## closest approach (smallest gap between a plane shape and an obstacle) while it is near the
 ## plane; once the row has fully passed it returns a near-miss event if that closest approach was
-## under near_miss_distance: {"side": -1/+1 (which side the obstacle was), "node", "outline"}.
+## under near_miss_distance: {"side": -1/+1 (which side the obstacle was), "node", "outline",
+## "clearance" (the closest gap), "whisker" (true if within whisker_close_distance)}.
 func update_near_misses(p: Vector2, caps: PackedFloat32Array) -> Array[Dictionary]:
 	var events: Array[Dictionary] = []
 	var half := _obstacle_half()
@@ -203,7 +204,8 @@ func update_near_misses(p: Vector2, caps: PackedFloat32Array) -> Array[Dictionar
 			r.passed = true
 			if r.entered and r.min_idx >= 0 and r.min_clear < Tuning.near_miss_distance:
 				var side := 1 if r.xs[r.min_idx] > p.x else -1
-				events.append({"side": side, "node": r.obs[r.min_idx], "outline": r.outlines[r.min_idx]})
+				events.append({"side": side, "node": r.obs[r.min_idx], "outline": r.outlines[r.min_idx],
+						"clearance": r.min_clear, "whisker": r.min_clear <= Tuning.whisker_close_distance})
 	return events
 
 ## Flash one obstacle's outline white for near_miss_flash_time seconds: just uniform changes on

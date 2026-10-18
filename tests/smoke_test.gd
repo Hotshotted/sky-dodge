@@ -19,6 +19,7 @@ extends SceneTree
 ##       generated rows, checked every step), fade in late, sit above obstacles/cans but below the plane,
 ##       hide cans more often, ?nofx=clouds disables them, restart clears them, nothing new is allocated
 ##   2i. bonus: step-table streak bonus, cap (gold glowing label), steps coming off one by one, number-only text, reset on crash, huge caps
+##   2k. Whisker close: doubled step, popup/burst, decay, cap, detection by clearance
 ##   2j. progression: save file round trip (versioned), coin award, Hangar purchases apply, ?tune save buttons
 ##   3. ?debug flags parse, and switching an effect off really skips it
 ##   4. plane collision capsules: span matches the wings, rounded corners graze past a cube corner
@@ -155,6 +156,11 @@ func _initialize() -> void:
 	check(blobs.size() == main.spawner.CLOUD_POOL * main.spawner.PUFFS_PER_CLOUD and count_visible(blobs) == blobs.size(),
 			"every pooled cloud puff (%d) is drawn during the pre-warm" % blobs.size())
 	check(count_visible(main.fx._pickup_emitters) == main.fx.PICKUP_EMITTERS, "both fuel-pickup emitters are drawing during the pre-warm")
+	check(count_visible(main.fx._whisker_emitters) == main.fx.WHISKER_EMITTERS, "both Whisker-close burst emitters are drawing during the pre-warm")
+	var whisker_popup_drawn := false
+	for pl_ in main.hud._pop_labels:
+		whisker_popup_drawn = whisker_popup_drawn or (pl_.visible and pl_.text.begins_with(tuning.whisker_text) and pl_.get_theme_font_size("font_size") == tuning.whisker_size)
+	check(whisker_popup_drawn, "the Whisker close popup is drawn at its own size during the pre-warm")
 	var waited := 0.0
 	while main._warming and waited < 12.0:
 		await real_wait(0.1)
@@ -174,7 +180,7 @@ func _initialize() -> void:
 	check(count_visible(cans) == cans_in_play and count_visible(main.fx._pickup_emitters) == 0, "no pre-warm cans or pickup puffs left behind")
 	check(count_visible(blobs) == 0, "no pre-warm cloud puffs left behind (no clouds in the first %.0f s)" % tuning.cloud_start_time)
 	check(count_visible(cubes) == in_play and count_visible(main.fx._streak_nodes) == 0 and main.trail._pts.is_empty()
-			and count_visible(main.fx._emitters) == 0, "no pre-warm effects left behind (only the live game's own cubes are showing: %d)" % in_play)
+			and count_visible(main.fx._emitters) == 0 and count_visible(main.fx._whisker_emitters) == 0, "no pre-warm effects left behind (only the live game's own cubes are showing: %d)" % in_play)
 	check(main.screen == main.SCREEN_MENU and main.hud._menu.visible and not main.alive and not main.hud._hangar.visible,
 			"after start-up the start screen is showing and the world waits")
 	main.hud.play_pressed.emit()   # PLAY
@@ -280,7 +286,7 @@ func _initialize() -> void:
 		defaults[e[0]] = tuning.get(e[0])
 	for t in panel.TOGGLES:
 		defaults[t[0]] = tuning.get(t[0])
-	check(panel.ENTRIES.size() == 18 and panel._sliders.size() == 18 and panel._toggles.size() == 1, "18 sliders and 1 on/off switch for the tuned values")
+	check(panel.ENTRIES.size() == 19 and panel._sliders.size() == 19 and panel._toggles.size() == 1, "19 sliders and 1 on/off switch for the tuned values")
 	var all_match := true
 	for e in panel.ENTRIES:
 		if not is_equal_approx(panel._sliders[e[0]].value, tuning.get(e[0])):
@@ -911,6 +917,91 @@ func _initialize() -> void:
 	DebugFlags.parse([])
 	sp._release_row(brow)
 	tuning.bonus_cap = bsaved["cap"]
+
+	print("2k. Whisker close: doubled step")
+	var wsaved := {"cap": tuning.bonus_cap, "whisker": tuning.whisker_close_distance}
+	tuning.bonus_cap = 10.0
+	main.restart()
+	main.set_process(false)
+	DebugFlags.parse([])
+	var wrow = sp._rows_make_for_test(-5.0, [1.0])
+	var rev := {"side": 1, "node": wrow.obs[0], "outline": wrow.outlines[0], "whisker": false}
+	var wev := {"side": 1, "node": wrow.obs[0], "outline": wrow.outlines[0], "whisker": true}
+	main._reset_bonus()
+	main._on_near_miss(rev)
+	check(is_equal_approx(main.bonus, 1.5) and main.streak == 1, "a regular first close call earns +0.5 (x1.5)")
+	var reg_label: Label = main.hud._pop_labels[(main.hud._next_pop + main.hud.POPUP_POOL - 1) % main.hud.POPUP_POOL]
+	check(reg_label.text == "x1.5" and reg_label.get_theme_font_size("font_size") < tuning.whisker_size, "a regular close call's popup is only the number (\"%s\")" % reg_label.text)
+	main._reset_bonus()
+	main._on_near_miss(wev)
+	check(is_equal_approx(main.bonus, 2.0) and main.streak == 1, "a Whisker close as the first call doubles the +0.5 step: x2.0, still one step in the streak")
+	var w_label: Label = main.hud._pop_labels[(main.hud._next_pop + main.hud.POPUP_POOL - 1) % main.hud.POPUP_POOL]
+	check(w_label.text == "Whisker close!\nx2.0" and w_label.get_theme_font_size("font_size") == tuning.whisker_size
+			and w_label.get_theme_color("font_color").is_equal_approx(tuning.whisker_color) and tuning.whisker_size > tuning.near_miss_sizes.max()
+			and not tuning.whisker_color.is_equal_approx(tuning.near_miss_colors[-1]),
+			"its popup says \"Whisker close!\" with the number, bigger than every other tier and in its own colour (\"%s\")" % w_label.text.replace("\n", " "))
+	check(count_visible(main.fx._whisker_emitters) >= 1, "...with its own burst")
+	main._reset_bonus()
+	main._on_near_miss(rev)   # +0.5
+	main._on_near_miss(rev)   # +0.4
+	main._on_near_miss(wev)   # next step is 0.3 -> +0.6
+	check(is_equal_approx(main.bonus, 1.0 + 0.5 + 0.4 + 0.6) and main.streak == 3, "regular, regular, Whisker: +0.5 +0.4 +0.6 = x2.5 after three steps (a +0.3 step became +0.6)")
+	main._on_near_miss(rev)   # step 4 is 0.2
+	check(is_equal_approx(main.bonus, 2.7) and main.streak == 4, "the streak carries on with the next table step (x2.7)")
+	main._bonus_timer = 0.0
+	main._decay_acc = 1.0
+	main._decay_bonus(0.0)
+	check(is_equal_approx(main.bonus, 2.5), "decay removes the newest step (x2.7 -> x2.5)")
+	main._decay_acc = 1.0
+	main._decay_bonus(0.0)
+	check(is_equal_approx(main.bonus, 1.9) and main.streak == 2, "...then the Whisker step removes its doubled amount (x2.5 -> x1.9)")
+	# the cap still applies
+	tuning.bonus_cap = 3.0
+	main._reset_bonus()
+	for i in 6:
+		main._on_near_miss(wev)
+	check(is_equal_approx(main.bonus, 3.0) and main._steps.size() == 3 and is_equal_approx(main._steps_sum(), 2.0), "the cap still applies: Whisker steps +1.0 +0.8 +0.2 (clipped) stop at x3.0 (%s)" % str(main._steps))
+	main._bonus_timer = 0.0
+	main._decay_acc = 1.0
+	main._decay_bonus(0.0)
+	check(is_equal_approx(main.bonus, 2.8), "decay from the cap removes the clipped step's real amount (x3.0 -> x2.8)")
+	# detection: the clearance decides
+	var wcaps: PackedFloat32Array = pl.hit_capsules()
+	var wp := Vector2(0.0, 0.0)
+	var wtip: float = pl.collision_half_span()
+	var whalf: Vector2 = sp._obstacle_half()
+	var res := {}
+	for off in [0.04, 0.2, 0.5]:
+		sp.reset()
+		var drow = sp._rows_make_for_test(-4.0, [wtip + whalf.x + off])
+		var evs: Array[Dictionary] = []
+		var zz := -4.0
+		while zz < 6.0:
+			drow.position.z = zz
+			evs.append_array(sp.update_near_misses(wp, wcaps))
+			zz += 0.1
+		res[off] = evs
+	check(res[0.04].size() == 1 and res[0.04][0]["whisker"] == true and res[0.04][0]["clearance"] <= tuning.whisker_close_distance,
+			"a pass within whisker_close_distance (0.10) is a Whisker close (clearance %.3f)" % (res[0.04][0]["clearance"] if res[0.04].size() > 0 else -1.0))
+	check(res[0.2].size() == 1 and res[0.2][0]["whisker"] == false and res[0.2][0]["clearance"] < tuning.near_miss_distance,
+			"a pass at ~0.2 is a regular close call, not a Whisker")
+	check(res[0.5].is_empty(), "a pass at ~0.5 is neither")
+	tuning.whisker_close_distance = 0.0
+	sp.reset()
+	var zrow = sp._rows_make_for_test(-4.0, [wtip + whalf.x + 0.04])
+	var zevs: Array[Dictionary] = []
+	var z2 := -4.0
+	while z2 < 6.0:
+		zrow.position.z = z2
+		zevs.append_array(sp.update_near_misses(wp, wcaps))
+		z2 += 0.1
+	check(zevs.size() == 1 and zevs[0]["whisker"] == false, "whisker_close_distance is a live Tuning value (0 turns Whisker closes off)")
+	main.fx.clear()
+	main.restart()
+	main.set_process(false)
+	sp._release_row(wrow)
+	tuning.bonus_cap = wsaved["cap"]
+	tuning.whisker_close_distance = wsaved["whisker"]
 
 	print("2j. progression: save file, coins, Hangar upgrades")
 	var tsave := root.get_node("Save")

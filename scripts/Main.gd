@@ -25,6 +25,7 @@ var run_cans := 0       # fuel cans collected this run (they pay coins at the en
 var last_earned := 0    # coins the last run paid
 var last_was_best := false
 var score := 0.0        # accumulates distance flown x bonus
+var _steps := PackedFloat64Array()   # the bonus each close call of the streak earned (doubled for a Whisker close), oldest first
 var streak := 0     # close calls in the current streak (steps come off one at a time after the hold time)
 var bonus := 1.0    # points bonus from the streak, 1.0 = none
 var fuel := 0.0         # drains steadily; fuel cans refill it; empty ends the run
@@ -106,6 +107,8 @@ func _prewarm() -> void:
 			if not DebugFlags.off("sparks"):
 				fx.sparks(spot + Vector3(-1.5, 0, 0), -1)  # round-robin: warms both emitters
 				fx.sparks(spot + Vector3(1.5, 0, 0), 1)
+				fx.whisker(spot + Vector3(-0.6, 0, 1.2))   # round-robin: warms both whisker bursts
+				fx.whisker(spot + Vector3(0.6, 0, 1.2))
 			if not DebugFlags.off("popup"):
 				hud.prewarm_popups()
 			if not DebugFlags.off("pickup"):
@@ -235,8 +238,8 @@ func _on_pickup(pos: Vector3) -> void:
 ## which one causes a hitch.
 func _on_near_miss(ev: Dictionary) -> void:
 	var t0 := Time.get_ticks_usec()
-	streak = mini(streak + 1, Tuning.streak_at_cap())
-	bonus = Tuning.streak_bonus(streak)
+	var whisker: bool = ev.get("whisker", false)
+	_add_step(whisker)
 	_decay_acc = 1.0   # when the hold time ends the first step comes off at once
 	_bonus_timer = Tuning.bonus_hold_time
 	hud.set_bonus(bonus, hud.BONUS_NONE if DebugFlags.off("punch") else hud.BONUS_PUNCH)
@@ -247,13 +250,18 @@ func _on_near_miss(ev: Dictionary) -> void:
 		fx.streaks(player.position)
 	if not DebugFlags.off("flash"):
 		spawner.flash_obstacle(ev["outline"])
+	if whisker and not DebugFlags.off("sparks"):
+		fx.whisker(player.position + Vector3(side * 1.05, 0.0, 0.1))   # the special burst
 	if not DebugFlags.off("popup"):
 		var i := Tuning.popup_tier(bonus)
 		var pos := camera.unproject_position(player.position + Vector3(0, 0, -2.0))
-		hud.popup(Tuning.popup_text(bonus), Tuning.near_miss_sizes[mini(i, Tuning.near_miss_sizes.size() - 1)],
-				Tuning.near_miss_colors[mini(i, Tuning.near_miss_colors.size() - 1)], pos)
+		if whisker:   # "Whisker close!" + the number: bigger, in its own colour
+			hud.popup(Tuning.whisker_text + "\n" + Tuning.popup_text(bonus), Tuning.whisker_size, Tuning.whisker_color, pos)
+		else:         # regular close call: just the number
+			hud.popup(Tuning.popup_text(bonus), Tuning.near_miss_sizes[mini(i, Tuning.near_miss_sizes.size() - 1)],
+					Tuning.near_miss_colors[mini(i, Tuning.near_miss_colors.size() - 1)], pos)
 	if not DebugFlags.off("haptic"):
-		Input.vibrate_handheld(Tuning.haptic_ms)  # no-op where unsupported
+		Input.vibrate_handheld(Tuning.haptic_ms * (2 if whisker else 1))  # no-op where unsupported
 	hud.note_near_miss((Time.get_ticks_usec() - t0) / 1000.0)
 
 ## A tuning-panel slider changed (or Reset ran): apply anything that needs more than reading the value.
@@ -271,16 +279,35 @@ func _decay_bonus(delta: float) -> void:
 		return
 	_decay_acc += Tuning.bonus_decay_rate * delta
 	var dropped := false
-	while _decay_acc >= 1.0 and streak > 0:
+	while _decay_acc >= 1.0 and not _steps.is_empty():
 		_decay_acc -= 1.0
-		streak -= 1
+		_steps.remove_at(_steps.size() - 1)   # the newest step goes first, with the amount it earned
 		dropped = true
 	if dropped:
-		bonus = Tuning.streak_bonus(streak)
+		_refresh_bonus()
 		hud.set_bonus(bonus, hud.BONUS_SHRINK)   # shrinks each step: the bonus fades if you play safe
+
+## A close call advances the streak by one step: the next table step, doubled for a Whisker close,
+## and never more than the room left under the cap (so every step in the streak is worth what it shows).
+func _add_step(whisker: bool) -> void:
+	var room := Tuning.bonus_cap_now() - (1.0 + _steps_sum())
+	if room > 0.0005:
+		_steps.append(minf(Tuning.step_for(_steps.size()) * (2.0 if whisker else 1.0), room))
+	_refresh_bonus()
+
+func _steps_sum() -> float:
+	var total := 0.0
+	for v in _steps:
+		total += v
+	return total
+
+func _refresh_bonus() -> void:
+	streak = _steps.size()
+	bonus = Tuning.bonus_for_sum(_steps_sum())
 
 ## A crash, the end of a run or a restart: no streak, no bonus.
 func _reset_bonus() -> void:
+	_steps.clear()
 	streak = 0
 	bonus = 1.0
 	_bonus_timer = 0.0

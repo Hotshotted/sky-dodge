@@ -19,6 +19,9 @@ var _streak_mats: Array[StandardMaterial3D] = []
 var _streak_z0 := PackedFloat32Array()
 var _streak_born := PackedInt64Array()   # real ms when started; 0 = idle
 var _next_streak := 0
+const WHISKER_EMITTERS := 2
+var _whisker_emitters: Array[CPUParticles3D] = []   # the gold burst of a Whisker close (pooled like the rest)
+var _next_whisker := 0
 
 func _ready() -> void:
 	# Spark emitters: configured once, restarted for each burst.
@@ -51,6 +54,38 @@ func _ready() -> void:
 		p.emitting = false
 		add_child(p)
 		_emitters.append(p)
+	# Whisker-close burst: a bigger, gold-and-pink ring of sparks, all around the plane.
+	var w_quad := QuadMesh.new()
+	w_quad.size = Vector2(0.36, 0.36)
+	var w_mat := StandardMaterial3D.new()
+	w_mat.shading_mode = BaseMaterial3D.SHADING_MODE_UNSHADED
+	w_mat.billboard_mode = BaseMaterial3D.BILLBOARD_ENABLED
+	w_mat.vertex_color_use_as_albedo = true
+	w_mat.transparency = BaseMaterial3D.TRANSPARENCY_ALPHA
+	w_quad.material = w_mat
+	var w_ramp := Gradient.new()   # white -> gold -> pink -> transparent
+	w_ramp.colors = PackedColorArray([Color(1, 1, 1, 1), Color(1, 0.85, 0.2, 1), Color(1, 0.3, 0.85, 0.7), Color(1, 0.3, 0.85, 0)])
+	w_ramp.offsets = PackedFloat32Array([0.0, 0.3, 0.7, 1.0])
+	for i in WHISKER_EMITTERS:
+		var p := CPUParticles3D.new()
+		p.mesh = w_quad
+		p.color_ramp = w_ramp
+		p.amount = 30
+		p.lifetime = 0.6
+		p.one_shot = true
+		p.explosiveness = 1.0
+		p.local_coords = false
+		p.direction = Vector3(0, 1, 0)
+		p.spread = 180.0
+		p.initial_velocity_min = 6.0
+		p.initial_velocity_max = 16.0
+		p.gravity = Vector3.ZERO
+		p.scale_amount_min = 0.6
+		p.scale_amount_max = 1.4
+		p.emitting = false
+		p.visible = false
+		add_child(p)
+		_whisker_emitters.append(p)
 	# Fuel pickup bursts: green puffs rising from the can, same kind of emitter as the sparks.
 	var pop_quad := QuadMesh.new()
 	pop_quad.size = Vector2(0.34, 0.34)
@@ -116,6 +151,15 @@ func sparks(pos: Vector3, side: int) -> void:
 	p.restart()
 	p.emitting = true
 
+## The special burst of a Whisker close, all around `pos`.
+func whisker(pos: Vector3) -> void:
+	var p := _whisker_emitters[_next_whisker]
+	_next_whisker = (_next_whisker + 1) % WHISKER_EMITTERS
+	p.global_position = pos
+	p.visible = true
+	p.restart()
+	p.emitting = true
+
 ## Green burst where a fuel can was picked up (pooled emitters; nothing is allocated).
 func pickup(pos: Vector3) -> void:
 	var p := _pickup_emitters[_next_pickup]
@@ -171,6 +215,11 @@ func clear() -> void:
 		p.emitting = false
 		p.visible = false  # emitting=false alone leaves already-spawned particles on screen
 	for p in _pickup_emitters:
+		p.emitting = false
+		p.restart()
+		p.emitting = false
+		p.visible = false
+	for p in _whisker_emitters:
 		p.emitting = false
 		p.restart()
 		p.emitting = false

@@ -474,9 +474,9 @@ func begin_prewarm(with_popups: bool) -> void:
 	if with_popups:
 		prewarm_popups()
 		# Also draw each tier text at each size, so no (text, size) pair is first seen mid-game.
-		for t in Tuning.near_miss_sizes.size():
-			var l := _make_label(Tuning.near_miss_sizes[mini(t, Tuning.near_miss_sizes.size() - 1)])
-			l.text = Tuning.popup_text(2.0 + t) + "\n0123456789.x"   # (digits too: every bonus value shows up as popup text)
+		for t in Tuning.near_miss_sizes.size() + 1:   # (the last one is the Whisker close popup)
+			var l := _make_label(Tuning.near_miss_sizes[t] if t < Tuning.near_miss_sizes.size() else Tuning.whisker_size)
+			l.text = Tuning.popup_text(2.0 + t) + "\n0123456789.x" if t < Tuning.near_miss_sizes.size() else Tuning.whisker_text + "\n" + Tuning.popup_text(2.0 + t)   # (digits too: every bonus value shows up as popup text)
 			l.position = Vector2(20.0, 120.0 + 90.0 * t)
 			l.set_meta("prewarm", true)
 	# Both end screens' glyphs, so neither is first drawn when a run ends.
@@ -510,9 +510,12 @@ func begin_prewarm(with_popups: bool) -> void:
 func prewarm_popups() -> void:
 	var vp := get_viewport().get_visible_rect().size
 	for i in POPUP_POOL:
-		var t := i % Tuning.near_miss_sizes.size()
-		popup(Tuning.popup_text(2.0 + t), Tuning.near_miss_sizes[mini(t, Tuning.near_miss_sizes.size() - 1)],
-				Tuning.near_miss_colors[mini(t, Tuning.near_miss_colors.size() - 1)], Vector2(vp.x * 0.5, vp.y * (0.25 + 0.1 * i)))
+		var t := i % (Tuning.near_miss_sizes.size() + 1)   # every tier, then the Whisker close popup
+		var at := Vector2(vp.x * 0.5, vp.y * (0.25 + 0.1 * i))
+		if t >= Tuning.near_miss_sizes.size():
+			popup(Tuning.whisker_text + "\n" + Tuning.popup_text(2.0 + t), Tuning.whisker_size, Tuning.whisker_color, at)
+		else:
+			popup(Tuning.popup_text(2.0 + t), Tuning.near_miss_sizes[t], Tuning.near_miss_colors[mini(t, Tuning.near_miss_colors.size() - 1)], at)
 
 ## Back to a fresh run (restart in place): hide the crash screen and popups, zero the score.
 ## Every label stays alive; nothing is created or freed.

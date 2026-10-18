@@ -19,6 +19,7 @@ const ENTRIES := [
 	["fuel_refill", "Fuel refill (per can)", 5.0, 60.0, 1.0],
 	["fuel_can_chance", "Fuel can chance", 0.0, 1.0, 0.01],
 	["near_miss_distance", "Near-miss distance", 0.1, 1.5, 0.05],
+	["whisker_close_distance", "Whisker-close distance", 0.0, 0.3, 0.01],
 	["obstacle_scale", "Obstacle scale", 0.3, 0.9, 0.01],
 	["plane_tip_radius", "Plane tip radius", 0.05, 0.35, 0.01],
 	["bonus_cap", "Bonus cap", 1.5, 10.0, 0.1],
