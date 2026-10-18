@@ -136,6 +136,7 @@ var kit := Kit.new()               # the Countryside obstacle kit (barns, windmi
 var kit_on := false                # this run uses the kit instead of cubes (Countryside only)
 var kit_enabled := true            # (tests switch the kit off to count cubes)
 var _gull_mat := StandardMaterial3D.new()   # gulls are white (the cubes' material is swapped at spawn, both pre-built)
+var ground_mi: MeshInstance3D      # the ground plane (Main gives it the blurred countryside material)
 var _ground_mat := StandardMaterial3D.new()
 var _stripe_mat := StandardMaterial3D.new()
 var _obs_color := Color(1.0, 0.3, 0.12)
@@ -181,8 +182,10 @@ func _ready() -> void:
 	ground.mesh = gm
 	ground.scale = Vector3(60.0, 0.1, 120.0)
 	ground.position = Vector3(0, GROUND_Y - 0.1, 0)
+	ground_mi = ground
 	add_child(ground)
-	_stripe_mat.albedo_color = Color(0.3, 0.38, 0.5)
+	_stripe_mat.albedo_color = Color(1.0, 1.0, 1.0, 0.04)   # (a faint speed cue only: the countryside gives the scroll)
+	_stripe_mat.transparency = BaseMaterial3D.TRANSPARENCY_ALPHA
 	_stripe_mesh.material = _stripe_mat
 	_crate_mat.albedo_color = Tuning.crate_wood
 	_crate_mat.roughness = 1.0
@@ -226,7 +229,6 @@ func apply_map(index: int) -> void:
 	_gull_share = float(m["gull_share"])
 	_cloud_mult = float(m["cloud_mult"])
 	_ground_mat.albedo_color = m["ground"]
-	_stripe_mat.albedo_color = m["stripe"]
 	hazards.configure(float(m["gust_chance"]), float(m["lightning_interval"]))
 	kit_on = kit_enabled and map == 0 and not DebugFlags.off("kit")
 	_update_look()

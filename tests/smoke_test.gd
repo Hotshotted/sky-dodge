@@ -357,7 +357,7 @@ func _initialize() -> void:
 		defaults[e[0]] = tuning.get(e[0])
 	for t in panel.TOGGLES:
 		defaults[t[0]] = tuning.get(t[0])
-	check(panel.ENTRIES.size() == 22 and panel._sliders.size() == 22 and panel._toggles.size() == 1, "22 sliders and 1 on/off switch for the tuned values")
+	check(panel.ENTRIES.size() == 26 and panel._sliders.size() == 26 and panel._toggles.size() == 1, "26 sliders and 1 on/off switch for the tuned values")
 	var all_match := true
 	for e in panel.ENTRIES:
 		if not is_equal_approx(panel._sliders[e[0]].value, tuning.get(e[0])):
@@ -3790,7 +3790,7 @@ func _initialize() -> void:
 	main.restart()
 	main.set_process(false)
 	var wd_gw = main.ground
-	check(wd_gw._chunks.size() == wd_gw.CHUNKS and wd_gw._chunks[0].fields.size() == wd_gw.FIELD_COLS * wd_gw.FIELD_ROWS, "the ground world has %d recycled chunks of fields, roads, river, houses, cows and fences" % wd_gw.CHUNKS)
+	check(wd_gw._chunks.size() == wd_gw.CHUNKS and wd_gw._chunks[0].fields.size() == wd_gw.FIELD_COLS * wd_gw.FIELD_ROWS, "the ground world has %d recycled chunks of fields, roads, river, and houses" % wd_gw.CHUNKS)
 	var wd_no_outline := true
 	for c in wd_gw._chunks:
 		for f in c.fields:
@@ -3816,7 +3816,7 @@ func _initialize() -> void:
 	var shadow_high_scale: float = wd_gw.shadow.scale.x
 	main.player.position = Vector3(1.5, -1.5, 4.0)
 	wd_gw.update_shadow(main.player.position, true)
-	check(wd_gw.shadow.visible and absf(wd_gw.shadow.position.x - 1.5) < 0.001 and absf(wd_gw.shadow.position.z - 4.0) < 0.001 and wd_gw.shadow.scale.x < shadow_high_scale, "the plane casts a soft shadow that follows it and tightens when it is low")
+	check(wd_gw.shadow.visible and absf(wd_gw.shadow.position.x - 1.5) < 0.001 and absf(wd_gw.shadow.position.z - (4.0 + root.get_node("/root/Tuning").shadow_offset * 0.6)) < 0.001 and wd_gw.shadow.scale.x < shadow_high_scale, "the plane casts a soft shadow that follows it and tightens when it is low")
 	main.player.position = Vector3(0, 1.2, 4.0)
 	# takeoff
 	DebugFlags.god = true   # (nothing in the way matters here)

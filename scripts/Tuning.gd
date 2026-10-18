@@ -182,6 +182,19 @@ var tod_sun: Array[Color] = [Color(1.0, 0.9, 0.75), Color(1.0, 1.0, 1.0), Color(
 var tod_sun_energy: Array[float] = [0.9, 1.0, 0.85, 0.45]
 var tod_ambient_energy: Array[float] = [0.45, 0.45, 0.4, 0.3]
 
+# ---------- Background readability ----------
+## The countryside is drawn small (1/ground_blur_div of the screen size) and blurred, muted toward the haze, so it reads
+## as far away and out of focus; the obstacles in front keep their crisp black outlines.
+var ground_blur_div := 4
+var ground_blur_radius := 1.6          # extra blur taps, in texels of the small picture
+var ground_haze := 0.62                # how far the ground colours are pulled toward the haze (1 = all haze)
+var ground_saturation := 0.5           # colour strength of the ground (1 = natural)
+## The soft shadow under each obstacle, pickup and the plane: strength, how far it falls toward the bottom of the screen,
+## and how much bigger than the thing it is.
+var shadow_alpha := 0.34
+var shadow_offset := 0.45
+var shadow_grow := 1.3
+
 # ---------- Speed cues ----------
 ## Every source of a speed change shows itself on screen. The audit (see the smoke test): Tailwind (perk), the BREATHER
 ## steps of the Countryside, the continuous ramp of the other maps (cued in tiers of speed_step), and each map's speed

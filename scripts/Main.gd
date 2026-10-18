@@ -7,6 +7,7 @@ extends Node3D
 @onready var camera: Camera3D = $Camera3D
 @onready var sun: DirectionalLight3D = $Sun
 @onready var hud: CanvasLayer = $Hud
+var shadows := ShadowBlobs.new()   # soft shadows under obstacles and cans
 var ground := GroundWorld.new()   # the countryside far below (parallax), the plane's shadow, Rusty's airstrip
 var goals := Goals.new()        # gates for your best, the next medal and the next map unlock
 var crash_fx := CrashFx.new()   # the crash sequence's smoke, debris and Whiskers
@@ -55,6 +56,7 @@ var prof := {}               # profiling (DebugFlags.profile only): part name ->
 var _takeoff_t := 99.0         # seconds since the run began (the plane lifts off from the airstrip over takeoff_seconds)
 var tod_override := -1.0      # ?tune: hold the time of day at this value (0..1); -1 = follow the run
 var _tod_applied := -1.0
+var _tod_dark := 0.0
 var _base_sky := Color(0.2, 0.26, 0.34)
 var _base_ambient := Color(0.75, 0.78, 0.9)
 var _mood_until_ms := 0
@@ -99,6 +101,8 @@ func _ready() -> void:
 		for d in list:
 			_callout_ms[d["id"]] = -100000
 	add_child(ground)
+	spawner.ground_mi.material_override = ground.backdrop_mat
+	add_child(shadows)
 	add_child(crash_fx)
 	add_child(goals)
 	goals.reached.connect(_on_goal_reached)
@@ -170,6 +174,7 @@ func _prewarm() -> void:
 	hud.begin_prewarm(not DebugFlags.off("popup"))
 	goals.prewarm_show(1.0)
 	ground.prewarm_show()
+	shadows.prewarm_show()
 	player.prewarm_items(true)   # every perk and gear mark on the plane
 	sfx.prewarm_start()   # every sound decoded once, silently
 	crash_fx.prewarm_show(Vector3(0.0, 1.2, 1.0))   # smoke, debris, Whiskers and his parachute
@@ -221,6 +226,7 @@ func _prewarm() -> void:
 	fx.clear()
 	goals.hide_all()
 	ground.prewarm_hide()
+	shadows.hide_all()
 	player.prewarm_items(false)
 	_refresh_plane_items()
 	sfx.prewarm_end()
@@ -407,6 +413,8 @@ func _process(raw_delta: float) -> void:
 	_update_plane_zone()
 	ground.update_shadow(player.position, not _warming and (screen == SCREEN_PLAY or screen == SCREEN_OVER))
 	_apply_time_of_day(_current_tod())
+	if _warming or not alive or screen != SCREEN_PLAY:
+		shadows.update_from(spawner, _tod_dark, not _warming and screen == SCREEN_OVER)
 	if not _warming and not alive and _crash_t >= 0.0 and screen == SCREEN_OVER:
 		_update_crash(_frame_delta(raw_delta))
 	if _warming or not alive:
@@ -459,6 +467,7 @@ func _process(raw_delta: float) -> void:
 	_pf("spawner.advance (rows, clouds)", t_pf)
 	t_pf = Time.get_ticks_usec()
 	spawner.update_hazards(delta)
+	shadows.update_from(spawner, _tod_dark, true)
 	_pf("spawner.update_hazards (kit motion, colliders)", t_pf)
 	t_pf = Time.get_ticks_usec()
 	run_distance += step
@@ -969,6 +978,8 @@ func _apply_time_of_day(t: float) -> void:
 	sun.light_color = Tuning.tod_sun[i].lerp(Tuning.tod_sun[i + 1], k)
 	sun.light_energy = lerpf(Tuning.tod_sun_energy[i], Tuning.tod_sun_energy[i + 1], k)
 	spawner.set_sky_tint(tint, mix)
+	ground.set_tint(tint, mix)
+	_tod_dark = clampf((t - 0.7) / 0.3, 0.0, 1.0)
 
 ## ?tune: jump the time of day (morning, day, sunset, dusk, then back to following the run).
 func debug_cycle_tod() -> void:
@@ -1080,6 +1091,8 @@ func _on_near_miss(ev: Dictionary) -> void:
 
 ## A tuning-panel slider changed (or Reset ran): apply anything that needs more than reading the value.
 func _on_tuning_changed(property: String) -> void:
+	if property.begins_with("ground_"):
+		ground._recolor()
 	if property == "obstacle_scale":
 		spawner.refresh_obstacles()   # rows already on screen change size now
 
@@ -1195,6 +1208,7 @@ func _update_camera() -> void:
 	camera.size = Tuning.ortho_size * (1.0 - 0.2 * _cam_ease)   # (a crash: the camera eases in toward the plane)
 	camera.position = Vector3(player.position.x * 0.55 * _cam_ease, 0, player.position.z * 0.35 * _cam_ease) + Vector3(0, cos(tilt), sin(tilt)) * 30.0
 	camera.rotation = Vector3(-(PI / 2 - tilt), 0, 0)
+	ground.sync_camera(camera, get_viewport().get_visible_rect().size)
 
 ## Screen spans z = -half .. +half (stretched slightly by the camera tilt).
 func _half_height() -> float:
