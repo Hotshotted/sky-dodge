@@ -27,7 +27,7 @@ var obstacle_depth := 1.4
 ## It climbs by speed_ramp each second until max_speed: (26 - 7) / 0.2 = 95 s to reach top speed.
 var base_speed := 7.0
 ## How much scroll speed grows each second.
-var speed_ramp := 0.2
+var speed_ramp := 0.10
 ## Scroll speed never exceeds this.
 var max_speed := 26.0
 
@@ -62,7 +62,7 @@ var fuel_start := 100.0
 ## Balance check (tests/fuel_balance_sim.gd, autopilots, 12 runs each): a player who only flies the
 ## widest gaps ran dry at 29 s every time; random gaps median 41 s; a can-chasing player's lowest fuel
 ## averaged ~38 and 9 of 12 runs ended on an obstacle, 3 on fuel (can chance 0.18: 1 of 12).
-var fuel_drain := 3.4
+var fuel_drain := 6.5
 ## Fuel one can gives back.
 var fuel_refill := 20.0
 ## Chance (0-1) that a new row gets a fuel can (rows with no risky spot get none).
@@ -83,7 +83,7 @@ var fuel_can_color := Color(0.2, 0.95, 0.45)
 # ---------- Clouds (hide obstacles and fuel cans) ----------
 ## No clouds until the run has lasted this many seconds (the first rows with clouds then appear a
 ## few seconds later, since rows are made ahead of the screen).
-var cloud_start_time := 25.0
+var cloud_start_time := 20.0
 ## Free-floating cloud bundles created per row, measured at the speed the run has when clouds begin
 ## (they come up to 3x as often at top speed). Sizes run from small wisps to large banks.
 var cloud_frequency := 0.4
@@ -104,13 +104,21 @@ var cloud_color := Color(1.0, 1.0, 1.0)
 # ---------- Near miss & bonus ----------
 ## A row counts as a near miss if the plane passed it with less than this gap (units) between the
 ## plane's hit box and the closest obstacle edge (0 = touching = crash).
-var near_miss_distance := 0.5
-## Highest points bonus reachable (x5 = five points for every point of distance).
-var bonus_max := 5
-## Seconds after a near miss before the bonus starts to fade.
+var near_miss_distance := 0.30
+## The points bonus grows with the streak of close calls (each one adds 1; the streak decays, see below):
+##   bonus = 1 + bonus_scale * ln(1 + streak), never above bonus_cap.
+## With scale 1.2: one close call = x1.8, two = x2.3, three = x2.7, five reaches the default cap.
+var bonus_scale := 1.2
+## The bonus ceiling (an upgrade will raise it later). The streak is held at the value that just
+## reaches it, so the bonus starts easing down as soon as the timeout ends.
+var bonus_cap := 3.0
+## Seconds after a close call before the streak starts to drop.
 var bonus_hold_time := 4.0
-## Once fading, the bonus drops one step every this many seconds (down to x1, which is no bonus).
-var bonus_decay_step := 1.5
+## Once dropping, the streak falls by this much per second, so the bonus eases down smoothly to x1.
+var bonus_decay_rate := 0.8
+## Looks only: colours and the score swell stop growing at this bonus, so a very high cap can't break the layout.
+var bonus_visual_max := 6.0
+var bonus_gold := Color(1.0, 0.84, 0.15)   # the label and score at the cap
 ## If true, score accrues at (distance x bonus); if false, the bonus is cosmetic.
 var score_uses_bonus := true
 
@@ -126,13 +134,15 @@ var streak_speed := 70.0
 var near_miss_flash_time := 0.25
 ## Haptic pulse length in milliseconds (ignored where unsupported).
 var haptic_ms := 25
-## Near-miss popup tiers, indexed by bonus: x2 = first entry, x3 = second, x4 and up = last. Each text
-## says what happened (first line) and what you earned (second line); %d is the points bonus you now
-## have. Then colour (warmer each tier) and font size (px in the 1080-wide base viewport).
-var near_miss_texts: Array[String] = ["Close call!\nx%d points", "Closer!\nx%d points", "Whisker close!\nx%d points"]
+## Near-miss popup tiers: the first applies below the first value of near_miss_tier_bonus, the second
+## from it up to the next, the last from the final value up. Each text says what happened (first line)
+## and what you earned (second line); %.1f is the points bonus you now have. Then colour (warmer each
+## tier) and font size (px in the 1080-wide base viewport).
+var near_miss_tier_bonus: Array[float] = [2.0, 2.8]
+var near_miss_texts: Array[String] = ["Close call!\nx%.1f points", "Closer!\nx%.1f points", "Whisker close!\nx%.1f points"]
 var near_miss_colors: Array[Color] = [Color(1.0, 0.95, 0.55), Color(1.0, 0.62, 0.2), Color(1.0, 0.28, 0.12)]
 var near_miss_sizes: Array[int] = [64, 84, 108]
-## Trail ribbon colour per bonus tier (2x, 3x, 4x, 5x+); it appears at 2x and fades at 1x.
+## Trail ribbon colour per bonus tier (x1-x2, x2-x3, x3-x4, x4+); it shows while there is a bonus and fades at x1.
 var trail_colors: Array[Color] = [Color(0.5, 0.9, 1.0), Color(0.5, 1.0, 0.6), Color(1.0, 0.85, 0.3), Color(1.0, 0.4, 0.7)]
 var trail_width := 0.5
 ## How far behind the plane the trail reaches (units), and how long it takes to fade out.
@@ -199,9 +209,46 @@ var plane_hit_radius := 0.3
 var plane_hit_scale := 0.95
 
 # ---------- Helpers ----------
-## Index into a per-tier array for a bonus: 2x -> 0, 3x -> 1, ... clamped to the array.
-func tier_index(bonus: int, count: int) -> int:
-	return clampi(bonus - 2, 0, count - 1)
+## Index into a per-tier array for a bonus: below x2 -> 0, x2 -> 1, x3 -> 2, ... clamped to the array.
+func tier_index(bonus: float, count: int) -> int:
+	return clampi(int(bonus) - 1, 0, count - 1)
+
+## The points bonus for a streak of close calls.
+func streak_bonus(streak: float) -> float:
+	return clampf(1.0 + bonus_scale * log(1.0 + maxf(streak, 0.0)), 1.0, maxf(bonus_cap, 1.0))
+
+## The streak that just reaches the cap (the streak never goes above it).
+func streak_at_cap() -> float:
+	if bonus_cap <= 1.0 or bonus_scale <= 0.0:
+		return 0.0
+	return exp((bonus_cap - 1.0) / bonus_scale) - 1.0
+
+## Is there a bonus worth showing? (The label disappears as the bonus eases down to x1.)
+func bonus_active(bonus: float) -> bool:
+	return bonus >= 1.05
+
+func at_cap(bonus: float) -> bool:
+	return bonus_cap > 1.0 and bonus >= bonus_cap - 0.001
+
+## Which popup tier (index into near_miss_texts) a bonus belongs to.
+func popup_tier(bonus: float) -> int:
+	var t := 0
+	for thr in near_miss_tier_bonus:
+		if bonus >= thr:
+			t += 1
+	return mini(t, near_miss_texts.size() - 1)
+
+## Colour for a bonus: warms along near_miss_colors up to bonus_visual_max, gold at the cap.
+func bonus_color(bonus: float) -> Color:
+	if at_cap(bonus):
+		return bonus_gold
+	var t := clampf((bonus - 1.0) / maxf(bonus_visual_max - 1.0, 0.1), 0.0, 1.0) * (near_miss_colors.size() - 1)
+	var i := mini(int(t), near_miss_colors.size() - 2)
+	return near_miss_colors[i].lerp(near_miss_colors[i + 1], t - i)
+
+## How much bigger the score is drawn at this bonus (clamped at bonus_visual_max).
+func bonus_swell(bonus: float) -> float:
+	return 1.0 + 0.06 * (minf(bonus, bonus_visual_max) - 1.0)
 
 func column_width() -> float:
 	return ortho_size / column_count

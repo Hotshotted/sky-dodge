@@ -19,9 +19,11 @@ const HEADER_FUEL := "OUT OF FUEL"
 const REASON_FUEL := "The tank ran dry"
 
 var score := 0.0        # accumulates distance flown x bonus
-var bonus := 1     # raised by near misses, decays back to 1
+var streak := 0.0   # close-call streak (each near miss adds 1; it drops gradually after the hold time)
+var bonus := 1.0    # points bonus from the streak, 1.0 = none
 var fuel := 0.0         # drains steadily; fuel cans refill it; empty ends the run
-var _bonus_timer := 0.0  # counts down to the next bonus decay step
+var _bonus_timer := 0.0  # counts down to the streak starting to drop
+var _decaying := false
 var _warming := false
 static var _haptic_warmed := false  # first-touch haptic warm-up done (once per app session)
 static var _warmed := false  # pre-warm only once per app session
@@ -79,7 +81,7 @@ func _prewarm() -> void:
 	if tune_panel:
 		tune_panel.prewarm_show(true)   # drawn under the splash like everything else
 	if not DebugFlags.off("punch"):
-		hud.set_bonus(2, hud.BONUS_PUNCH)
+		hud.set_bonus(Tuning.bonus_cap, hud.BONUS_PUNCH)   # (the capped, gold label too)
 	var t_start := Time.get_ticks_msec()
 	var t_last := t_start
 	var t_refresh := -100000
@@ -115,7 +117,7 @@ func _prewarm() -> void:
 	fx.clear()
 	trail.clear()
 	spawner.prewarm_hide()
-	hud.set_bonus(1)
+	hud.clear_bonus()
 	hud.end_prewarm()
 	if tune_panel:
 		tune_panel.prewarm_show(false)
@@ -126,8 +128,7 @@ func _prewarm() -> void:
 ## material and UI node stays alive (and warm) across runs; only the game state is reset.
 func restart() -> void:
 	score = 0.0
-	bonus = 1
-	_bonus_timer = 0.0
+	_reset_bonus()
 	elapsed = 0.0
 	alive = true
 	spawner.run_time = 0.0
@@ -197,6 +198,8 @@ func _end_run(header: String, reason: String) -> void:
 	alive = false
 	_death_time = Time.get_ticks_msec() / 1000.0
 	player.crash()
+	_reset_bonus()   # a crash / the end of the run ends the streak
+	hud.clear_bonus()
 	hud.show_game_over(int(score), header, reason)
 
 ## A fuel can was collected at `pos`: refill (never past a full tank) and pop.
@@ -213,7 +216,9 @@ func _on_pickup(pos: Vector3) -> void:
 ## which one causes a hitch.
 func _on_near_miss(ev: Dictionary) -> void:
 	var t0 := Time.get_ticks_usec()
-	bonus = mini(bonus + 1, Tuning.bonus_max)
+	streak = minf(streak + 1.0, Tuning.streak_at_cap())
+	bonus = Tuning.streak_bonus(streak)
+	_decaying = false
 	_bonus_timer = Tuning.bonus_hold_time
 	hud.set_bonus(bonus, hud.BONUS_NONE if DebugFlags.off("punch") else hud.BONUS_PUNCH)
 	var side: int = ev["side"]
@@ -225,7 +230,7 @@ func _on_near_miss(ev: Dictionary) -> void:
 		spawner.flash_obstacle(ev["outline"])
 	if not DebugFlags.off("popup"):
 		var n := Tuning.near_miss_texts.size()
-		var i := Tuning.tier_index(bonus, n)
+		var i := Tuning.popup_tier(bonus)
 		var pos := camera.unproject_position(player.position + Vector3(0, 0, -2.0))
 		hud.popup(Tuning.near_miss_texts[i] % bonus, Tuning.near_miss_sizes[mini(i, Tuning.near_miss_sizes.size() - 1)],
 				Tuning.near_miss_colors[mini(i, Tuning.near_miss_colors.size() - 1)], pos)
@@ -238,15 +243,26 @@ func _on_tuning_changed(property: String) -> void:
 	if property == "obstacle_scale":
 		spawner.refresh_obstacles()   # rows already on screen change size now
 
-## Without fresh near misses the bonus holds, then drops one step at a time down to 1x.
+## Without fresh near misses the bonus holds, then the streak drops gradually (the bonus eases down) to x1.
 func _decay_bonus(delta: float) -> void:
-	if bonus <= 1:
+	if streak <= 0.0:
 		return
 	_bonus_timer -= delta
-	if _bonus_timer <= 0.0:
-		bonus -= 1
-		_bonus_timer = Tuning.bonus_decay_step
-		hud.set_bonus(bonus, hud.BONUS_SHRINK)   # show it shrinking: the bonus fades if you play safe
+	if _bonus_timer > 0.0:
+		return
+	var first := not _decaying
+	_decaying = true
+	streak = maxf(streak - Tuning.bonus_decay_rate * delta, 0.0)
+	bonus = Tuning.streak_bonus(streak)
+	# show it shrinking when it starts to fade: the bonus fades if you play safe
+	hud.set_bonus(bonus, hud.BONUS_SHRINK if first else hud.BONUS_NONE)
+
+## A crash, the end of a run or a restart: no streak, no bonus.
+func _reset_bonus() -> void:
+	streak = 0.0
+	bonus = 1.0
+	_bonus_timer = 0.0
+	_decaying = false
 
 ## Camera tilted `camera_tilt_deg` away from straight down (so front faces show), placed so the
 ## screen centre always looks at world z = 0. Screen-up = world -Z.

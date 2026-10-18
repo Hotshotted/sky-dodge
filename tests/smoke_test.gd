@@ -18,6 +18,7 @@ extends SceneTree
 ##       sizes, off the column grid, drifting; never cover every open column's centre line (thousands of
 ##       generated rows, checked every step), fade in late, sit above obstacles/cans but below the plane,
 ##       hide cans more often, ?nofx=clouds disables them, restart clears them, nothing new is allocated
+##   2i. bonus: logarithmic streak bonus, cap (gold MAX label), gradual decay, reset on crash, huge caps
 ##   3. ?debug flags parse, and switching an effect off really skips it
 ##   4. plane collision capsules: span matches the wings, rounded corners graze past a cube corner
 ##   5. closest-approach near-miss detection reports the right side
@@ -202,10 +203,10 @@ func _initialize() -> void:
 	for run in [1, 2, 3]:
 		print("  -- run %d --" % run)
 		check(main.score < 100.0 and main.bonus == 1 and main.alive and main.fuel > tuning.fuel_start - 5.0,
-				"run %d starts fresh (score %d, x%d, fuel %.0f)" % [run, int(main.score), main.bonus, main.fuel])
+				"run %d starts fresh (score %d, x%.1f, fuel %.0f)" % [run, int(main.score), main.bonus, main.fuel])
 		check(not main.hud._over.visible, "game-over UI hidden while playing")
 		await do_near_misses(main, 3)
-		check(main.bonus == 4 and main.hud._bonus_label.text == "x4 POINTS", "three near misses give x4 (%s)" % main.hud._bonus_label.text)
+		check(is_equal_approx(main.bonus, tuning.streak_bonus(3.0)) and main.hud._bonus_label.text == "x%.1f POINTS" % main.bonus, "three close calls give x%.1f (%s)" % [main.bonus, main.hud._bonus_label.text])
 		check(count_visible(main.hud._pop_labels) >= 1 and count_visible(main.fx._emitters) >= 1, "popup and sparks are showing")
 		# fuel: drains; a can refills it with a pooled pop
 		var f0: float = main.fuel
@@ -271,7 +272,7 @@ func _initialize() -> void:
 		defaults[e[0]] = tuning.get(e[0])
 	for t in panel.TOGGLES:
 		defaults[t[0]] = tuning.get(t[0])
-	check(panel.ENTRIES.size() == 17 and panel._sliders.size() == 17 and panel._toggles.size() == 1, "17 sliders and 1 on/off switch for the tuned values")
+	check(panel.ENTRIES.size() == 19 and panel._sliders.size() == 19 and panel._toggles.size() == 1, "19 sliders and 1 on/off switch for the tuned values")
 	var all_match := true
 	for e in panel.ENTRIES:
 		if not is_equal_approx(panel._sliders[e[0]].value, tuning.get(e[0])):
@@ -801,6 +802,87 @@ func _initialize() -> void:
 	var after_clouds := snapshot(main)
 	check(same_world(base, after_clouds), "generating thousands of cloud rows created nothing new  [%s]" % describe(after_clouds))
 
+	print("2i. bonus: logarithmic streak bonus with a cap")
+	var bsaved := {"scale": tuning.bonus_scale, "cap": tuning.bonus_cap}
+	tuning.bonus_scale = 1.2
+	tuning.bonus_cap = 3.0
+	check(tuning.streak_bonus(0.0) == 1.0 and is_equal_approx(tuning.streak_bonus(1.0), 1.0 + 1.2 * log(2.0)) and is_equal_approx(tuning.streak_bonus(3.0), 1.0 + 1.2 * log(4.0)),
+			"bonus = 1 + scale * ln(1 + streak)  (streak 1 = %.2f, 3 = %.2f)" % [tuning.streak_bonus(1.0), tuning.streak_bonus(3.0)])
+	check(tuning.streak_bonus(1000.0) == 3.0 and tuning.streak_bonus(tuning.streak_at_cap()) >= 3.0 - 0.0001, "clamped to bonus_cap (3.0), reached at streak %.1f" % tuning.streak_at_cap())
+	main._reset_bonus()
+	main.set_process(false)
+	var brow = sp._rows_make_for_test(-5.0, [1.0])
+	var bev := {"side": 1, "node": brow.obs[0], "outline": brow.outlines[0]}
+	DebugFlags.parse(["nofx=sparks,streaks,popup,flash,trail,haptic"])
+	var seen_bonus := []
+	for i in 12:
+		main._on_near_miss(bev)
+		seen_bonus.append(main.bonus)
+	var rising := true
+	for i in range(1, seen_bonus.size()):
+		rising = rising and seen_bonus[i] >= seen_bonus[i - 1]
+	check(rising and main.bonus == 3.0 and main.streak <= tuning.streak_at_cap() + 0.0001, "twelve close calls rise and stop at the cap; the streak is held at the cap's streak (%.1f)" % main.streak)
+	check(main.hud._bonus_label.text == "x3.0 POINTS  MAX" and main.hud._bonus_label.get_theme_color("font_color").is_equal_approx(tuning.bonus_gold),
+			"at the cap the label is gold and says MAX (\"%s\")" % main.hud._bonus_label.text)
+	# popup tiers keyed to bonus thresholds, with the bonus in the text
+	check(tuning.popup_tier(1.8) == 0 and tuning.popup_tier(2.0) == 1 and tuning.popup_tier(2.79) == 1 and tuning.popup_tier(2.8) == 2 and tuning.popup_tier(50.0) == 2,
+			"popup tiers: Close call below x2.0, Closer to x2.8, Whisker close above")
+	check((tuning.near_miss_texts[1] % 2.4) == "Closer!\nx2.4 points", "popups show the bonus with one decimal")
+	# gradual decay: holds, then eases down smoothly to x1, and the label goes away
+	var hold: float = tuning.bonus_hold_time
+	var t_el := 0.0
+	var b_prev: float = main.bonus
+	var held := true
+	var smooth := true
+	var monotone := true
+	var drop_start := -1.0
+	while main.streak > 0.0 and t_el < 60.0:
+		main._decay_bonus(0.05)
+		t_el += 0.05
+		if main.bonus < b_prev - 0.0001 and drop_start < 0.0:
+			drop_start = t_el
+		if main.bonus > b_prev + 0.0001:
+			monotone = false
+		if t_el < hold - 0.06 and main.bonus < 3.0:
+			held = false
+		if b_prev - main.bonus > 0.2:
+			smooth = false
+		b_prev = main.bonus
+	check(held and monotone and smooth and drop_start >= hold - 0.1, "the bonus holds %.1f s, then eases down smoothly (first drop at %.2f s)" % [hold, drop_start])
+	check(main.bonus == 1.0 and main.streak == 0.0 and t_el < 30.0, "...and reaches x1 after %.1f s" % t_el)
+	await real_wait(tuning.bonus_hold_time * 0 + 0.7)
+	check(main.hud._bonus_label.text == "", "the label shrinks away at x1")
+	# a crash / the end of a run resets the streak
+	main._on_near_miss(bev)
+	main._on_near_miss(bev)
+	main._end_run(main.HEADER_CRASH, main.REASON_OBSTACLE)
+	check(main.bonus == 1.0 and main.streak == 0.0 and main.hud._bonus_label.text == "", "a crash resets the streak and bonus")
+	main.restart()
+	main.set_process(false)
+	# high caps: the maths and the looks stay sane (the cap will be raised by upgrades)
+	tuning.bonus_scale = 3.0
+	tuning.bonus_cap = 1000.0
+	var okv := true
+	for b in [1.0, 1.05, 2.0, 6.0, 50.0, 999.0, 1000.0]:
+		var c: Color = tuning.bonus_color(b)
+		okv = okv and c.r >= 0.0 and c.r <= 1.0 and c.g >= 0.0 and c.g <= 1.0 and c.b >= 0.0 and c.b <= 1.0 and tuning.bonus_swell(b) <= tuning.bonus_swell(tuning.bonus_visual_max) + 0.0001
+	check(okv and tuning.at_cap(1000.0) and not tuning.at_cap(999.0), "colours and score swell are clamped visually for a cap of 1000")
+	main._reset_bonus()
+	for i in 40:
+		main._on_near_miss(bev)
+	main.hud.set_score(12345, main.bonus)
+	main.hud._update_bonus_look(Time.get_ticks_msec())
+	check(main.bonus < 1000.0 and main.bonus > 6.0 and main.hud._score.scale.x <= tuning.bonus_swell(tuning.bonus_visual_max) + 0.11,
+			"a long streak with a huge cap: x%.1f, score scale %.2f stays bounded" % [main.bonus, main.hud._score.scale.x])
+	main.hud.set_bonus(1000.0, main.hud.BONUS_PUNCH)
+	check(main.hud._bonus_label.text == "x1000.0 POINTS  MAX", "the label copes with a four-digit bonus (\"%s\")" % main.hud._bonus_label.text)
+	main._reset_bonus()
+	main.hud.clear_bonus()
+	DebugFlags.parse([])
+	sp._release_row(brow)
+	tuning.bonus_scale = bsaved["scale"]
+	tuning.bonus_cap = bsaved["cap"]
+
 	print("3. debug flags")
 	DebugFlags.parse(["nofx=sparks,bogus", "noprewarm", "perf", "v=abc1234"])
 	check(DebugFlags.off("sparks") and not DebugFlags.off("streaks"), "nofx=sparks switches off only sparks")
@@ -812,13 +894,13 @@ func _initialize() -> void:
 	DebugFlags.parse(["nofx=Sparks%2CPopup"])   # URL-encoded comma, upper case
 	check(DebugFlags.off("sparks") and DebugFlags.off("popup") and not DebugFlags.off("flash"), "names are case-insensitive and URL-decoded")
 	DebugFlags.parse(["nofx=sparks,streaks,popup,flash,trail,haptic"])
-	main.bonus = 1
+	main._reset_bonus()
 	for e in main.fx._emitters:
 		e.emitting = false
 		e.visible = false
 	var row = sp._rows_make_for_test(-5.0, [1.0])
 	main._on_near_miss({"side": 1, "node": row.obs[0], "outline": row.outlines[0]})
-	check(main.bonus == 2, "bonus still rises with every effect off")
+	check(main.bonus > 1.5, "bonus still rises with every effect off")
 	check(count_visible(main.fx._emitters) == 0 and count_visible(main.fx._streak_nodes) == 0
 			and count_visible(main.hud._pop_labels) == 0 and sp._flashes.is_empty(),
 			"no spark / streak / popup / flash with ?nofx")

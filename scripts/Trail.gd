@@ -1,7 +1,7 @@
 class_name Trail
 extends MeshInstance3D
 ## Ribbon behind the plane. Visible while the bonus is 2x or more, its colour follows the
-## bonus tier, and it fades out once the bonus is back to 1x.
+## bonus tier, and it fades out once the bonus is back to x1.
 ## Points are stored in world space and scroll with the world (+z) like the obstacles.
 
 var _pts: Array[Vector2] = []   # (x, z) of each ribbon point, newest first
@@ -35,10 +35,10 @@ func clear() -> void:
 
 ## `step` = how far the world scrolled this frame, `origin` = (x, z) where the ribbon starts
 ## (the plane's tail), `bonus` = current score bonus.
-func advance(step: float, origin: Vector2, bonus: int, delta: float) -> void:
+func advance(step: float, origin: Vector2, bonus: float, delta: float) -> void:
 	for i in _pts.size():
 		_pts[i].y += step
-	var on := bonus >= 2
+	var on := Tuning.bonus_active(bonus)
 	if on:
 		if _pts.is_empty() or _pts[0].distance_to(origin) >= 0.15:  # keep the point count bounded
 			_pts.push_front(origin)
