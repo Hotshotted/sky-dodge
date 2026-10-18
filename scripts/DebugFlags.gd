@@ -6,6 +6,7 @@ extends RefCounted
 ##   ?nofx=all                                             turn all of them off
 ##   ?noprewarm                                            skip the start-up pre-warm and splash
 ##   ?perf                                                 show a worst-frame-time readout
+##   ?tune                                                 show the on-screen tuning panel (TUNE button, top-right)
 ## Combine with "&", e.g.  ?nofx=sparks&noprewarm&perf
 ## The active flags are printed under the build stamp.
 
@@ -16,6 +17,7 @@ static var _off := {}                  # effect name -> true
 static var _bad: Array[String] = []    # unknown names (typos), shown in the summary
 static var noprewarm := false
 static var perf := false
+static var tune := false
 
 ## True if the named near-miss effect has been switched off.
 static func off(effect: String) -> bool:
@@ -29,6 +31,10 @@ static func prewarm_enabled() -> bool:
 static func perf_enabled() -> bool:
 	_load()
 	return perf
+
+static func tune_enabled() -> bool:
+	_load()
+	return tune
 
 ## One-line description of the active flags ("" when none), shown next to the build stamp.
 static func summary() -> String:
@@ -44,6 +50,8 @@ static func summary() -> String:
 		parts.append("noprewarm")
 	if perf:
 		parts.append("perf")
+	if tune:
+		parts.append("tune")
 	for b in _bad:
 		parts.append("?" + b)
 	return " ".join(parts)
@@ -68,6 +76,7 @@ static func parse(args: Array[String]) -> void:
 	_bad.clear()
 	noprewarm = false
 	perf = false
+	tune = false
 	for a in args:
 		var kv := a.split("=", true, 1)
 		var key := kv[0].uri_decode().to_lower()
@@ -86,6 +95,8 @@ static func parse(args: Array[String]) -> void:
 				noprewarm = true
 			"perf":
 				perf = true
+			"tune":
+				tune = true
 			"v":
 				pass  # cache-busting parameter added by the page, not a flag
 			_:

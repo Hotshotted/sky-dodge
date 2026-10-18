@@ -26,11 +26,17 @@ var alive := true
 var _death_time := 0.0
 var fx := Fx.new()
 var trail := Trail.new()
+var tune_panel: TunePanel   # only exists when the URL has ?tune
 
 func _ready() -> void:
 	fuel = Tuning.fuel_start
 	add_child(fx)
 	add_child(trail)
+	if DebugFlags.tune_enabled():
+		tune_panel = TunePanel.new()
+		add_child(tune_panel)
+		tune_panel.build()
+		tune_panel.changed.connect(_on_tuning_changed)
 	_setup_environment()
 	# Light from above (the camera mostly sees top faces).
 	sun.look_at_from_position(Vector3.ZERO, Tuning.light_direction)
@@ -43,10 +49,13 @@ func _ready() -> void:
 	camera.far = 100.0
 	_update_camera()
 	_update_plane_zone()
+	spawner.reset(_first_row_z(_half_height()))
 	if not _warmed:
 		_warmed = true
 		if DebugFlags.prewarm_enabled():
 			_prewarm()
+	if not _warming and tune_panel:
+		tune_panel.set_available(true)
 
 ## First-use stutter fix: GL shaders / particle buffers / font glyphs set themselves up the first
 ## time they are used (and mobile browsers may compile shaders in the background). So at boot,
@@ -63,6 +72,8 @@ func _prewarm() -> void:
 	var spot := Vector3(0.0, 1.2, 1.0)
 	hud.begin_prewarm(not DebugFlags.off("popup"))
 	spawner.prewarm_show(not DebugFlags.off("flash"))
+	if tune_panel:
+		tune_panel.prewarm_show(true)   # drawn under the splash like everything else
 	if not DebugFlags.off("punch"):
 		hud.set_multiplier(2, true)
 	var t_start := Time.get_ticks_msec()
@@ -102,6 +113,9 @@ func _prewarm() -> void:
 	spawner.prewarm_hide()
 	hud.set_multiplier(1, false)
 	hud.end_prewarm()
+	if tune_panel:
+		tune_panel.prewarm_show(false)
+		tune_panel.set_available(true)
 	_warming = false
 
 ## Start a fresh run IN PLACE. Nothing is reloaded, created or freed: every pooled effect,
@@ -113,12 +127,12 @@ func restart() -> void:
 	elapsed = 0.0
 	alive = true
 	fuel = Tuning.fuel_start
-	spawner.reset()
 	fx.clear()
 	trail.clear()
 	hud.reset_for_run()
 	player.reset()
 	_update_plane_zone()
+	spawner.reset(_first_row_z(_half_height()))   # after the plane is back: the opening is timed to reach it
 
 func _process(delta: float) -> void:
 	delta = minf(delta, 0.05)
@@ -194,6 +208,11 @@ func _on_near_miss(ev: Dictionary) -> void:
 		Input.vibrate_handheld(Tuning.haptic_ms)  # no-op where unsupported
 	hud.note_near_miss((Time.get_ticks_usec() - t0) / 1000.0)
 
+## A tuning-panel slider changed (or Reset ran): apply anything that needs more than reading the value.
+func _on_tuning_changed(property: String) -> void:
+	if property == "obstacle_scale":
+		spawner.refresh_obstacles()   # rows already on screen change size now
+
 ## Without fresh near misses the multiplier holds, then drops one step at a time down to 1x.
 func _decay_multiplier(delta: float) -> void:
 	if multiplier <= 1:
@@ -212,17 +231,31 @@ func _update_camera() -> void:
 	camera.position = Vector3(0, cos(tilt), sin(tilt)) * 30.0
 	camera.rotation = Vector3(-(PI / 2 - tilt), 0, 0)
 
+## Screen spans z = -half .. +half (stretched slightly by the camera tilt).
+func _half_height() -> float:
+	var vp := get_viewport().get_visible_rect().size
+	return Tuning.ortho_size * 0.5 * vp.y / vp.x / cos(deg_to_rad(Tuning.camera_tilt_deg))
+
+## World z where the first row of a run starts, so that it reaches the plane after about
+## opening_seconds at the start speed and ramp. If that would put it on screen it starts just above
+## the top edge instead (rows never pop in).
+func _first_row_z(half_h: float) -> float:
+	var t := Tuning.opening_seconds
+	var travel := Tuning.base_speed * t + 0.5 * Tuning.speed_ramp * t * t
+	return minf(player.position.z - travel, -(half_h + 1.0))
+
 ## The plane may use the bottom `plane_zone_fraction` of the screen. The visible height
 ## depends on the device aspect (width is fixed), so work it out from the viewport.
 func _update_plane_zone() -> void:
-	var vp := get_viewport().get_visible_rect().size
-	# Screen spans z = -half_h .. +half_h (stretched slightly by the camera tilt).
-	var half_h := Tuning.ortho_size * 0.5 * vp.y / vp.x / cos(deg_to_rad(Tuning.camera_tilt_deg))
+	var half_h := _half_height()
 	var bottom := half_h - Tuning.plane_bottom_margin
 	var top := half_h - 2.0 * half_h * Tuning.plane_zone_fraction
 	player.set_zone(top, bottom)
 
 func _input(event: InputEvent) -> void:
+	# A touch on the tuning panel's TUNE button belongs to the button, not the game.
+	if (event is InputEventScreenTouch or event is InputEventScreenDrag) and TunePanel.button_hit(event.position):
+		return
 	# Browsers only allow vibration after a touch, and the first real call connects to the device's
 	# vibration service. A zero-length call is just a "cancel" and does NOT connect, so make an
 	# imperceptible 1 ms pulse on the very first touch instead of on the first near miss.

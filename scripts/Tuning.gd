@@ -41,8 +41,10 @@ var blocked_columns_max := 3
 ## A new row is created once the last one has scrolled past -spawn_distance (must be above the
 ## top of the screen, ~9-11 units on phones).
 var spawn_distance := 24.0
-## Where the very first row of a run sits (above the screen, so you get a moment to settle).
-var first_row_distance := 26.0
+## The opening: the first row of a run reaches the plane after about this many seconds, at the
+## start speed and ramp. (It never starts on screen: on a very tall phone it begins just above the
+## top edge instead, so it can take a little longer there.)
+var opening_seconds := 2.0
 
 # ---------- Obstacle look ----------
 ## Obstacle colour (single colour; outlines separate overlapping shapes).
@@ -64,7 +66,7 @@ var fuel_drain := 3.4
 ## Fuel one can gives back.
 var fuel_refill := 20.0
 ## Chance (0-1) that a new row gets a fuel can (rows with no risky spot get none).
-var fuel_can_chance := 0.16
+var fuel_can_chance := 0.18
 ## How strongly cans prefer RISKY spots (0-1). A can is placed in a risky spot with this
 ## probability, otherwise in any open column. Risky = off the main safe path AND either next to an
 ## obstacle or in a column that closes in the next row. Cans are never put on the main safe path

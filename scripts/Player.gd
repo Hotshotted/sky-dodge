@@ -25,6 +25,9 @@ var _model: Node3D                 # visual child that banks/yaws
 var _wing_beads := PackedFloat32Array()  # collision circles along the wing (x, z, radius), unrotated
 var _caps := PackedFloat32Array()        # hit_capsules() output, updated in place every frame
 var _hull_key := Vector2(-1.0, -1.0)     # (tip radius, hit scale) the collision was built for
+var _wing_mesh := ArrayMesh.new()        # the visible wing; rebuilt IN PLACE when the tip radius is tuned
+var _wing_mat := StandardMaterial3D.new()
+var _wing_built_for := -1.0              # tip radius the wing mesh currently shows
 
 func _ready() -> void:
 	position = Vector3(0, PLANE_Y, 0)
@@ -39,6 +42,8 @@ func set_zone(top: float, bottom: float) -> void:
 		position.z = lerpf(z_max, z_min, 0.25)
 
 func _input(event: InputEvent) -> void:
+	if (event is InputEventScreenTouch or event is InputEventScreenDrag) and TunePanel.button_hit(event.position):
+		return   # that touch is for the tuning panel's TUNE button
 	# With "emulate touch from mouse" on, mouse drags also arrive as these touch events.
 	if event is InputEventScreenTouch:
 		touching = event.pressed
@@ -48,6 +53,8 @@ func _input(event: InputEvent) -> void:
 		_pending_drag += event.relative
 
 func _process(delta: float) -> void:
+	if _wing_built_for != Tuning.plane_tip_radius:
+		_fill_wing_mesh()   # tuning panel changed the tip radius: reshape the visible wing
 	if not active:
 		return
 	delta = minf(delta, 0.05)  # avoid huge steps after a hitch
@@ -221,8 +228,11 @@ func _build_model() -> void:
 	_model = Node3D.new()
 	add_child(_model)
 	var body := _box(Vector3(0.45, 0.35, 1.8), Color(0.95, 0.95, 1.0))
+	_wing_mat.albedo_color = Color(1.0, 0.82, 0.25)
+	_wing_mat.cull_mode = BaseMaterial3D.CULL_DISABLED  # winding can't make the wing vanish
+	_fill_wing_mesh()
 	var wings := MeshInstance3D.new()
-	wings.mesh = _wing_mesh(wing_outline(Tuning.plane_tip_radius))
+	wings.mesh = _wing_mesh
 	var tail := _box(Vector3(0.08, 0.5, 0.5), Color(1.0, 0.45, 0.35))
 	tail.position = Vector3(0, 0.3, 0.8)
 	var nose := _box(Vector3(0.3, 0.25, 0.4), Color(0.9, 0.3, 0.3))
@@ -230,8 +240,13 @@ func _build_model() -> void:
 	for part in [body, wings, tail, nose]:
 		_model.add_child(part)
 
-## The visible wing: the outline extruded to a thin slab, flat-shaded.
-func _wing_mesh(outline: PackedVector2Array) -> ArrayMesh:
+## (Re)build the visible wing into the existing mesh: the outline extruded to a thin slab,
+## flat-shaded. Reuses the same mesh and material objects, so tuning the tip radius allocates nothing
+## that lives on.
+func _fill_wing_mesh() -> void:
+	_wing_built_for = Tuning.plane_tip_radius
+	var outline := wing_outline(Tuning.plane_tip_radius)
+	_wing_mesh.clear_surfaces()
 	var st := SurfaceTool.new()
 	st.begin(Mesh.PRIMITIVE_TRIANGLES)
 	var h := WING_THICKNESS * 0.5
@@ -251,11 +266,8 @@ func _wing_mesh(outline: PackedVector2Array) -> ArrayMesh:
 		for v in [Vector3(a.x, h, a.y), Vector3(b.x, h, b.y), Vector3(b.x, -h, b.y),
 				Vector3(a.x, h, a.y), Vector3(b.x, -h, b.y), Vector3(a.x, -h, a.y)]:
 			st.add_vertex(v)
-	var mat := StandardMaterial3D.new()
-	mat.albedo_color = Color(1.0, 0.82, 0.25)
-	mat.cull_mode = BaseMaterial3D.CULL_DISABLED  # winding can't make the wing vanish
-	st.set_material(mat)
-	return st.commit()
+	st.set_material(_wing_mat)
+	st.commit(_wing_mesh)
 
 func _box(size: Vector3, color: Color) -> MeshInstance3D:
 	var mi := MeshInstance3D.new()

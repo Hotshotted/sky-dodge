@@ -81,8 +81,9 @@ func _ready() -> void:
 		_make_row()
 	reset()
 
-## Put every row back in the pool and start the obstacle stream over (restart in place).
-func reset() -> void:
+## Put every row back in the pool and start the obstacle stream over (restart in place). The first
+## row of the new run appears at world z = first_row_z (negative = above the plane).
+func reset(first_row_z: float = -12.0) -> void:
 	for r in _rows.duplicate():
 		_release_row(r)
 	_rows.clear()
@@ -92,7 +93,7 @@ func reset() -> void:
 	_safe_col = Tuning.column_count / 2
 	for i in Tuning.column_count:
 		_prev_open.append(true)  # first row may use any column
-	_last_row_z = -Tuning.first_row_distance + Tuning.spawn_spacing
+	_last_row_z = first_row_z + Tuning.spawn_spacing
 
 ## Move the world toward the plane by `dist` units and spawn/remove rows as needed.
 func advance(dist: float) -> void:
@@ -396,6 +397,16 @@ func collect_cans(p: Vector2, caps: PackedFloat32Array) -> Array[Vector3]:
 				_picked.append(Vector3(r.can_x, 0.4, r.position.z))
 				break
 	return _picked
+
+## Apply the current obstacle_scale / can size to rows already in play (used by the tuning panel,
+## so a slider change shows up at once instead of only on newly spawned rows).
+func refresh_obstacles() -> void:
+	var width := Tuning.column_width() * Tuning.obstacle_scale
+	for r in _rows:
+		for mi in r.obs:
+			mi.scale = Vector3(width, width, Tuning.obstacle_depth)
+		if r.has_can:
+			r.can.scale = Vector3.ONE * Tuning.fuel_can_size
 
 ## Test helper: put a fuel can on a row.
 func _place_can_for_test(row: Row, x: float) -> void:

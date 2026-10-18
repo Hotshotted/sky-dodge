@@ -7,6 +7,10 @@ extends SceneTree
 ##      materials or resources are created after start-up (pooled effects stay alive and warm)
 ##   2b. fuel: it drains, a can refills it (with a pooled pop), empty fuel ends the run with "Out of fuel"
 ##   2c. fuel can placement: only in open columns, never on the safe path, risk-biased
+##   2d. tuning panel (?tune): opens over the paused game, sliders edit Tuning live and apply, Copy and
+##       Reset work, closing resumes, and none of it allocates anything; absent without ?tune
+##   2e. the opening: the first row reaches the plane after ~opening_seconds, and never starts on screen
+##   2f. a tap on the TUNE button doesn't restart the game; a tap elsewhere does
 ##   3. ?debug flags parse, and switching an effect off really skips it
 ##   4. plane collision capsules: span matches the wings, rounded corners graze past a cube corner
 ##   5. closest-approach near-miss detection reports the right side
@@ -92,7 +96,7 @@ func _initialize() -> void:
 	var tuning := root.get_node("Tuning")
 	tuning.blocked_columns_min = 4   # crowded rows: easy to crash on purpose
 	tuning.blocked_columns_max = 4
-	DebugFlags.parse([])   # no debug flags
+	DebugFlags.parse(["tune"])   # the whole run has the tuning panel, so it is part of the "nothing new" baseline
 
 	print("1. boot and the visible pre-warm")
 	var t_boot := Time.get_ticks_msec()
@@ -118,6 +122,9 @@ func _initialize() -> void:
 		cubes.append_array(r.cubes)
 	check(cubes.size() == main.spawner.POOL_ROWS * tuning.column_count and count_visible(cubes) == cubes.size(),
 			"every pooled obstacle cube (%d) is drawn during the pre-warm" % cubes.size())
+	check(main.tune_panel != null and main.tune_panel._panel.visible and main.tune_panel._panel_layer.layer == 0,
+			"?tune: the panel is drawn during the pre-warm, under the splash (layer 0)")
+	check(not main.tune_panel._button.visible, "?tune: the TUNE button stays hidden while starting up")
 	var cans: Array = []
 	for r in main.spawner._all_rows:
 		cans.append(r.can)
@@ -143,6 +150,7 @@ func _initialize() -> void:
 	check(count_visible(cubes) == in_play and count_visible(main.fx._streak_nodes) == 0 and main.trail._pts.is_empty()
 			and count_visible(main.fx._emitters) == 0, "no pre-warm effects left behind (only the live game's own cubes are showing: %d)" % in_play)
 	check(main.alive, "run starts alive")
+	check(not main.tune_panel._panel.visible and main.tune_panel._button.visible, "?tune: panel hidden and TUNE button shown once started")
 
 	print("1b. pre-warm length adapts to frame times")
 	var saved_min: float = tuning.prewarm_min_seconds
@@ -229,11 +237,116 @@ func _initialize() -> void:
 		check(main.player.active and absf(main.player.position.x) < 0.01 and main.player.velocity == Vector2.ZERO, "plane is back at the start")
 		var stale_rows := 0   # anything near the plane would be left over from the previous run
 		for r in main.spawner._rows:
-			if r.position.z > -10.0:
+			if r.position.z > -4.0:   # a leftover would be near the plane; the new run's first row is far above
 				stale_rows += 1
 		check(stale_rows == 0, "previous run's obstacles are gone (%d rows, new run's own rows are far above)" % main.spawner._rows.size())
 		var after := snapshot(main)
 		check(same_world(base, after), "restart created nothing new  [%s]" % describe(after))
+
+	print("2d. tuning panel")
+	var panel = main.tune_panel   # (untyped: naming the class would compile it before the autoloads exist)
+	var defaults := {}
+	for e in panel.ENTRIES:
+		defaults[e[0]] = tuning.get(e[0])
+	check(panel.ENTRIES.size() == 12 and panel._sliders.size() == 12, "12 sliders for the 12 tuned values")
+	var all_match := true
+	for e in panel.ENTRIES:
+		if not is_equal_approx(panel._sliders[e[0]].value, tuning.get(e[0])):
+			all_match = false
+	check(all_match, "each slider starts at the current Tuning value")
+	var events: Array[String] = []
+	panel.changed.connect(func(property: String) -> void: events.append(property))
+	panel.open()
+	check(paused and panel.is_open and panel._panel.visible and panel._panel_layer.layer == 19 and panel._button.text == "CLOSE",
+			"opening the panel pauses the game and shows it over everything")
+	var score_open: float = main.score
+	await real_wait(0.3)
+	check(main.score == score_open, "the game is really paused while the panel is open")
+	panel._sliders["fuel_drain"].value = 4.0
+	check(is_equal_approx(tuning.fuel_drain, 4.0) and events.has("fuel_drain"), "dragging a slider edits Tuning live (fuel_drain = %.1f)" % tuning.fuel_drain)
+	check(panel._value_labels["fuel_drain"].text.contains("4.0") and panel._value_labels["fuel_drain"].text.contains("default"), "the label shows the value and the default (\"%s\")" % panel._value_labels["fuel_drain"].text)
+	var live_row = main.spawner._rows_make_for_test(-5.0, [1.0])
+	panel._sliders["obstacle_scale"].value = 0.5
+	check(absf(live_row.obs[0].scale.x - tuning.column_width() * 0.5) < 0.001, "obstacle scale applies to rows already on screen")
+	panel._sliders["plane_tip_radius"].value = 0.30
+	panel._sliders["base_speed"].value = 9.0
+	panel.copy_values()
+	var copied: String = panel.last_copied_text
+	check(copied.contains("fuel_drain = 4.0") and copied.contains("obstacle_scale = 0.50") and copied.contains("plane_tip_radius = 0.30")
+			and copied.contains("base_speed = 9.0") and not copied.contains("fuel_refill"),
+			"Copy values lists only what changed  (\"%s\")" % copied.replace("\n", "; "))
+	check(panel._out.text.begins_with("Copied"), "the copied text is also shown on screen")
+	panel.reset_defaults()
+	var back := true
+	for e in panel.ENTRIES:
+		if not is_equal_approx(tuning.get(e[0]), defaults[e[0]]) or not is_equal_approx(panel._sliders[e[0]].value, defaults[e[0]]):
+			back = false
+	check(back and panel.changed_text() == "(no changes)", "Reset restores every default (and the sliders)")
+	check(absf(live_row.obs[0].scale.x - tuning.column_width() * tuning.obstacle_scale) < 0.001, "...including the obstacle size on screen")
+	panel._sliders["plane_tip_radius"].value = 0.30   # leave one visual change to check after resuming
+	panel.close()
+	check(not paused and not panel.is_open and not panel._panel.visible and panel._button.text == "TUNE", "closing the panel resumes the game")
+	await real_wait(0.2)
+	check(main.score > score_open, "...and it is running again")
+	check(main.player._wing_built_for == 0.30, "the visible wing was reshaped for the new tip radius")
+	var panel_tip := 1.0
+	var caps2: PackedFloat32Array = main.player.hit_capsules()
+	for o in range(0, caps2.size() - 5, 5):
+		panel_tip = minf(panel_tip, caps2[o + 4])
+	check(absf(panel_tip - 0.30 * tuning.plane_hit_scale) < 0.02, "...and the collision follows it (tip circle %.3f)" % panel_tip)
+	panel.reset_defaults()
+	main.spawner.reset(-30.0)
+	await real_wait(0.1)
+	var after_panel := snapshot(main)
+	check(same_world(base, after_panel), "opening, editing, copying, resetting and closing created nothing new  [%s]" % describe(after_panel))
+
+	print("2e. the opening")
+	main.restart()
+	main.set_process(false)   # step the game by hand
+	var plane_z: float = main.player.position.z
+	var first_row_z: float = main._first_row_z(main._half_height())
+	check(first_row_z <= -(main._half_height() + 1.0) + 0.001, "the first row starts above the screen (z %.1f, screen top %.1f)" % [first_row_z, -main._half_height()])
+	var saved_blk_a: int = tuning.blocked_columns_min   # no cubes, so the plane can't crash into the row we're timing
+	var saved_blk_b: int = tuning.blocked_columns_max
+	tuning.blocked_columns_min = 0
+	tuning.blocked_columns_max = 0
+	main.spawner.reset(first_row_z)
+	var open_t := 0.0
+	var arrived := -1.0
+	while open_t < 6.0 and arrived < 0.0:
+		main._process(1.0 / 60.0)
+		open_t += 1.0 / 60.0
+		for r in main.spawner._rows:
+			if arrived < 0.0 and r.position.z >= main.player.position.z:
+				arrived = open_t
+	check(arrived > 0.0 and absf(arrived - tuning.opening_seconds) < 0.25 + (0.0 if first_row_z < -(main._half_height() + 1.0) + 0.01 else 1.0),
+			"the first row reaches the plane after %.2f s (opening_seconds %.1f)" % [arrived, tuning.opening_seconds])
+	tuning.blocked_columns_min = saved_blk_a
+	tuning.blocked_columns_max = saved_blk_b
+	var z_short: float = main._first_row_z(3.0)
+	var z_tall: float = main._first_row_z(25.0)
+	var travel: float = tuning.base_speed * tuning.opening_seconds + 0.5 * tuning.speed_ramp * tuning.opening_seconds * tuning.opening_seconds
+	check(absf(z_short - (plane_z - travel)) < 0.001, "on a short screen the row starts exactly opening_seconds away")
+	check(z_tall <= -26.0 + 0.001, "on a very tall screen it never starts on screen (z %.1f)" % z_tall)
+	main.restart()
+
+	print("2f. the TUNE button doesn't restart the game")
+	await real_wait(0.3)   # let the button's rect settle
+	force_crash(main)
+	main.set_process(true)
+	await real_wait(0.2)
+	check(not main.alive, "crashed")
+	await real_wait(0.6)
+	var press := InputEventScreenTouch.new()
+	press.pressed = true
+	press.position = panel._button_rect.get_center()
+	main._input(press)
+	check(not main.alive and panel.button_hit(press.position), "a tap on the TUNE button is ignored by the game (still on the game-over screen)")
+	var elsewhere := InputEventScreenTouch.new()
+	elsewhere.pressed = true
+	elsewhere.position = Vector2(100.0, 900.0)
+	main._input(elsewhere)
+	check(main.alive, "a tap anywhere else restarts")
 
 	main.set_process(false)   # freeze the game loop: no real obstacles or near misses while the rest pokes at things
 	await real_wait(1.2)      # let the last popup / streaks / flash expire
@@ -425,6 +538,15 @@ func _initialize() -> void:
 		found.append_array(sp.update_near_misses(p0, caps))
 		z += 0.1
 	check(found.is_empty(), "a pass 1.5 clear is not a near miss")
+
+	print("6. players (no ?tune) get no panel")
+	DebugFlags.parse([])
+	var plain: Node = load("res://scenes/main.tscn").instantiate()
+	root.add_child(plain)
+	await process_frame
+	await process_frame
+	check(plain.tune_panel == null, "without ?tune there is no tuning panel at all")
+	plain.queue_free()
 
 	print("")
 	if failures.is_empty():
