@@ -3,75 +3,79 @@ Godot Engine v4.5.stable.official.876b29033 - https://godotengine.org
 
 === ENGAGED (chases close calls) player ===
 minutes | runs | run length | coins/run | coins/min | balance | levels (coin/bounty/ccpay/cap | tank/eff/refill) | gear | slots | best-distance chance
-      5 |   10 |    16 s |       285 |       607 |     115 | 3/0/1/0 | 3/2/0 | [] | 1 | 18%
+      5 |    9 |    17 s |       665 |      1.4K |     128 | 4/0/2/0 | 3/1/0 | [] | 1 | 16%
           picks: first after 15 s, 0.5 picks per run, - between picks
           (if the run lasted: 30 s between picks)
-     16 |   27 |    29 s |      1.4K |      2.1K |     148 | 10/0/6/0 | 4/4/2 | ["nine_lives"] | 1 | 56%
-          picks: first after 15 s, 0.9 picks per run, - between picks
-          (if the run lasted: 30 s between picks)
-     30 |   41 |    37 s |      5.1K |      6.2K |     278 | 20/8/16/0 | 6/6/4 | ["nine_lives"] | 1 | 94%
-          picks: first after 15 s, 1.2 picks per run, 33 s between picks
+     16 |   20 |    36 s |      4.6K |      5.8K |      12 | 15/4/11/0 | 4/4/3 | ["nine_lives"] | 1 | 63%
+          picks: first after 15 s, 1.1 picks per run, 34 s between picks
           (if the run lasted: 34 s between picks)
-     46 |   55 |    39 s |       36K |       42K |     799 | 34/18/28/0 | 6/7/6 | ["nine_lives"] | 1 | 99%
-          picks: first after 15 s, 1.3 picks per run, 32 s between picks
-          (if the run lasted: 34 s between picks)
-     61 |   65 |    55 s |      112K |      100K |    3.2K | 45/34/38/0 | 7/8/7 | ["nine_lives", "magnet"] | 2 | 100%
-          picks: first after 15 s, 1.6 picks per run, 35 s between picks
+     30 |   33 |    38 s |       22K |       27K |     274 | 30/14/25/0 | 4/5/3 | ["nine_lives"] | 1 | 94%
+          picks: first after 15 s, 1.1 picks per run, 35 s between picks
+          (if the run lasted: 36 s between picks)
+     45 |   43 |    53 s |      123K |      114K |      7K | 44/33/38/0 | 4/5/4 | ["nine_lives", "magnet"] | 2 | 100%
+          picks: first after 15 s, 1.5 picks per run, 36 s between picks
+          (if the run lasted: 43 s between picks)
+     62 |   54 |    54 s |      691K |      627K |     12K | 58/45/52/0 | 4/5/4 | ["nine_lives", "magnet"] | 2 | 100%
+          picks: first after 15 s, 1.7 picks per run, 32 s between picks
           (if the run lasted: 44 s between picks)
-     90 |   85 |    57 s |        1M |      889K |     51K | 67/56/60/0 | 7/8/7 | ["nine_lives", "magnet"] | 2 | 100%
-          picks: first after 15 s, 1.7 picks per run, 35 s between picks
-          (if the run lasted: 48 s between picks)
-    121 |  105 |    77 s |      4.2M |      2.8M |    159K | 81/69/73/0 | 7/8/7 | ["nine_lives", "magnet", "cloud_eye"] | 3 | 100%
+     91 |   75 |    69 s |      3.6M |      2.7M |    244K | 76/63/67/0 | 4/5/4 | ["nine_lives", "magnet"] | 3 | 100%
+          picks: first after 15 s, 2.0 picks per run, 36 s between picks
+          (if the run lasted: 46 s between picks)
+    120 |   92 |    75 s |       11M |      7.9M |    2.4M | 91/78/83/0 | 4/5/4 | ["nine_lives", "magnet", "cloud_eye"] | 3 | 100%
           picks: first after 15 s, 2.2 picks per run, 35 s between picks
-          (if the run lasted: 48 s between picks)
+          (if the run lasted: 46 s between picks)
 
   0.5 min  first purchase after run 1: fuel_tank
- 13.9 min  gear: nine_lives
- 24.6 min  gear: magnet
- 31.9 min  gear: head_start
- 35.3 min  gear: reserve_tank
- 37.4 min  gear: cloud_eye
- 37.5 min  gear: steady_nerves
- 51.0 min  2nd gear slot
-110.1 min  3rd gear slot
-3,000 m goal (Coast unlock): 50% chance reached by 15 min, 90% by 27 min (a run needs 600 units = 3000 m)
-runs in 2 hours: 105, purchases: 260
+  8.5 min  gear: nine_lives
+ 12.8 min  gear: magnet
+ 17.6 min  gear: head_start
+ 19.9 min  gear: reserve_tank
+ 24.5 min  gear: steady_nerves
+ 26.7 min  gear: cloud_eye
+ 34.3 min  2nd gear slot
+ 91.0 min  3rd gear slot
+3,000 m goal (Coast unlock): 50% chance reached by 13 min, 90% by 27 min (a run needs 600 units = 3000 m)
+runs in 2 hours: 92, purchases: 280
 
 === PASSIVE (mostly avoids close calls) player ===
 minutes | runs | run length | coins/run | coins/min | balance | levels (coin/bounty/ccpay/cap | tank/eff/refill) | gear | slots | best-distance chance
-      5 |   11 |    18 s |        68 |       139 |     167 | 0/0/0/0 | 3/1/0 | [] | 1 | 53%
+      5 |   10 |    19 s |        97 |       189 |     102 | 1/0/0/0 | 2/1/0 | [] | 1 | 50%
           picks: first after 15 s, 0.6 picks per run, - between picks
           (if the run lasted: 44 s between picks)
-     15 |   29 |    20 s |       106 |       201 |       0 | 4/0/0/0 | 4/2/0 | [] | 1 | 90%
+     15 |   27 |    22 s |       214 |       376 |       4 | 5/2/0/0 | 3/2/0 | [] | 1 | 87%
           picks: first after 15 s, 0.7 picks per run, - between picks
-          (if the run lasted: 43 s between picks)
-     30 |   55 |    21 s |       180 |       326 |       7 | 8/2/1/0 | 4/3/0 | [] | 1 | 99%
+          (if the run lasted: 50 s between picks)
+     31 |   49 |    27 s |       550 |       839 |     229 | 9/4/3/0 | 5/4/2 | ["magnet"] | 1 | 99%
           picks: first after 15 s, 0.7 picks per run, - between picks
-          (if the run lasted: 46 s between picks)
-     45 |   79 |    33 s |       387 |       520 |     418 | 10/4/2/0 | 5/4/1 | ["nine_lives"] | 1 | 100%
-          picks: first after 15 s, 0.9 picks per run, - between picks
-          (if the run lasted: 49 s between picks)
-     61 |   97 |    37 s |       627 |       762 |      85 | 14/6/5/0 | 6/5/3 | ["nine_lives"] | 1 | 100%
-          picks: first after 15 s, 1.0 picks per run, - between picks
-          (if the run lasted: 51 s between picks)
-     91 |  128 |    45 s |      1.4K |      1.4K |    1.5K | 19/12/11/0 | 8/7/5 | ["nine_lives"] | 1 | 100%
-          picks: first after 15 s, 1.0 picks per run, - between picks
-          (if the run lasted: 55 s between picks)
-    120 |  156 |    48 s |      3.9K |      3.9K |     752 | 26/18/17/0 | 8/8/6 | ["nine_lives"] | 1 | 100%
-          picks: first after 15 s, 1.0 picks per run, - between picks
+          (if the run lasted: 54 s between picks)
+     46 |   65 |    50 s |      1.5K |      1.4K |      25 | 15/7/7/0 | 6/5/4 | ["nine_lives"] | 1 | 100%
+          picks: first after 15 s, 1.2 picks per run, 58 s between picks
+          (if the run lasted: 56 s between picks)
+     61 |   78 |    53 s |      2.3K |      2.1K |    1.3K | 20/12/11/0 | 6/7/4 | ["nine_lives"] | 1 | 100%
+          picks: first after 15 s, 1.2 picks per run, 60 s between picks
           (if the run lasted: 58 s between picks)
+     91 |  102 |    56 s |      7.3K |      6.4K |     598 | 30/21/19/0 | 7/7/5 | ["nine_lives"] | 1 | 100%
+          picks: first after 15 s, 1.2 picks per run, 62 s between picks
+          (if the run lasted: 61 s between picks)
+    121 |  127 |    58 s |       24K |       20K |    1.7K | 38/31/28/0 | 7/7/5 | ["nine_lives", "magnet"] | 2 | 100%
+          picks: first after 15 s, 1.2 picks per run, 64 s between picks
+          (if the run lasted: 65 s between picks)
 
   0.9 min  first purchase after run 2: fuel_tank
- 41.2 min  gear: nine_lives
-108.3 min  gear: magnet
-120.2 min  gear: head_start
-3,000 m goal (Coast unlock): 50% chance reached by 5 min, 90% by 16 min (a run needs 600 units = 3000 m)
-runs in 2 hours: 156, purchases: 86
+ 29.8 min  gear: magnet
+ 36.6 min  gear: nine_lives
+ 79.1 min  gear: head_start
+ 83.0 min  gear: reserve_tank
+ 93.2 min  gear: steady_nerves
+ 98.2 min  gear: cloud_eye
+106.6 min  2nd gear slot
+3,000 m goal (Coast unlock): 50% chance reached by 6 min, 90% by 17 min (a run needs 600 units = 3000 m)
+runs in 2 hours: 127, purchases: 124
 
 === runs needed to earn the same total (passive / engaged) ===
-      1K coins: engaged 6 runs (3 min), passive 16 runs (8 min)  ->  2.7x as many runs
-     10K coins: engaged 25 runs (13 min), passive 74 runs (41 min)  ->  3.0x as many runs
-    100K coins: engaged 48 runs (36 min), passive 154 runs (117 min)  ->  3.2x as many runs
-      1M coins: engaged 65 runs (59 min), passive - runs (-1 min)  ->  -
-     10M coins: engaged 84 runs (87 min), passive - runs (-1 min)  ->  -
+      1K coins: engaged 5 runs (2 min), passive 14 runs (7 min)  ->  2.8x as many runs
+     10K coins: engaged 15 runs (9 min), passive 47 runs (28 min)  ->  3.1x as many runs
+    100K coins: engaged 30 runs (26 min), passive 95 runs (81 min)  ->  3.2x as many runs
+      1M coins: engaged 44 runs (45 min), passive - runs (-1 min)  ->  -
+     10M coins: engaged 61 runs (71 min), passive - runs (-1 min)  ->  -
 first purchase after run: engaged 1, passive 2

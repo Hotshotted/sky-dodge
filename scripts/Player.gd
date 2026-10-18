@@ -30,9 +30,34 @@ var _wing_mesh := ArrayMesh.new()        # the visible wing; rebuilt IN PLACE wh
 var _wing_mat := StandardMaterial3D.new()
 var _wing_built_for := -1.0              # tip radius the wing mesh currently shows
 
+## The visible marks of perks and gear: each is a few small boxes on the plane, [size, position] in model space (the nose is -z,
+## up is +y, which faces the camera). Built once, hidden until the item is held; a higher level makes it bigger and level 3 glows.
+const ITEM_PARTS := {
+	"glide": [[Vector3(0.06, 0.05, 0.4), Vector3(-1.12, 0.05, 0.05)], [Vector3(0.06, 0.05, 0.4), Vector3(1.12, 0.05, 0.05)]],
+	"cloud_diver": [[Vector3(0.22, 0.14, 0.2), Vector3(0.0, 0.05, -1.2)]],
+	"lucky_whiskers": [[Vector3(0.05, 0.16, 0.45), Vector3(0.0, 0.14, 0.85)]],
+	"prop_wash": [[Vector3(0.7, 0.03, 0.06), Vector3(0.0, 0.04, -1.3)], [Vector3(0.06, 0.03, 0.7), Vector3(0.0, 0.04, -1.3)]],
+	"battering_ram": [[Vector3(0.55, 0.12, 0.14), Vector3(0.0, 0.0, -1.32)]],
+	"fuel_miser": [[Vector3(0.24, 0.12, 0.6), Vector3(0.0, 0.14, 0.3)]],
+	"hot_streak": [[Vector3(0.05, 0.04, 1.3), Vector3(-0.14, 0.14, 0.0)], [Vector3(0.05, 0.04, 1.3), Vector3(0.14, 0.14, 0.0)]],
+	"scavenger": [[Vector3(0.22, 0.2, 0.22), Vector3(0.0, 0.18, 0.62)]],
+	"tailwind": [[Vector3(0.6, 0.02, 0.1), Vector3(-0.72, 0.05, 0.02)], [Vector3(0.6, 0.02, 0.1), Vector3(0.72, 0.05, 0.02)]],
+	"daredevil": [[Vector3(0.4, 0.02, 0.1), Vector3(-0.8, 0.05, 0.26)], [Vector3(0.4, 0.02, 0.1), Vector3(0.8, 0.05, 0.26)]],
+	"second_wind": [[Vector3(0.34, 0.04, 0.08), Vector3(0.0, 0.1, 0.97)]],
+	"golden_touch": [[Vector3(0.15, 0.13, 0.22), Vector3(0.0, 0.0, -1.36)]],
+	"nine_lives": [[Vector3(0.1, 0.03, 0.32), Vector3(0.0, 0.14, -0.35)], [Vector3(0.32, 0.03, 0.1), Vector3(0.0, 0.14, -0.35)]],
+	"reserve_tank": [[Vector3(0.15, 0.13, 0.62), Vector3(-0.62, 0.1, 0.1)], [Vector3(0.15, 0.13, 0.62), Vector3(0.62, 0.1, 0.1)]],
+	"magnet": [[Vector3(0.34, 0.06, 0.06), Vector3(0.0, 0.14, -0.82)], [Vector3(0.06, 0.06, 0.22), Vector3(-0.14, 0.14, -0.72)], [Vector3(0.06, 0.06, 0.22), Vector3(0.14, 0.14, -0.72)]],
+	"cloud_eye": [[Vector3(0.22, 0.07, 0.18), Vector3(0.0, 0.17, -0.55)]],
+	"steady_nerves": [[Vector3(0.36, 0.04, 0.1), Vector3(0.0, 0.12, 0.36)]],
+	"head_start": [[Vector3(0.1, 0.08, 0.3), Vector3(-0.16, 0.05, 1.02)], [Vector3(0.1, 0.08, 0.3), Vector3(0.16, 0.05, 1.02)]],
+}
+var _items := {}   # item id -> {root, mats}
+
 func _ready() -> void:
 	position = Vector3(0, PLANE_Y, 0)
 	_build_model()
+	_build_items()
 
 ## Main calls this every frame: the lower part of the screen the plane may use.
 func set_zone(top: float, bottom: float) -> void:
@@ -237,6 +262,49 @@ func _nearest_column_x(x: float) -> float:
 	return Tuning.column_center(clampi(i, 0, Tuning.column_count - 1))
 
 ## Greybox plane from primitives; nose points toward -Z (screen up).
+func _build_items() -> void:
+	for id in ITEM_PARTS:
+		var root := Node3D.new()
+		root.visible = false
+		var mats: Array[StandardMaterial3D] = []
+		var color: Color = Tuning.icon_def(id)["color"]
+		for part in ITEM_PARTS[id]:
+			var mi := MeshInstance3D.new()
+			var bm := BoxMesh.new()
+			bm.size = part[0]
+			mi.mesh = bm
+			var mat := StandardMaterial3D.new()
+			mat.albedo_color = color
+			mat.roughness = 1.0
+			mat.emission = color
+			mat.emission_energy_multiplier = 0.6
+			mi.material_override = mat
+			mi.position = part[1]
+			mi.cast_shadow = GeometryInstance3D.SHADOW_CASTING_SETTING_OFF
+			root.add_child(mi)
+			mats.append(mat)
+		_model.add_child(root)
+		_items[id] = {"root": root, "mats": mats}
+
+## Show what the plane carries: `perk_levels` (perk id -> level) and the equipped gear `gear` (ids). Level 2 is bigger, level 3 glows.
+func set_items(perk_levels: Dictionary, gear: Array) -> void:
+	for id in _items:
+		var it: Dictionary = _items[id]
+		var lvl := int(perk_levels.get(id, 0))
+		if lvl == 0 and gear.has(id):
+			lvl = 1
+		var root := it["root"] as Node3D
+		root.visible = lvl > 0
+		var s := 1.0 + 0.25 * maxf(lvl - 1, 0.0)
+		root.scale = Vector3(s, 1.0 + 0.6 * maxf(lvl - 1, 0.0), s)
+		for mat in it["mats"]:
+			(mat as StandardMaterial3D).emission_enabled = lvl >= 3
+
+## Pre-warm: show every item once.
+func prewarm_items(on: bool) -> void:
+	for id in _items:
+		(_items[id]["root"] as Node3D).visible = on
+
 func _build_model() -> void:
 	_model = Node3D.new()
 	add_child(_model)

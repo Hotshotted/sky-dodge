@@ -94,6 +94,12 @@ var _res_t := 100.0                  # seconds since the results appeared (100 =
 var _res_data := {}
 var _res_ticks := 0
 var _res_active := false
+# ---- perk / gear callouts: a little icon pops with a line (pooled)
+const CALLOUTS := 3
+const CALLOUT_LIFE := 1.7
+var _call_nodes: Array[Dictionary] = []
+var _call_born := PackedInt64Array()
+var _call_next := 0
 var sfx: Sfx = null                  # set by Main: the buttons click through it
 var _volume_sliders: Array[HSlider] = []
 var _perf_label: Label
@@ -373,7 +379,7 @@ func _build_menus() -> void:
 		var title := _screen_label(_hangar, "", 40, 170, y + 8, 480, 56, HORIZONTAL_ALIGNMENT_LEFT)
 		row["title"] = title
 		row["nodes"].append(title)
-		var line := _screen_label(_hangar, "", 28, 170, y + 62, 490, 96, HORIZONTAL_ALIGNMENT_LEFT)
+		var line := _screen_label(_hangar, "", 25, 170, y + 56, 490, 110, HORIZONTAL_ALIGNMENT_LEFT)
 		line.autowrap_mode = TextServer.AUTOWRAP_WORD_SMART
 		line.add_theme_color_override("font_color", Color(0.8, 0.9, 1.0))
 		line.add_theme_constant_override("outline_size", 6)
@@ -413,6 +419,7 @@ func _build_menus() -> void:
 	_over_hangar.pressed.connect(func(): hangar_pressed.emit())
 	add_child(_over_hangar)
 	_build_results()
+	_build_callouts()
 
 ## The Logbook: every combo, as a row. Found ones show their name and what they do; the rest are silhouettes
 ## with a hint. A scrolling list (drag it).
@@ -934,6 +941,7 @@ func _update_bonus_look(now: int) -> void:
 	_score.scale = Vector2.ONE * swell
 
 func _process(delta: float) -> void:
+	_update_callouts()
 	if _res_active:
 		_update_results(delta)
 	var pulse_now := Time.get_ticks_msec()
@@ -994,6 +1002,81 @@ func _process(delta: float) -> void:
 func show_game_over(header: String, reason: String, earned: float, new_best: bool, best: float, extra: String = "") -> void:
 	_over.text = _game_over_text(header, reason, earned, new_best, best, extra)   # (the plain text; the results screen below is what is shown)
 	_over.visible = true
+
+# ---------- Perk and gear callouts ----------
+
+func _build_callouts() -> void:
+	for i in CALLOUTS:
+		var holder := Control.new()
+		holder.mouse_filter = Control.MOUSE_FILTER_IGNORE
+		holder.position = Vector2(540, 470 + 100.0 * i)
+		holder.size = Vector2(1, 1)
+		holder.visible = false
+		var icon := Panel.new()
+		var sb := StyleBoxFlat.new()
+		sb.set_corner_radius_all(40)
+		sb.set_border_width_all(5)
+		sb.border_color = Color.WHITE
+		icon.add_theme_stylebox_override("panel", sb)
+		icon.size = Vector2(80, 80)
+		icon.position = Vector2(-380, -40)
+		icon.mouse_filter = Control.MOUSE_FILTER_IGNORE
+		icon.pivot_offset = Vector2(40, 40)
+		holder.add_child(icon)
+		var glyph := _make_label(52)
+		glyph.size = Vector2(80, 80)
+		glyph.position = Vector2(-380, -40)
+		glyph.vertical_alignment = VERTICAL_ALIGNMENT_CENTER
+		glyph.mouse_filter = Control.MOUSE_FILTER_IGNORE
+		holder.add_child(glyph)
+		var text := _make_label(50)
+		text.size = Vector2(800, 80)
+		text.position = Vector2(-280, -40)
+		text.horizontal_alignment = HORIZONTAL_ALIGNMENT_LEFT
+		text.vertical_alignment = VERTICAL_ALIGNMENT_CENTER
+		text.mouse_filter = Control.MOUSE_FILTER_IGNORE
+		holder.add_child(text)
+		add_child(holder)
+		_call_nodes.append({"holder": holder, "icon": icon, "sb": sb, "glyph": glyph, "text": text})
+		_call_born.append(0)
+
+## A perk or gear item acted: its icon pops in with a line. `id` = the item's id (icon colour and glyph come from it).
+func callout(id: String, text: String) -> void:
+	var d := Tuning.icon_def(id)
+	var i := _call_next
+	_call_next = (_call_next + 1) % CALLOUTS
+	var n := _call_nodes[i]
+	(n["sb"] as StyleBoxFlat).bg_color = d["color"]
+	(n["glyph"] as Label).text = d["glyph"]
+	(n["text"] as Label).text = text
+	(n["text"] as Label).add_theme_color_override("font_color", Color(1.0, 0.97, 0.8))
+	(n["holder"] as Control).visible = true
+	_call_born[i] = Time.get_ticks_msec()
+	_update_callouts()
+
+func _update_callouts() -> void:
+	var now := Time.get_ticks_msec()
+	for i in CALLOUTS:
+		if _call_born[i] == 0:
+			continue
+		var t := (now - _call_born[i]) / 1000.0
+		var n := _call_nodes[i]
+		var holder := n["holder"] as Control
+		if t >= CALLOUT_LIFE:
+			holder.visible = false
+			_call_born[i] = 0
+			continue
+		var pop := 1.0 + 0.5 * sin(PI * clampf(t / 0.28, 0.0, 1.0)) if t < 0.28 else 1.0   # the icon pops
+		(n["icon"] as Control).scale = Vector2(pop, pop)
+		(n["glyph"] as Control).scale = Vector2(pop, pop)
+		holder.modulate.a = 1.0 if t < CALLOUT_LIFE - 0.4 else (CALLOUT_LIFE - t) / 0.4
+		holder.position.y = 470.0 + 100.0 * i - 30.0 * clampf(t / CALLOUT_LIFE, 0.0, 1.0)
+
+## Pre-warm: show every callout slot once (glyphs and text), then hide them.
+func prewarm_callouts() -> void:
+	for i in CALLOUTS:
+		callout(["nine_lives", "reserve_tank", "lucky_whiskers"][i], ["Nine Lives! Reserve Tank saved you!", "Lucky Whiskers: +can  Prop Wash +12K", "Scavenger +3.2K Golden Touch x8 Hot Streak: x2 holds!"][i])
+		_call_born[i] = Time.get_ticks_msec() + 100000   # (kept on screen for the whole pre-warm)
 
 # ---------- The results screen ----------
 
@@ -1274,6 +1357,7 @@ func begin_prewarm(with_popups: bool) -> void:
 			l.text = Tuning.popup_text(2.0 + t) + "\n0123456789.x" if t < Tuning.near_miss_sizes.size() else Tuning.whisker_text + "\n" + Tuning.popup_text(2.0 + t)   # (digits too: every bonus value shows up as popup text)
 			l.position = Vector2(20.0, 120.0 + 90.0 * t)
 			l.set_meta("prewarm", true)
+	prewarm_callouts()
 	if with_popups:
 		# The speed cues and the Barnstormer popup: every glyph at the size it is drawn, so the first one mid-run costs nothing.
 		var cues := [
@@ -1350,6 +1434,9 @@ func prewarm_popups() -> void:
 ## Every label stays alive; nothing is created or freed.
 func reset_for_run() -> void:
 	_over.visible = false
+	for i in CALLOUTS:
+		_call_born[i] = 0
+		(_call_nodes[i]["holder"] as Control).visible = false
 	hide_results()
 	_combo_label.visible = false
 	_combo_sub.visible = false
@@ -1373,6 +1460,9 @@ func reset_for_run() -> void:
 	clear_bonus()
 
 func end_prewarm() -> void:
+	for i in CALLOUTS:
+		_call_born[i] = 0
+		(_call_nodes[i]["holder"] as Control).visible = false
 	hide_results()
 	_over.modulate.a = 0.0   # (the plain game-over text stays in the tree, but the results screen is what shows)
 	_combo_label.visible = false

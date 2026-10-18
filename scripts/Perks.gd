@@ -143,7 +143,7 @@ func roll(fuel_frac: float, count: int = 3) -> Array[Dictionary]:
 
 func perk_card(d: Dictionary, new_level: int, owned: bool) -> Dictionary:
 	return {"kind": "perk", "id": d["id"], "name": d["name"], "glyph": d["glyph"], "color": d["color"],
-			"line": String(Tuning.pick_short[d["id"]]).replace("{v}", _num(Tuning.perk_value(d["id"], new_level))), "level": new_level, "owned": owned}
+			"line": String(Tuning.pick_l3[d["id"]] if (new_level >= 3 and Tuning.pick_l3.has(d["id"])) else Tuning.pick_short[d["id"]]).replace("{v}", _num(Tuning.perk_value(d["id"], new_level))), "level": new_level, "owned": owned}
 
 ## The Coin Bag: a share of what the next pick costs.
 func coin_bag_amount() -> float:

@@ -851,6 +851,8 @@ func _initialize() -> void:
 	var can_top: float = 0.25 + 0.12 + tuning.fuel_can_size * 0.5
 	var plane_bottom := INF
 	for part in pl._model.get_children():
+		if not part is MeshInstance3D:   # (the perk and gear marks are Node3D roots, hidden unless held)
+			continue
 		var pa: AABB = part.global_transform * part.mesh.get_aabb()
 		plane_bottom = minf(plane_bottom, pa.position.y)
 	check(cloud_bottom >= obstacle_top and cloud_bottom >= can_top - 0.001, "clouds sit above the obstacles (top %.2f) and cans (top %.2f): slab starts at %.2f" % [obstacle_top, can_top, cloud_bottom])
@@ -1158,17 +1160,25 @@ func _initialize() -> void:
 		for i in range(1, cs.size()):
 			cost_ok = cost_ok and cs[i] / cs[i - 1] >= 20.0 and cs[i] / cs[i - 1] <= 50.0
 	check(cost_ok, "EARNINGS endless at x1.12 per level; PLANE 10-15 levels at x1.5; GEAR 1-3 levels, each 20-50x the last")
-	check(is_equal_approx(tuning.upgrade_value("coin_value", 1), 1.1) and is_equal_approx(tuning.upgrade_value("coin_value", 24), 1.0 + 0.1 * 24)
-			and is_equal_approx(tuning.upgrade_value("coin_value", 25), 1.0 + 0.1 * 25 * 2.0) and is_equal_approx(tuning.upgrade_value("coin_value", 50), 1.0 + 0.1 * 50 * 4.0),
-			"Coin Value: +10%% per level; the effect doubles at level 25 and again at 50 (x%.1f at 24, x%.1f at 25)" % [tuning.upgrade_value("coin_value", 24), tuning.upgrade_value("coin_value", 25)])
-	check(is_equal_approx(tuning.upgrade_value("bonus_cap", 2), tuning.bonus_cap + 1.0) and is_equal_approx(tuning.upgrade_value("bonus_cap", 25), tuning.bonus_cap + 25.0), "Bonus Cap: +0.5 per level, endless, doubling too")
+	check(is_equal_approx(tuning.upgrade_value("coin_value", 1), 1.3) and is_equal_approx(tuning.upgrade_value("coin_value", 2), 1.54) and is_equal_approx(tuning.upgrade_value("coin_value", 24), 1.0 + 0.1 * 29.05)
+			and is_equal_approx(tuning.upgrade_value("coin_value", 25), 1.0 + 0.1 * 30.05 * 2.0) and is_equal_approx(tuning.upgrade_value("coin_value", 50), 1.0 + 0.1 * 55.05 * 4.0),
+			"Coin Value: the first levels are big (+30%%, +24%% ...), then +10%% each; the effect doubles at level 25 and again at 50 (x%.1f at 24, x%.1f at 25)" % [tuning.upgrade_value("coin_value", 24), tuning.upgrade_value("coin_value", 25)])
+	check(is_equal_approx(tuning.upgrade_value("bonus_cap", 1), tuning.bonus_cap + 1.0) and is_equal_approx(tuning.upgrade_value("bonus_cap", 2), tuning.bonus_cap + 1.8) and is_equal_approx(tuning.upgrade_value("bonus_cap", 25), tuning.bonus_cap + 27.0), "Bonus Cap: +1.0, +0.8 ... then +0.5 per level, endless, doubling too")
 	var dim_ok := true
 	for id in ["fuel_tank", "efficiency", "refill"]:
 		var g1: float = absf(tuning.upgrade_value(id, 2) - tuning.upgrade_value(id, 1))
 		var g9: float = absf(tuning.upgrade_value(id, 10) - tuning.upgrade_value(id, 9))
 		dim_ok = dim_ok and g9 < g1
 	check(dim_ok, "PLANE gains diminish with level")
-	check(tuning.upgrade_line("fuel_tank", 0) == "Hold 15 more fuel (100 -> 115)", "plain-language line: \"%s\"" % tuning.upgrade_line("fuel_tank", 0))
+	check(tuning.upgrade_line("fuel_tank", 0).begins_with("Hold 30 more fuel (100 -> 130)") and tuning.upgrade_line("fuel_tank", 0).contains("You'll notice: +"), "plain-language line with a before -> after and a \"you'll notice\": \"%s\"" % tuning.upgrade_line("fuel_tank", 0).replace("\n", " | "))
+	var first_gain_ok := true
+	for id in ["fuel_tank", "efficiency", "refill"]:
+		first_gain_ok = first_gain_ok and absf(tuning.upgrade_value(id, 1) - tuning.upgrade_value(id, 0)) > 1.8 * absf(tuning.upgrade_value(id, 8) - tuning.upgrade_value(id, 7))
+	check(first_gain_ok, "the first level of each PLANE upgrade is at least 1.8x the level 8 gain (big early, small later)")
+	var notice_ok := true
+	for u in tuning.upgrades:
+		notice_ok = notice_ok and tuning.upgrade_notice(u["id"], 0).begins_with("You'll notice:")
+	check(notice_ok, "every upgrade has a \"You'll notice\" line")
 	# (e) the Hangar: tabs, rows, buying
 	main.hud.hangar_pressed.emit()
 	check(main.screen == main.SCREEN_HANGAR and main.hud._hangar.visible, "the Hangar opens")
@@ -1190,11 +1200,11 @@ func _initialize() -> void:
 	tsave.add_coins(1000000.0)
 	check(main.hud._hangar_coins.text == "Coins: 1M" and not (cv_row["buy"] as Button).disabled, "balance shows with suffixes (Coins: 1M)")
 	(cv_row["buy"] as Button).pressed.emit()
-	check(tsave.level("coin_value") == 1 and is_equal_approx(tuning.coin_value_mult(), 1.1) and tsave.coins == 1000050.0 - 280.0 and (cv_row["title"] as Label).text.contains("Lv 1"), "buying Coin Value: level 1, coins x1.1, cost deducted")
+	check(tsave.level("coin_value") == 1 and is_equal_approx(tuning.coin_value_mult(), 1.3) and tsave.coins == 1000050.0 - 280.0 and (cv_row["title"] as Label).text.contains("Lv 1"), "buying Coin Value: level 1, coins x1.3, cost deducted")
 	for id in ["can_bounty", "close_call_pay", "bonus_cap", "fuel_tank", "efficiency", "refill"]:
 		tsave.buy(id)
-	check(is_equal_approx(tuning.can_bounty_pay(), 8.0) and is_equal_approx(tuning.close_call_pay(), 4.0) and is_equal_approx(tuning.bonus_cap_now(), 3.5)
-			and is_equal_approx(tuning.fuel_max(), 115.0) and is_equal_approx(tuning.drain_rate(), 6.5 * 0.94) and is_equal_approx(tuning.refill_amount(), 24.0), "each upgrade applies its effect at level 1")
+	check(is_equal_approx(tuning.can_bounty_pay(), 24.0) and is_equal_approx(tuning.close_call_pay(), 12.0) and is_equal_approx(tuning.bonus_cap_now(), 4.0)
+			and is_equal_approx(tuning.fuel_max(), 130.0) and is_equal_approx(tuning.drain_rate(), 6.5 * 0.91) and is_equal_approx(tuning.refill_amount(), 27.0), "each upgrade applies its effect at level 1")
 	tsave.levels["fuel_tank"] = 11
 	tsave.add_coins(1e9)
 	check(tsave.buy("fuel_tank") and tsave.is_maxed("fuel_tank") and not tsave.buy("fuel_tank") and (main.hud._upg_rows[4]["buy"] as Button).text == "MAX", "a PLANE upgrade stops at its last level and shows MAX")
@@ -1318,15 +1328,15 @@ func _initialize() -> void:
 	var prow = sp._rows_make_for_test(-5.0, [1.0])
 	DebugFlags.parse([])
 	main._on_near_miss({"side": 1, "node": prow.obs[0], "outline": prow.outlines[0], "whisker": false})
-	check(is_equal_approx(main.score, 8.0 * 2.0), "Close Call Pay level 2 pays 8 coins x the multiplier (%.0f)" % main.score)
+	check(is_equal_approx(main.score, 4.0 * 5.4 * 2.0), "Close Call Pay level 2 pays 21.6 coins x the multiplier (%.0f)" % main.score)
 	var coin_pop_text := ""
 	for cl_ in main.hud._coin_pops:
 		if cl_.visible:
 			coin_pop_text = cl_.text
-	check(coin_pop_text == "+16", "...with a coin pop (\"%s\")" % coin_pop_text)
+	check(coin_pop_text == "+43", "...with a coin pop (\"%s\")" % coin_pop_text)
 	main.score = 0.0
 	main._on_pickup(Vector3(0, 0.4, -3))
-	check(is_equal_approx(main.score, 8.0 * 2.0), "Can Bounty level 1 pays 8 coins x the multiplier per can")
+	check(is_equal_approx(main.score, 24.0 * 2.0), "Can Bounty level 1 pays 24 coins x the multiplier per can")
 	sp._release_row(prow)
 	# (g) ?tune debug buttons
 	var add_btn: Button = null
@@ -1657,7 +1667,7 @@ func _initialize() -> void:
 	tsave.select_map(0)
 	main.restart()
 	main.set_process(false)
-	check(is_equal_approx(main.coin_mult, 1.5) and is_equal_approx(pk.next_pick, 60.0) and main.hud._next_label.text == "Next: 60", "in a run: multiplier = map x Coin Value (x1.5) -> first pick at 60, shown as \"%s\"" % main.hud._next_label.text)
+	check(is_equal_approx(main.coin_mult, 2.005) and is_equal_approx(pk.next_pick, 80.2) and main.hud._next_label.text == "Next: 80", "in a run: multiplier = map x Coin Value (x2.0) -> first pick at 80, shown as \"%s\"" % main.hud._next_label.text)
 	tsave.levels["coin_value"] = 0
 	main.restart()
 	main.set_process(false)
@@ -1789,7 +1799,7 @@ func _initialize() -> void:
 	var pips_lit := 0
 	for pip in main.pick_screen._parts[0]["pips"]:
 		pips_lit += int((pip.get_theme_stylebox("panel") as StyleBoxFlat).bg_color.is_equal_approx(Color.WHITE))
-	check(pips_lit == 3 and main.pick_screen._parts[0]["line"].text == "+60 coins per can" and main.pick_screen._parts[0]["combo"].visible and not main.pick_screen._parts[1]["combo"].visible,
+	check(pips_lit == 3 and main.pick_screen._parts[0]["line"].text == "Cans pay 250 and add a bonus step" and main.pick_screen._parts[0]["combo"].visible and not main.pick_screen._parts[1]["combo"].visible,
 			"a card is a big icon, a name, ONE short line (\"%s\") and level pips; a combo card is highlighted" % main.pick_screen._parts[0]["line"].text)
 	main.pick_screen.hide_cards()
 	pk.start_run(1.0)
@@ -1807,9 +1817,9 @@ func _initialize() -> void:
 	for i in 30:
 		main._process(0.05)
 	check(main.alive and main._gliding and main.fuel == 0.0, "Glide level 1: with an empty tank the plane glides on (alive after 1.5 s)")
-	for i in 15:
+	for i in 60:
 		main._process(0.05)
-	check(not main.alive and main.hud._over.text.begins_with(main.HEADER_FUEL), "...and the run ends when the 2 s glide is over")
+	check(not main.alive and main.hud._over.text.begins_with(main.HEADER_FUEL), "...and the run ends when the 4 s glide is over")
 	fresh.call()
 	pk.set_perk("glide", 3)
 	main.fuel = 0.001
@@ -1831,7 +1841,7 @@ func _initialize() -> void:
 	dcl.on[0] = true
 	main.fuel = 50.0
 	main._process(0.05)
-	check(absf(main.fuel - (50.0 - tuning.drain_rate() * 0.05 + 4.5 * 0.05)) < 0.01, "Cloud Diver level 3: flying under a cloud refunds fuel (%.3f after 0.05 s; a plain frame would give %.3f)" % [main.fuel, 50.0 - tuning.drain_rate() * 0.05])
+	check(absf(main.fuel - (50.0 - tuning.drain_rate() * 0.05 + 12.0 * 0.05)) < 0.01, "Cloud Diver level 3: flying under a cloud refunds fuel (%.3f after 0.05 s; a plain frame would give %.3f)" % [main.fuel, 50.0 - tuning.drain_rate() * 0.05])
 	sp.reset(-500.0)
 	# Lucky Whiskers
 	fresh.call()
@@ -1849,7 +1859,7 @@ func _initialize() -> void:
 		lrow2.can.visible = false
 		main._on_near_miss({"side": 1, "node": wdrow.obs[0], "outline": wdrow.outlines[0], "whisker": true})
 		drops += int(lrow2.has_can)
-	check(drops > 400 * 0.62 and drops < 400 * 0.88, "Lucky Whiskers level 3: a Whisker close drops a can about 75%% of the time (%d of 400)" % drops)
+	check(drops > 400 * 0.97, "Lucky Whiskers level 3: every Whisker close drops a can (%d of 400)" % drops)
 	main.hud.reset_for_run()
 	# Prop Wash
 	tsave.unlock_milestone("prop_wash")
@@ -1869,20 +1879,20 @@ func _initialize() -> void:
 	pk.set_perk("fuel_miser", 3)
 	main.fuel = 100.0
 	main._process(0.05)
-	check(is_equal_approx(main.fuel, 100.0 - tuning.drain_rate() * 0.7 * 0.05), "Fuel Miser level 3: 30%% less fuel burned (%.3f in 0.05 s)" % (100.0 - main.fuel))
+	check(is_equal_approx(main.fuel, 100.0 - tuning.drain_rate() * 0.35 * 0.05), "Fuel Miser level 3: 65%% less fuel burned (%.3f in 0.05 s)" % (100.0 - main.fuel))
 	main._steps.append(0.5)
 	main._refresh_bonus()
 	main._bonus_timer = 0.0
 	main._decay_acc = 0.0
 	pk.set_perk("hot_streak", 2)
 	main._decay_bonus(0.1)
-	check(is_equal_approx(main._decay_acc, tuning.bonus_decay_rate * 0.5 * 0.1), "Hot Streak level 2: the bonus fades 50%% slower")
+	check(is_equal_approx(main._decay_acc, tuning.bonus_decay_rate / 2.5 * 0.1), "Hot Streak level 2: the bonus fades 150%% slower (2.5x)")
 	fresh.call()
 	pk.set_perk("scavenger", 2)
 	main.coin_mult = 2.0
 	main.score = 0.0
 	main._on_pickup(Vector3(0, 0.4, -3))
-	check(is_equal_approx(main.score, 25.0 * 2.0), "Scavenger level 2: each can pays 25 extra coins (x the multiplier)")
+	check(is_equal_approx(main.score, 90.0 * 2.0), "Scavenger level 2: each can pays 90 extra coins (x the multiplier)")
 	fresh.call()
 	pk.set_perk("tailwind", 3)
 	main.coin_mult = 1.0
@@ -1891,7 +1901,7 @@ func _initialize() -> void:
 	main.run_distance = 0.0
 	main._process(0.05)
 	var sp1: float = tuning.map_speed(0, 0.05)
-	check(absf(main.run_distance - sp1 * 1.3 * 0.05) < 0.001 and absf(main.score - sp1 * 1.3 * 0.05 * (1.0 - tuning.bonus_pay_offset) * 1.3) < 0.001, "Tailwind level 3: +30%% speed and +30%% coins")
+	check(absf(main.run_distance - sp1 * 1.3 * 0.05) < 0.001 and absf(main.score - sp1 * 1.3 * 0.05 * (1.0 - tuning.bonus_pay_offset) * 1.9) < 0.001, "Tailwind level 3: +30%% speed and +90%% coins")
 	fresh.call()
 	pk.set_perk("daredevil", 3)
 	var ddrow = sp._rows_make_for_test(-4.0, [main.player.position.x + tuning.pickup_reach() + 0.0])
@@ -1922,7 +1932,7 @@ func _initialize() -> void:
 	pk.set_perk("second_wind", 2)
 	main.fuel = 10.0
 	main._process(0.05)
-	check(main.fuel > 55.0 and main.fuel < 61.0 and main._second_wind_used, "Second Wind level 2: under 15%% fuel it refills half the tank (%.0f)" % main.fuel)
+	check(main.fuel > 75.0 and main.fuel < 85.0 and main._second_wind_count == 1, "Second Wind level 2: under 15%% fuel it refills 70%% of the tank (%.0f)" % main.fuel)
 	main.fuel = 10.0
 	main._process(0.05)
 	check(main.fuel < 12.0, "...once per run")
@@ -2351,11 +2361,11 @@ func _initialize() -> void:
 	pk.set_perk("golden_touch", 3)
 	main.score = 0.0
 	main._on_crate_break(1, Vector3(0, 0.4, -3))
-	check(is_equal_approx(main.score, tuning.crate_coins * 2.0 * 4.0), "Golden Touch level 3 pays x4 on top (%.0f)" % main.score)
+	check(is_equal_approx(main.score, tuning.crate_coins * 2.0 * 8.0), "Golden Touch level 3 pays x8 on top (%.0f)" % main.score)
 	pk.set_perk("golden_touch", 1)
 	main.fuel = 20.0
 	main._on_crate_break(2, Vector3(0, 0.4, -3))
-	check(is_equal_approx(main.fuel, 20.0 + tuning.crate_fuel * 2.0), "a green crate gives fuel (x Golden Touch level 1 = x2: %.0f)" % main.fuel)
+	check(main.fuel >= minf(tuning.fuel_max(), 20.0 + tuning.crate_fuel * 3.0 + 0.15 * tuning.fuel_max()) - 0.01, "a green crate gives fuel (x Golden Touch level 1 = x3, Battering Ram 3 adds 15%%: %.0f)" % main.fuel)
 	pk.set_perk("golden_touch", 0)
 	pk.set_perk("battering_ram", 0)
 	pk.enabled = true
@@ -3619,6 +3629,159 @@ func _initialize() -> void:
 	cr_save.reset_all()
 	main.restart()
 	main.set_process(false)
+
+	print("14. progress you can feel: perk level 3 behaviours, marks on the plane, callouts, in-world goals")
+	var pf_save = root.get_node("Save")
+	pf_save.reset_all()
+	main.spawner.kit_enabled = false
+	main.restart()
+	main.set_process(false)
+	var pf = main.picks
+	pf.enabled = false
+	# every perk and gear item has a visible mark on the plane
+	var pl14 = main.player
+	var pf_mark_ok := true
+	for d in tuning.perks:
+		pf_mark_ok = pf_mark_ok and pl14._items.has(d["id"])
+	for u in tuning.upgrades_in_tab("gear"):
+		pf_mark_ok = pf_mark_ok and pl14._items.has(u["id"])
+	check(pf_mark_ok and pl14._items.size() == tuning.perks.size() + tuning.upgrades_in_tab("gear").size(), "every perk and gear item has a mark on the plane (%d)" % pl14._items.size())
+	pl14.set_items({}, [])
+	var pf_none_vis := 0
+	for id in pl14._items:
+		pf_none_vis += int(pl14._items[id]["root"].visible)
+	pl14.set_items({"hot_streak": 1, "tailwind": 3}, ["magnet", "nine_lives"])
+	var pf_vis_ids: Array[String] = []
+	for id in pl14._items:
+		if pl14._items[id]["root"].visible:
+			pf_vis_ids.append(id)
+	pf_vis_ids.sort()
+	check(pf_none_vis == 0 and pf_vis_ids == ["hot_streak", "magnet", "nine_lives", "tailwind"], "only what you hold is drawn on the plane %s" % str(pf_vis_ids))
+	check(pl14._items["tailwind"]["root"].scale.x > pl14._items["hot_streak"]["root"].scale.x and pl14._items["tailwind"]["mats"][0].emission_enabled and not pl14._items["hot_streak"]["mats"][0].emission_enabled, "a higher level makes the mark bigger, and level 3 glows")
+	pf.set_perk("scavenger", 2)
+	pf_save.loadout = ["reserve_tank", "", ""]
+	pf_save.levels["reserve_tank"] = 1
+	main._refresh_plane_items()
+	check(pl14._items["scavenger"]["root"].visible and pl14._items["reserve_tank"]["root"].visible, "picking a perk or equipping gear puts its mark on the plane")
+	pf.set_perk("scavenger", 0)
+	pf_save.loadout = ["", "", ""]
+	main._refresh_plane_items()
+	# callouts
+	main._callout_ms["nine_lives"] = -100000
+	main.last_callout = ""
+	main._callout("nine_lives", "Nine Lives!")
+	var pf_call_vis := 0
+	for cn in main.hud._call_nodes:
+		pf_call_vis += int(cn["holder"].visible)
+	check(main.last_callout == "Nine Lives!" and pf_call_vis == 1, "a callout pops (%d on screen)" % pf_call_vis)
+	main._callout("nine_lives", "Nine Lives! again")
+	check(main.last_callout == "Nine Lives!", "...and the same item does not repeat within a moment")
+	tuning.crate_chance = 0.0
+	pf_save.levels["nine_lives"] = 1
+	pf_save.loadout = ["nine_lives", "", ""]
+	main.restart()
+	main.set_process(false)
+	main._callout_ms["nine_lives"] = -100000
+	main.last_callout = ""
+	main._absorb_hit(Vector2(main.player.position.x, main.player.position.z), main.player.hit_capsules())
+	check(main.last_callout == "Nine Lives!", "Nine Lives acting says \"Nine Lives!\"")
+	pf_save.levels["reserve_tank"] = 1
+	pf_save.loadout = ["reserve_tank", "", ""]
+	main.restart()
+	main.set_process(false)
+	main._callout_ms["reserve_tank"] = -100000
+	main.fuel = 0.0
+	main._check_fuel(0.05)
+	check(main.last_callout == "Reserve Tank saved you!", "Reserve Tank acting says \"%s\"" % main.last_callout)
+	pf_save.loadout = ["", "", ""]
+	main.restart()
+	main.set_process(false)
+	# level 3 behaviours
+	pf.set_perk("hot_streak", 3)
+	main._steps.clear()
+	for v in [0.5, 0.4, 0.3]:
+		main._steps.append(v)
+	main._refresh_bonus()
+	main._bonus_timer = 0.0
+	main._decay_acc = 50.0
+	main._decay_bonus(0.1)
+	check(main.bonus >= 2.0 and main.bonus < 2.3, "Hot Streak 3: the bonus never drops below x2 (x%.1f after a long fade)" % main.bonus)
+	pf.set_perk("hot_streak", 0)
+	pf.set_perk("fuel_miser", 3)
+	main._steps.clear()
+	for v in [0.5, 0.5, 0.5, 0.5]:
+		main._steps.append(v)
+	main._refresh_bonus()
+	main.fuel = 100.0
+	main._process(0.05)
+	check(is_equal_approx(main.fuel, 100.0), "Fuel Miser 3: nothing burns at bonus x3 or more (%.2f)" % main.fuel)
+	pf.set_perk("fuel_miser", 0)
+	main._steps.clear()
+	main._refresh_bonus()
+	pf.set_perk("scavenger", 3)
+	main._steps.clear()
+	main._refresh_bonus()
+	main._on_pickup(Vector3(0, 0.4, -3))
+	check(main._steps.size() == 1, "Scavenger 3: each can adds a bonus step")
+	pf.set_perk("scavenger", 0)
+	main._steps.clear()
+	main._refresh_bonus()
+	main.restart()
+	main.set_process(false)
+	pf.set_perk("daredevil", 3)
+	main._process(0.01)
+	check(main.spawner.whisker_scale == 2.0, "Daredevil 3: Whisker closes count from twice as far")
+	pf.set_perk("daredevil", 0)
+	pf.set_perk("tailwind", 3)
+	main.fuel = 50.0
+	var pf_tw_row = main.spawner._rows_make_for_test(-5.0, [1.0])
+	main._on_near_miss({"side": 1, "node": pf_tw_row.obs[0], "outline": pf_tw_row.outlines[0], "whisker": true})
+	check(main.fuel >= 50.0 + 0.04 * tuning.fuel_max() - 0.01, "Tailwind 3: a Whisker close refuels 4%% (%.1f)" % main.fuel)
+	main.spawner._release_row(pf_tw_row)
+	pf.set_perk("tailwind", 0)
+	pf.set_perk("second_wind", 3)
+	main.fuel = 10.0
+	main._process(0.05)
+	var pf_sw1: float = main.fuel
+	main.fuel = 10.0
+	main._process(0.05)
+	check(pf_sw1 > 90.0 and main.fuel > 90.0, "Second Wind 3: works twice a run (%.0f, %.0f)" % [pf_sw1, main.fuel])
+	pf.set_perk("second_wind", 0)
+	# upgrades are big at first
+	var pf_first_ok := true
+	for id in ["coin_value", "can_bounty", "close_call_pay", "bonus_cap"]:
+		var g1: float = tuning.upgrade_value(id, 1) - tuning.upgrade_value(id, 0)
+		var g8: float = tuning.upgrade_value(id, 9) - tuning.upgrade_value(id, 8)
+		pf_first_ok = pf_first_ok and g1 > 1.5 * g8
+	check(pf_first_ok, "the first level of each EARNINGS upgrade is worth more than 1.5x a level-9 one")
+	# in-world goals
+	pf_save.reset_all()
+	pf_save.map_stats[tuning.maps[0]["id"]]["best_distance"] = 1000.0
+	main.restart()
+	main.set_process(false)
+	var pf_gl = main.goals
+	check(pf_gl.count == 3, "a run puts three goals in the world: your best, the next medal, the next map unlock (%d)" % pf_gl.count)
+	check(pf_gl._goals[0]["kind"] == "best" and pf_gl._goals[0]["meters"] == 1000.0 and pf_gl._gates[0]["label"].text == "BEST  1,000 m", "the first is a flag at your best: \"%s\"" % pf_gl._gates[0]["label"].text)
+	check(pf_gl._goals[1]["kind"] == "medal" and pf_gl._goals[1]["meters"] == 1500.0 and pf_gl._goals[2]["kind"] == "unlock" and pf_gl._goals[2]["meters"] == 3000.0, "...then Bronze at 1,500 m and the Coast at 3,000 m")
+	var pf_gz: float = main.player.position.z
+	pf_gl.update(0.0, pf_gz, -9.0)
+	check(not pf_gl._gates[0]["root"].visible, "far away the gates are out of sight")
+	var reached_kinds: Array[String] = []
+	pf_gl.reached.connect(func(kind: String, _t: String, _c: Color): reached_kinds.append(kind))
+	pf_gl.update(950.0, pf_gz, -9.0)
+	check(pf_gl._gates[0]["root"].visible and pf_gl._gates[0]["root"].position.z < pf_gz and reached_kinds.is_empty(), "as you near it the gate scrolls into view, ahead of the plane")
+	pf_gl.update(1002.0, pf_gz, -9.0)
+	pf_gl.update(1010.0, pf_gz, -9.0)
+	check(reached_kinds == ["best"] and main.last_cue == "NEW BEST!", "passing it celebrates once (%s)" % main.last_cue)
+	pf_gl.update(1600.0, pf_gz, -9.0)
+	check(reached_kinds == ["best", "medal"] and main.last_cue == "BRONZE MEDAL!", "...and the medal gate: %s" % main.last_cue)
+	main.restart()
+	main.set_process(false)
+	check(not pf_gl._gates[0]["root"].visible, "the next run starts with fresh gates")
+	pf_save.reset_all()
+	main.restart()
+	main.set_process(false)
+	check(main.goals.count == 2, "with no best yet there is no BEST flag (medal and unlock only)")
 
 	DirAccess.remove_absolute(ProjectSettings.globalize_path("user://smoke_test_save.json"))
 	print("")

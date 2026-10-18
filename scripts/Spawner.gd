@@ -144,6 +144,7 @@ var _blocked_add := 0
 var _gull_share := 0.0
 var _cloud_mult := 1.0
 var crate_shower_rows := 0          # Crate Shower supply: how many of the next rows are crate-rich
+var whisker_scale := 1.0           # Daredevil 3: Whisker closes count from twice as far
 var near_miss_scale := 1.0         # Daredevil: close calls count from this much farther
 signal bump(pos: Vector3, depth: int)   # a shoved obstacle hit another one (Prop Wash); depth = 0 for the first, 1+ down a chain
 var chain_nudges := false           # Wingwalker: a bump shoves the obstacle it hit, too
@@ -340,9 +341,9 @@ func update_near_misses(p: Vector2, caps: PackedFloat32Array) -> Array[Dictionar
 			if r.entered and r.min_idx >= 0 and r.min_clear < Tuning.near_miss_distance * near_miss_scale:
 				var side := 1 if r.xs[r.min_idx] > p.x else -1
 				events.append({"side": side, "node": r.obs[r.min_idx], "outline": r.outlines[r.min_idx],
-						"clearance": r.min_clear, "whisker": r.min_clear <= Tuning.whisker_close_distance, "row": r, "k": r.min_idx})
+						"clearance": r.min_clear, "whisker": r.min_clear <= Tuning.whisker_close_distance * whisker_scale, "row": r, "k": r.min_idx})
 	if kit_on:
-		kit.update_near_misses(p, caps, Tuning.near_miss_distance * near_miss_scale, behind, events, Tuning.whisker_close_distance)
+		kit.update_near_misses(p, caps, Tuning.near_miss_distance * near_miss_scale, behind, events, Tuning.whisker_close_distance * whisker_scale)
 	return events
 
 ## Flash one obstacle's outline white for near_miss_flash_time seconds: just uniform changes on
@@ -913,7 +914,8 @@ func collect_cans(p: Vector2, caps: PackedFloat32Array) -> Array[Vector3]:
 	return _picked
 
 ## Can Magnet: every can within `radius` of the plane at p (x, z) moves toward it by up to `move` units.
-func pull_cans(p: Vector2, radius: float, move: float) -> void:
+func pull_cans(p: Vector2, radius: float, move: float) -> bool:
+	var moved := false
 	for r in _rows:
 		if not r.has_can:
 			continue
@@ -926,6 +928,8 @@ func pull_cans(p: Vector2, radius: float, move: float) -> void:
 		r.can_dz = np.y - r.position.z
 		r.can.position.x = np.x
 		r.can.position.z = r.can_dz
+		moved = true
+	return moved
 
 ## A hit the plane survived (Nine Lives): the rows whose obstacles it overlaps are done (no close-call credit).
 func mark_hit_rows(p: Vector2, caps: PackedFloat32Array) -> void:

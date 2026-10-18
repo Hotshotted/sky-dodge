@@ -7,6 +7,7 @@ extends Node3D
 @onready var camera: Camera3D = $Camera3D
 @onready var sun: DirectionalLight3D = $Sun
 @onready var hud: CanvasLayer = $Hud
+var goals := Goals.new()        # gates for your best, the next medal and the next map unlock
 var crash_fx := CrashFx.new()   # the crash sequence's smoke, debris and Whiskers
 var sfx := Sfx.new()   # all sound (see Sfx.gd)
 
@@ -54,6 +55,10 @@ var _crash_t := -1.0          # seconds since the crash (-1 = no crash sequence 
 var _crash_speed := 0.0       # the world's speed when it happened (it rolls to a stop)
 var _cam_ease := 0.0          # 0..1: how far the camera has eased toward the falling plane
 var _results := {}            # what the results screen shows (built in _end_run)
+var last_callout := ""       # the latest perk / gear callout (the tests read it)
+var _callout_ms := {}         # perk / gear id -> when it last called out (they are rate-limited)
+var _glide_l3_used := false
+var _second_wind_count := 0
 var last_cue := ""           # the latest speed cue shown on screen (the tests read it)
 var _seen_steps := 0       # Countryside speed steps already announced
 var _ramp_tier := 0        # other maps: speed tiers already announced
@@ -70,7 +75,6 @@ var _picking := false
 var _pick_cards: Array[Dictionary] = []
 var _glide_left := 0.0                # Glide: seconds left in the glide (0 = not gliding)
 var _gliding := false
-var _second_wind_used := false
 var _combos := {}                     # combo id -> true: the combos that have switched on this run
 var _crates_broken := 0
 var _extra_picks := 0                 # purple crates broken: instant extra picks waiting to be shown
@@ -84,7 +88,12 @@ func _ready() -> void:
 	fuel = Tuning.fuel_max()
 	add_child(sfx)
 	hud.sfx = sfx
+	for list in [Tuning.perks, Tuning.upgrades, Tuning.boosts]:   # (the callout clock has a key for everything up front)
+		for d in list:
+			_callout_ms[d["id"]] = -100000
 	add_child(crash_fx)
+	add_child(goals)
+	goals.reached.connect(_on_goal_reached)
 	hud.play_again_pressed.connect(_on_play_again)
 	hud.hangar_goto.connect(func(id: String):
 		_open_hangar()
@@ -96,7 +105,10 @@ func _ready() -> void:
 	add_child(picks)
 	add_child(pick_screen)
 	pick_screen.chosen.connect(_on_pick_chosen)
-	picks.changed.connect(func(): hud.set_perks(picks.levels))
+	picks.changed.connect(func():
+		hud.set_perks(picks.levels)
+		_refresh_plane_items())
+	Save.changed.connect(_refresh_plane_items)
 	spawner.bump.connect(_on_bump)
 	if DebugFlags.tune_enabled():
 		tune_panel = TunePanel.new()
@@ -148,6 +160,8 @@ func _prewarm() -> void:
 	_warming = true
 	var spot := Vector3(0.0, 1.2, 1.0)
 	hud.begin_prewarm(not DebugFlags.off("popup"))
+	goals.prewarm_show(1.0)
+	player.prewarm_items(true)   # every perk and gear mark on the plane
 	sfx.prewarm_start()   # every sound decoded once, silently
 	crash_fx.prewarm_show(Vector3(0.0, 1.2, 1.0))   # smoke, debris, Whiskers and his parachute
 	spawner.prewarm_show(not DebugFlags.off("flash"), not DebugFlags.off("clouds"))
@@ -196,6 +210,9 @@ func _prewarm() -> void:
 		if elapsed_s >= Tuning.prewarm_min_seconds and calm_frames >= Tuning.prewarm_stable_frames:
 			break
 	fx.clear()
+	goals.hide_all()
+	player.prewarm_items(false)
+	_refresh_plane_items()
 	sfx.prewarm_end()
 	crash_fx.stop()
 	trail.clear()
@@ -236,7 +253,8 @@ func restart() -> void:
 	_invuln = 0.0
 	_glide_left = 0.0
 	_gliding = false
-	_second_wind_used = false
+	_second_wind_count = 0
+	_glide_l3_used = false
 	_picking = false
 	pick_screen.hide_cards()
 	get_tree().paused = false
@@ -253,6 +271,7 @@ func restart() -> void:
 	_reset_bonus()
 	var head := Tuning.gear_value("head_start")   # Head Start: begin at x1.5 / x2 (it fades like any bonus)
 	if head > 1.0:
+		_callout("head_start", "Head Start x%.1f" % head)
 		_steps.append(head - 1.0)
 		_refresh_bonus()
 		_bonus_timer = Tuning.bonus_hold_time
@@ -271,9 +290,11 @@ func restart() -> void:
 	fx.clear()
 	trail.clear()
 	hud.reset_for_run()
+	goals.setup(_goal_list())
 	hud.set_lives(lives)
 	hud.set_next(picks.next_pick)
 	hud.set_perks(picks.levels)   # (?tune can grant perks for every run)
+	_refresh_plane_items()
 	_check_combos()
 	if bonus > 1.0:
 		hud.set_bonus(bonus)
@@ -385,17 +406,18 @@ func _process(raw_delta: float) -> void:
 	elapsed += delta
 	player.step(delta)   # 1:1 finger movement this frame (the path from prev_xz to here is swept below)
 	picks.update(delta)
-	var tail := 1.0 + picks.value("tailwind") * 0.01   # Tailwind: more speed and more coins
+	var tail := 1.0 + Tuning.tailwind_speed_pct[picks.level("tailwind")] * 0.01   # Tailwind: a little more speed (its coins are in earn_mult)
 	var speed := Tuning.map_speed(map, elapsed) * tail
 	if spawner.kit_on:   # Countryside: no ramp, only the steps a BREATHER brings (eased in)
 		_kit_speed = move_toward(_kit_speed, spawner.stepped_speed(spawner.speed_steps), Tuning.speed_step_rate * delta)
-		speed = _kit_speed * tail
+		speed = minf(_kit_speed * tail, Tuning.max_speed)   # (the patterns are built for speeds up to the top speed)
 	if spawner.kit_on:
 		spawner.base_speed_now = _kit_speed
 	var step := speed * delta
 	_crash_speed = speed
 	score += step * Tuning.coins_per_unit * distance_pay() * earn_mult()
 	spawner.near_miss_scale = 1.0 + picks.value("daredevil") * 0.01
+	spawner.whisker_scale = 2.0 if picks.level("daredevil") >= 3 else 1.0
 	spawner.plane_z = player.position.z   # clouds fade as they near the plane,
 	spawner.run_time = elapsed            # start late in the run,
 	spawner.scroll_speed = speed          # and come more often the faster it goes
@@ -413,6 +435,7 @@ func _process(raw_delta: float) -> void:
 	_pf("spawner.update_hazards (kit motion, colliders)", t_pf)
 	t_pf = Time.get_ticks_usec()
 	run_distance += step
+	goals.update(Tuning.meters(run_distance), player.position.z, -_half_height())
 	hud.set_distance(Tuning.meters(run_distance))
 	hud.set_score(score, bonus)
 	var push: float = spawner.hazards.push_at(player.position.x, player.position.z)   # wind gusts
@@ -423,11 +446,16 @@ func _process(raw_delta: float) -> void:
 	_decay_bonus(delta)
 	hud.refresh_effects(picks.boosts, _glide_left)
 	if not picks.has_boost("fuel_freeze"):   # Fuel Freeze: nothing burns
-		fuel = maxf(fuel - Tuning.drain_rate() * (1.0 - picks.value("fuel_miser") * 0.01) * delta, 0.0)
+		var burn := Tuning.drain_rate() * (1.0 - picks.value("fuel_miser") * 0.01)
+		if picks.level("fuel_miser") >= 3 and bonus >= 3.0:   # Fuel Miser 3: nothing burns while your bonus is x3 or more
+			burn = 0.0
+			_callout("fuel_miser", "Fuel Miser: free flying!")
+		fuel = maxf(fuel - burn * delta, 0.0)
 	_pf("hud, trail, fuel", t_pf)
 	var cd := picks.value("cloud_diver")      # Cloud Diver: fuel back while under a cloud
 	if cd > 0.0 and spawner._cloud_over(plane.x, plane.y):
 		_add_fuel(cd * delta)
+		_callout("cloud_diver", "Cloud Diver: fuel back!")
 
 	# Swept collision: the plane can move any distance in one frame (a fast flick), so test the whole
 	# path from where it was to where it is, in small steps, instead of only the end point. Obstacles,
@@ -439,9 +467,9 @@ func _process(raw_delta: float) -> void:
 		reach = maxf(reach, Tuning.storm_radius)
 	if combo_on("deadstick") and _gliding:   # Deadstick: while gliding, cans come from anywhere on screen
 		reach = 60.0
-	spawner.chain_nudges = combo_on("wingwalker")
-	if reach > 0.0:
-		spawner.pull_cans(plane, reach, Tuning.magnet_pull_speed * delta)
+	spawner.chain_nudges = combo_on("wingwalker") or picks.level("prop_wash") >= 3   # (Prop Wash 3: bumps chain)
+	if reach > 0.0 and spawner.pull_cans(plane, reach, Tuning.magnet_pull_speed * delta) and Tuning.gear_value("magnet") > 0.0:
+		_callout("magnet", "Can Magnet!")
 	if _invuln > 0.0:
 		_invuln = maxf(_invuln - delta, 0.0)
 		player.set_flicker(_invuln > 0.0 and int(_invuln * 14.0) % 2 == 0)   # the plane sputters
@@ -505,8 +533,9 @@ func _process(raw_delta: float) -> void:
 ## Second Wind refills a share of the tank once when it runs low.
 func _check_fuel(delta: float) -> void:
 	var sw := picks.value("second_wind")
-	if sw > 0.0 and not _second_wind_used and fuel > 0.0 and fuel < Tuning.fuel_max() * Tuning.second_wind_below:
-		_second_wind_used = true
+	if sw > 0.0 and _second_wind_count < (2 if picks.level("second_wind") >= 3 else 1) and fuel > 0.0 and fuel < Tuning.fuel_max() * Tuning.second_wind_below:
+		_second_wind_count += 1
+		_callout("second_wind", "Second Wind! +%d%%" % int(sw))
 		_add_fuel(Tuning.fuel_max() * sw * 0.01)
 		hud.fuel_pulse()
 	if fuel > 0.0:
@@ -515,6 +544,7 @@ func _check_fuel(delta: float) -> void:
 		return
 	if reserve_left > 0:   # Reserve Tank: the tank refills itself
 		reserve_left -= 1
+		_callout("reserve_tank", "Reserve Tank saved you!")
 		fuel = Tuning.fuel_max() * Tuning.reserve_refill_fraction
 		hud.fuel_pulse()
 		hud.set_fuel(fuel / Tuning.fuel_max())
@@ -527,7 +557,14 @@ func _check_fuel(delta: float) -> void:
 			_gliding = true
 			_glide_left = glide
 		_glide_left -= delta
+		_callout("glide", "Glide!")
 		if _glide_left > 0.0:
+			return
+		if picks.level("glide") >= 3 and not _glide_l3_used:   # Glide 3: when the glide ends the tank is topped up once
+			_glide_l3_used = true
+			_gliding = false
+			fuel = Tuning.fuel_max() * 0.2
+			_callout("glide", "Glide: tank topped up!")
 			return
 	_end_run(HEADER_FUEL, REASON_FUEL)
 
@@ -623,7 +660,7 @@ func _speed_up_cue(fraction: float) -> void:
 func _apply_card(card: Dictionary) -> void:
 	picks.take(card)
 	if card["kind"] == "perk" and card["id"] == "tailwind":   # Tailwind, picked or levelled: say what it does
-		last_cue = "Tailwind! +%d%% speed" % int(Tuning.perk_value("tailwind", card["level"]))
+		last_cue = "Tailwind! +%d%% speed" % int(Tuning.tailwind_speed_pct[int(card["level"])])
 		if not DebugFlags.off("popup"):
 			hud.popup(last_cue, 64, Tuning.tailwind_color, camera.unproject_position(player.position + Vector3(0, 0, -3.0)))
 		hud.pulse_perk("tailwind")
@@ -646,6 +683,7 @@ func _apply_card(card: Dictionary) -> void:
 ## Prop Wash: a shoved obstacle bumped another one: coins (each link of a Wingwalker chain pays one more time).
 func _on_bump(pos: Vector3, depth: int) -> void:
 	var pay := picks.value("prop_wash") * earn_mult() * (1.0 + depth)
+	_callout("prop_wash", "Prop Wash +%s" % Tuning.fmt(pay))
 	if pay <= 0.0:
 		return
 	score += pay
@@ -686,7 +724,15 @@ func _on_crate_break(kind: int, pos: Vector3) -> void:
 	sfx.play("crunch", 1.0, [1.0, 1.12, 0.88][clampi(kind - 1, 0, 2)])
 	hud.pulse_perk("tailwind")
 	var ram := picks.level("battering_ram")
-	var gold_touch := maxf(picks.value("golden_touch"), 1.0)   # Golden Touch: crates pay x2 / x3 / x4
+	var gold_touch := maxf(picks.value("golden_touch"), 1.0)   # Golden Touch: crates pay x3 / x5 / x8
+	if ram > 0:
+		_callout("battering_ram", "Battering Ram!")
+		if ram >= 3:   # Battering Ram 3: every crate also refuels
+			_add_fuel(Tuning.fuel_max() * 0.15)
+	if gold_touch > 1.0:
+		_callout("golden_touch", "Golden Touch x%d" % int(gold_touch))
+		if picks.level("golden_touch") >= 3:   # Golden Touch 3: a can drops ahead too
+			spawner.drop_can_ahead(player.position.x)
 	if not DebugFlags.off("sparks"):
 		fx.crate_burst(pos, kind - 1)
 	if not DebugFlags.off("haptic"):
@@ -718,8 +764,10 @@ func _absorb_hit(p: Vector2, caps: PackedFloat32Array) -> void:
 	if picks.has_boost("shield"):   # the Shield goes first
 		picks.boosts.erase("shield")
 		picks.changed.emit()
+		_callout("shield", "Shield!")
 	else:
 		lives -= 1
+		_callout("nine_lives", "Nine Lives!")
 	_invuln = Tuning.hit_invulnerable_time
 	spawner.mark_hit_rows(p, caps)
 	var keep := Tuning.gear_value("steady_nerves")
@@ -728,6 +776,8 @@ func _absorb_hit(p: Vector2, caps: PackedFloat32Array) -> void:
 	if keep < 1.0:
 		_bonus_timer = Tuning.bonus_hold_time
 		hud.set_bonus(bonus, hud.BONUS_SHRINK)
+	if keep > 0.0 and not _steps.is_empty():
+		_callout("steady_nerves", "Steady Nerves kept your streak!")
 	hud.set_lives(lives)
 	if not DebugFlags.off("sparks"):
 		fx.sparks(player.position + Vector3(-1.05, 0.0, 0.1), -1)
@@ -890,6 +940,10 @@ func _on_pickup(pos: Vector3, golden: bool = false) -> void:
 			fx.coins(pos)
 			fx.whisker(pos)
 	var bounty := (Tuning.can_bounty_pay() + picks.value("scavenger")) * earn_mult()   # Can Bounty + Scavenger
+	if picks.value("scavenger") > 0.0:
+		_callout("scavenger", "Scavenger +%s" % Tuning.fmt(bounty))
+		if picks.level("scavenger") >= 3:   # Scavenger 3: each can adds a bonus step
+			_add_step(false)
 	if bounty > 0.0:
 		score += bounty
 		hud.coin_pop("+" + Tuning.fmt(bounty), camera.unproject_position(pos))
@@ -905,13 +959,19 @@ func _on_pickup(pos: Vector3, golden: bool = false) -> void:
 func _on_near_miss(ev: Dictionary) -> void:
 	var t0 := Time.get_ticks_usec()
 	var whisker: bool = ev.get("whisker", false) or picks.has_boost("whisker_window")   # Whisker Window: every close call counts
-	if combo_on("cloud_surfer") and spawner._cloud_over(player.position.x, player.position.z):   # Cloud Surfer: under a cloud counts too
+	if (combo_on("cloud_surfer") or picks.level("cloud_diver") >= 3) and spawner._cloud_over(player.position.x, player.position.z):   # Cloud Surfer / Cloud Diver 3: under a cloud counts too
 		whisker = true
+		if picks.level("cloud_diver") >= 3:
+			_callout("cloud_diver", "Cloud Diver: Whisker!")
 	sfx.play("barnstormer" if ev.get("special", "") == "barnstormer" else ("whoosh_big" if whisker else "whoosh"), 1.0, 1.0 + 0.04 * minf(bonus, 6.0))
 	_add_step(whisker)
 	hud.pulse_perk("tailwind")
 	if whisker and randf() * 100.0 < picks.value("lucky_whiskers"):   # Lucky Whiskers: a can drops ahead
-		spawner.drop_can_ahead(player.position.x, combo_on("golden_whiskers"))
+		if spawner.drop_can_ahead(player.position.x, combo_on("golden_whiskers")):
+			_callout("lucky_whiskers", "Lucky Whiskers: +can")
+	if whisker and picks.level("tailwind") >= 3:   # Tailwind 3: Whiskers refuel
+		_add_fuel(Tuning.fuel_max() * 0.04)
+		_callout("tailwind", "Tailwind: Whisker refuel!")
 	var wash := picks.level("prop_wash")      # Prop Wash: the obstacle you just passed gets shoved aside
 	if wash > 0 and ev.get("row") != null:
 		spawner.nudge_obstacle(ev["row"], ev["k"], ev["side"], Tuning.prop_wash_push * (1.0 + 0.25 * (wash - 1)))
@@ -968,15 +1028,74 @@ func _decay_bonus(delta: float) -> void:
 	_bonus_timer -= delta
 	if _bonus_timer > 0.0:
 		return
-	_decay_acc += Tuning.bonus_decay_rate * (1.0 - picks.value("hot_streak") * 0.01) * delta
+	_decay_acc += Tuning.bonus_decay_rate / (1.0 + picks.value("hot_streak") * 0.01) * delta
 	var dropped := false
 	while _decay_acc >= 1.0 and not _steps.is_empty():
+		if picks.level("hot_streak") >= 3 and bonus >= 2.0 and _bonus_without_last() < 2.0:   # Hot Streak 3: the bonus never drops below x2
+			_decay_acc = 0.0
+			_callout("hot_streak", "Hot Streak: x2 holds!")
+			break
 		_decay_acc -= 1.0
 		_steps.remove_at(_steps.size() - 1)   # the newest step goes first, with the amount it earned
 		dropped = true
 	if dropped:
 		_refresh_bonus()
 		hud.set_bonus(bonus, hud.BONUS_SHRINK)   # shrinks each step: the bonus fades if you play safe
+
+## The gates to put in this run: your best distance, the next medal, the next map unlock (this map's).
+func _goal_list() -> Array:
+	var out: Array = []
+	var best: float = Save.map_stat(map)["best_distance"]
+	if best > 0.0:
+		out.append({"kind": "best", "meters": best, "text": "BEST  %s" % Tuning.fmt_m(best), "color": "best"})
+	var medals: Array = Tuning.map_def(map)["medals"]
+	var earned := int(Save.map_stat(map)["medals"])
+	if earned < medals.size():   # the next medal
+		out.append({"kind": "medal", "meters": float(medals[earned][0]), "text": "%s  %s" % [MEDAL_NAMES[earned].to_upper(), Tuning.fmt_m(medals[earned][0])], "color": MEDAL_NAMES[earned].to_lower()})
+	for j in Tuning.maps.size():
+		if not Save.maps_unlocked[j] and int(Tuning.maps[j]["unlock_from"]) == map:
+			out.append({"kind": "unlock", "meters": float(Tuning.maps[j]["unlock_meters"]), "text": "%s  %s" % [String(Tuning.maps[j]["name"]).to_upper(), Tuning.fmt_m(Tuning.maps[j]["unlock_meters"])], "color": "unlock"})
+			break
+	return out
+
+## A goal gate was passed: celebrate.
+func _on_goal_reached(kind: String, text: String, color: Color) -> void:
+	var title := "NEW BEST!" if kind == "best" else (text.get_slice("  ", 0) + " MEDAL!" if kind == "medal" else text.get_slice("  ", 0) + " UNLOCKED!")
+	last_cue = title
+	hud.show_combo(title, color, text.get_slice("  ", 1))
+	if not DebugFlags.off("sparks"):
+		fx.whisker(player.position + Vector3(0.0, 0.0, -0.4))
+		fx.coins(player.position + Vector3(-1.0, 0.0, 0.2))
+		fx.coins(player.position + Vector3(1.0, 0.0, 0.2))
+	hud.flash(Color(color.r, color.g, color.b, 1.0))
+	sfx.play("barnstormer", 0.9, 1.1)
+	if not DebugFlags.off("haptic"):
+		Input.vibrate_handheld(60)
+
+## The perks and gear the plane carries, drawn on it.
+func _refresh_plane_items() -> void:
+	var gear: Array = []
+	for id in ["nine_lives", "reserve_tank", "magnet", "cloud_eye", "steady_nerves", "head_start"]:
+		if Save.is_equipped(id):
+			gear.append(id)
+	player.set_items(picks.levels, gear)
+
+## The bonus the streak would have if its newest step came off.
+func _bonus_without_last() -> float:
+	var total := 1.0
+	for i in _steps.size() - 1:
+		total += _steps[i]
+	return total
+
+## A perk or gear item acted: a little icon and a line pop up (each item at most every couple of seconds).
+func _callout(id: String, text: String) -> void:
+	var now := Time.get_ticks_msec()
+	if now - int(_callout_ms.get(id, -100000)) < 1800:
+		return
+	_callout_ms[id] = now
+	last_callout = text
+	if not DebugFlags.off("popup"):
+		hud.callout(id, text)
 
 ## A close call advances the streak by one step: the next table step, doubled for a Whisker close,
 ## and never more than the room left under the cap (so every step in the streak is worth what it shows).
