@@ -109,6 +109,23 @@ var cloud_max_drift := 0.12
 var fuel_can_under_cloud_chance := 0.45
 var cloud_color := Color(1.0, 1.0, 1.0)
 
+# ---------- Countryside obstacle kit ----------
+## Windmill blades turn this fast (radians/second) and reach this far from the hub (units).
+var windmill_speed := 1.5
+var windmill_blade := 2.3
+## Crows: they hover at the top edge for crow_telegraph seconds (flapping, in view), then swoop toward where the
+## plane IS at that moment at crow_speed (units/second) and fly straight on: never homing after the swoop starts.
+var crow_telegraph := 1.0
+var crow_speed := 11.0
+## Crop duster: an arrow at the screen edge for duster_telegraph seconds, then the plane crosses at duster_speed.
+var duster_telegraph := 1.0
+var duster_speed := 9.0
+## Balloons drift sideways (amplitude units, angular speed); kites wiggle the same way, smaller and quicker.
+var balloon_amp := 2.2
+var balloon_rate := 0.55
+var kite_amp := 0.9
+var kite_rate := 1.6
+
 # ---------- Maps ----------
 ## Four maps, each a separate run chosen on the start screen. Fields: id, name, unlock_from (the map whose
 ## best distance unlocks it, -1 = open) and unlock_meters, coin multiplier (map_coin_mult, below), the

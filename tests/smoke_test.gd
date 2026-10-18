@@ -33,6 +33,47 @@ func check(ok: bool, what: String) -> void:
 	if not ok:
 		failures.append(what)
 
+## One pass of a kit thing by a plane that stays put at (0, kpz): the thing is placed `d` to the side (or off-line),
+## the carrier scrolls by (crows and dusters fly on their own). Returns {hit, event}.
+func _kit_pass(kit, carrier: Node3D, kind: int, d: float, kpz: float, kcaps: PackedFloat32Array) -> Dictionary:
+	kit.release_all()
+	kit.plane_x = 0.0
+	kit.plane_z = kpz
+	var moving := kind != 3 and kind != 6
+	carrier.position.z = kpz - 9.0 if moving else -8.0
+	match kind:
+		0: kit.spawn(kind, carrier, 2.0 + d, 0.0, 1.2)
+		5: kit.spawn(kind, carrier, -5.0, 0.0, -d - 1.5); kit.spawn(kind, carrier, d + 1.5, 0.0, 5.0)
+		3: kit.spawn(kind, carrier, 0.0, 0.0, 0.0, 0.0, d)
+		6: kit.spawn(kind, carrier, 0.0, d, 0.0, 0.0, 0.0, 0.0, 0.0, 1.0)
+		4: kit.spawn(kind, carrier, 2.5 + d, 0.0, 0.0, 0.0, 1.0, 0.8, 0.0)
+		2: kit.spawn(kind, carrier, 3.2 + d, 0.0, 0.0, 0.0, 0.0, 0.0, 0.7, 1.0)
+		8: kit.spawn(kind, carrier, 1.4 + d, 0.0, 0.0, 1.0)
+		_: kit.spawn(kind, carrier, 1.4 + d, 0.0, 0.0, 0.0, 0.5, 1.5, 0.3)
+	var tn: Node = root.get_node("/root/Tuning")
+	var hit := false
+	var ev := false
+	var events: Array[Dictionary] = []
+	var behind := 0.0
+	for o in range(0, kcaps.size(), 5):
+		behind = maxf(behind, maxf(kcaps[o + 1], kcaps[o + 3]) + kcaps[o + 4])
+	var steps := 0
+	while steps < 600 and not hit:
+		steps += 1
+		if moving:
+			carrier.position.z += 14.0 / 60.0
+		kit.update(1.0 / 60.0)
+		if kit.hits(Vector2(0.0, kpz), kcaps):
+			hit = true
+		events.clear()
+		kit.update_near_misses(Vector2(0.0, kpz), kcaps, tn.near_miss_distance, behind, events, tn.whisker_close_distance)
+		if not events.is_empty():
+			ev = true
+		if moving and carrier.position.z > kpz + 9.0:
+			break
+	kit.release_all()
+	return {"hit": hit, "event": ev}
+
 func real_wait(sec: float) -> void:
 	var t0 := Time.get_ticks_msec()
 	while Time.get_ticks_msec() - t0 < sec * 1000.0:
@@ -44,7 +85,7 @@ func snapshot(main: Node) -> Dictionary:
 	var mats := {}
 	_walk(main, nodes, mats)
 	# (materials built at start-up that only show up in this walk while something uses them: gulls, golden cans, crates)
-	for pm in [main.spawner._gull_mat, main.spawner._golden_can_mat, main.spawner._crate_mat] + main.spawner._crate_glow_mats:
+	for pm in [main.spawner._gull_mat, main.spawner._golden_can_mat, main.spawner._crate_mat] + main.spawner._crate_glow_mats + main.spawner.kit.glow_mats + [main.spawner.kit.arrow_mat]:
 		mats.erase(pm.get_instance_id())
 	return {
 		"nodes": nodes, "mats": mats,
@@ -133,6 +174,8 @@ func _initialize() -> void:
 	tuning.crate_chance = 0.0    # (no random crates in the older tests; the crate tests switch them on)
 	await process_frame
 	await process_frame
+	main.spawner.kit_enabled = false   # (the older tests count cubes on the Countryside; the kit tests switch the kit back on)
+	main.spawner.kit_on = false
 	await process_frame
 	check(main._warming, "pre-warm is running at boot")
 	check(is_instance_valid(main.hud._splash), "splash screen is shown during the pre-warm")
@@ -2623,6 +2666,119 @@ func _initialize() -> void:
 	await process_frame
 	check(plain.tune_panel == null, "without ?tune there is no tuning panel at all")
 	plain.queue_free()
+
+	print("7. Countryside kit: models, colliders, close calls, hay, nothing allocated")
+	DebugFlags.parse([])
+	var ksp = main.spawner
+	ksp.kit_enabled = true
+	ksp.apply_map(0)
+	ksp.reset(-500.0)
+	check(ksp.kit_on, "the Countryside uses the kit")
+	var kit = ksp.kit
+	var kcaps: PackedFloat32Array = main.player.hit_capsules()
+	var kpz: float = main.player.position.z
+	var kp := Vector2(0.0, kpz)
+	kit.screen_top_z = -9.0
+	kit.plane_x = 0.0
+	kit.plane_z = kpz
+	var k_carrier := Node3D.new()
+	main.add_child(k_carrier)
+	for kind in 9:   # every kind has a model made of several outlined parts, and its pool
+		var k_ent = kit.spawn(kind, k_carrier, 0.0, 0.0, 1.6 if kind == 0 else 0.0)
+		check(k_ent != null and k_ent.parts.size() >= 1 and k_ent.outline != null, "%s: a pooled model with an outline" % kit.NAMES[kind])
+		if k_ent != null:
+			kit.release(k_ent)
+	var kpool_ok := true
+	for kind in 9:
+		kpool_ok = kpool_ok and kit._free[kind].size() == kit.POOL[kind]
+	check(kpool_ok, "released things go back to their pools")
+	# hit shapes: standing in the middle of each static kind is a crash, far to the side is not
+	for kind in [0, 1, 2, 4, 7, 8]:
+		k_carrier.position.z = kpz
+		var k_ent2 = kit.spawn(kind, k_carrier, 0.0, 0.0, 1.6 if kind == 0 else 0.0)
+		kit.update(0.0)
+		check(kit.hits(kp, kcaps), "%s: the plane over it crashes" % kit.NAMES[kind])
+		check(not kit.hits(Vector2(6.0, kpz), kcaps), "%s: a plane well to the side is clear" % kit.NAMES[kind])
+		kit.release(k_ent2)
+	# the wire: touching the wire between the poles crashes, the gap beside a pole is open
+	k_carrier.position.z = kpz
+	kit.spawn(5, k_carrier, -5.0, 0.0, -1.5)
+	kit.spawn(5, k_carrier, 1.5, 0.0, 5.0)
+	kit.update(0.0)
+	check(kit.hits(Vector2(-3.0, kpz), kcaps) and kit.hits(Vector2(3.0, kpz), kcaps), "power line: the wire crashes")
+	check(not kit.hits(Vector2(0.0, kpz), kcaps), "power line: the gap between the poles is open")
+	kit.release_all()
+	# close calls against every kind, moving ones included: some offset passes without touching and still scores a near miss
+	var sweep_kinds := {0: "barn", 1: "silo", 2: "windmill", 4: "balloon", 7: "kite", 3: "crow", 6: "duster", 5: "powerline", 8: "hay"}
+	for kind in sweep_kinds:
+		var k_got_event := false
+		var k_d := 4.0
+		while k_d > -2.5 and not k_got_event:
+			var k_r := _kit_pass(kit, k_carrier, kind, k_d, kpz, kcaps)
+			if k_r["hit"]:
+				break
+			k_got_event = k_r["event"]
+			k_d -= 0.05
+		if kind != 8:   # (hay is a crate: it has its own rules)
+			check(k_got_event, "%s: a pass closer than the near-miss distance without touching gives a close call" % sweep_kinds[kind])
+	# a k_crow flies straight once it has swooped: the plane moving away changes nothing
+	kit.release_all()
+	k_carrier.position.z = -8.0
+	var k_crow = kit.spawn(3, k_carrier, 2.0, 0.0, 0.0, 0.0, 0.0)
+	kit.plane_x = 0.0
+	var k_t_crow := 0.0
+	while k_crow.state != 2 and k_t_crow < 3.0:
+		kit.update(1.0 / 60.0)
+		k_t_crow += 1.0 / 60.0
+	check(k_crow.state == 2 and k_t_crow >= tuning.crow_telegraph - 0.05, "a k_crow hovers at the top edge for the telegraph time (%.2f s) before swooping" % k_t_crow)
+	var k_vx0: float = k_crow.vx
+	var k_vz0: float = k_crow.vz
+	kit.plane_x = 4.0
+	for i in 20:
+		kit.update(1.0 / 60.0)
+	check(k_crow.vx == k_vx0 and k_crow.vz == k_vz0 and k_vz0 > 0.0, "once swooping a k_crow keeps its line (never homes)")
+	kit.release_all()
+	# a duster is announced by an arrow first
+	k_carrier.position.z = -8.0
+	var k_dust = kit.spawn(6, k_carrier, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 1.0)
+	kit.update(1.0 / 60.0)
+	check(k_dust.arrow.visible and not k_dust.solid, "a crop duster shows an arrow at the edge first and is not solid yet")
+	var k_t_d := 0.0
+	while not k_dust.solid and k_t_d < 3.0:
+		kit.update(1.0 / 60.0)
+		k_t_d += 1.0 / 60.0
+	check(k_dust.solid and k_t_d >= tuning.duster_telegraph - 0.05 and not k_dust.arrow.visible, "...then crosses after %.2f s" % k_t_d)
+	kit.release_all()
+	# k_hay bales: the front face breaks them, rewards come from the same colour kinds
+	k_carrier.position.z = kpz - 0.3
+	var k_hay = kit.spawn(8, k_carrier, 0.0, 0.0, 0.0, 2.0)
+	kit.update(0.0)
+	check(k_hay.crate_kind == 2 and kit.glow_mats.size() == 3, "a k_hay bale carries a colour-coded crate kind")
+	var k_br: Array[Dictionary] = kit.break_hay(kp, kcaps, false, true, kpz)
+	check(k_br.size() == 1 and k_br[0]["kind"] == 2 and not k_hay.solid, "hay: the front face breaks it and pays out its kind")
+	kit.release_all()
+	k_carrier.position.z = kpz + 0.2
+	var k_hay2 = kit.spawn(8, k_carrier, 0.0, 0.0, 0.0, 1.0)
+	kit.update(0.0)
+	var k_br2: Array[Dictionary] = kit.break_hay(kp, kcaps, false, true, kpz)
+	check(k_br2.is_empty() and kit.hits(kp, kcaps) and kit.last_hit_hay, "hay: hitting it from the side crashes (a crate crash)")
+	kit.release_all()
+	# a long kit run allocates nothing
+	ksp.reset(-14.0)
+	main.set_process(false)
+	var k_base_kit := snapshot(main)
+	for i in 900:
+		ksp.advance(0.25)
+		ksp.update_hazards(1.0 / 30.0)
+		var k_rr = ksp.update_near_misses(kp, kcaps)
+		ksp.hits(kp, kcaps)
+		if i % 7 == 0:
+			ksp.break_crates(kp, kcaps, false, true, kpz)
+	var k_after_kit := snapshot(main)
+	check(same_world(k_base_kit, k_after_kit), "900 steps of a random Countryside run created nothing new  [%s]" % describe(k_after_kit))
+	ksp.reset()
+	ksp.kit_enabled = false
+	k_carrier.queue_free()
 
 	DirAccess.remove_absolute(ProjectSettings.globalize_path("user://smoke_test_save.json"))
 	print("")

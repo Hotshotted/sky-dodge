@@ -127,6 +127,9 @@ var _flashes: Array[Dictionary] = []   # {mat, end_ms}: outlines currently flash
 var map := 0                       # the map being played (see Tuning.maps)
 var plane_x := 0.0                 # set by Main each frame (lightning likes to aim at the plane)
 var hazards := Hazards.new()       # wind gusts and lightning
+var kit := Kit.new()               # the Countryside obstacle kit (barns, windmills, crows ...), pooled
+var kit_on := false                # this run uses the kit instead of cubes (Countryside only)
+var kit_enabled := true            # (tests switch the kit off to count cubes)
 var _gull_mat := StandardMaterial3D.new()   # gulls are white (the cubes' material is swapped at spawn, both pre-built)
 var _ground_mat := StandardMaterial3D.new()
 var _stripe_mat := StandardMaterial3D.new()
@@ -189,6 +192,9 @@ func _ready() -> void:
 	_gull_mat.metallic_specular = 0.0
 	hazards.spawner = self
 	add_child(hazards)
+	kit.ghost_mesh = _ghost_mesh
+	kit.ghost_mat = _ghost_mat
+	add_child(kit)
 	for i in POOL_ROWS:  # everything is created now, so nothing is allocated while playing
 		_make_row()
 	for i in CLOUD_POOL:
@@ -208,6 +214,7 @@ func apply_map(index: int) -> void:
 	_ground_mat.albedo_color = m["ground"]
 	_stripe_mat.albedo_color = m["stripe"]
 	hazards.configure(float(m["gust_chance"]), float(m["lightning_interval"]))
+	kit_on = kit_enabled and map == 0 and not DebugFlags.off("kit")
 	_update_look()
 
 ## Put every row back in the pool and start the obstacle stream over (restart in place). The first
@@ -222,6 +229,7 @@ func reset(first_row_z: float = -12.0) -> void:
 	for c in _clouds.duplicate():
 		_release_cloud(c)
 	hazards.reset()
+	kit.release_all()
 	_safe_col = Tuning.column_count / 2
 	for i in Tuning.column_count:
 		_prev_open.append(true)  # first row may use any column
@@ -273,6 +281,9 @@ func hits(p: Vector2, caps: PackedFloat32Array) -> bool:
 				if _gap(p, caps, o, ox, r.position.z, half) < 0.0:
 					last_hit_crate = k < r.crate_kind.size() and r.crate_kind[k] != 0
 					return true
+	if kit_on and kit.hits(p, caps):
+		last_hit_crate = kit.last_hit_hay
+		return true
 	return false
 
 ## Call every frame with the plane position (x, z) and its shapes. Each row remembers the
@@ -305,6 +316,8 @@ func update_near_misses(p: Vector2, caps: PackedFloat32Array) -> Array[Dictionar
 				var side := 1 if r.xs[r.min_idx] > p.x else -1
 				events.append({"side": side, "node": r.obs[r.min_idx], "outline": r.outlines[r.min_idx],
 						"clearance": r.min_clear, "whisker": r.min_clear <= Tuning.whisker_close_distance, "row": r, "k": r.min_idx})
+	if kit_on:
+		kit.update_near_misses(p, caps, Tuning.near_miss_distance * near_miss_scale, behind, events, Tuning.whisker_close_distance)
 	return events
 
 ## Flash one obstacle's outline white for near_miss_flash_time seconds: just uniform changes on
@@ -333,6 +346,9 @@ func _update_cloud_eye() -> void:
 	for r in _rows:
 		for k in r.obs.size():
 			r.obs_ghosts[k].visible = eye and _cloud_over(r.xs[k], r.position.z)
+	for e in kit.active:
+		if e.ghost != null:
+			e.ghost.visible = eye and e.solid and _cloud_over(e.px, e.pz)
 
 ## Is any visible puff right over the point (x, z) right now?
 func _cloud_over(x: float, z: float) -> bool:
@@ -402,10 +418,12 @@ func prewarm_show(with_flash: bool, with_clouds: bool = true) -> void:
 				cl.puffs[k].position = Vector3((k - 3) * 0.8, CLOUD_Y, 0.0)
 				cl.puffs[k].scale = Vector3(1.5, 1.0, 1.5)
 	hazards.prewarm_show()   # every pooled wind gust and lightning strip too
+	kit.prewarm_show()       # ...and one of each kit thing
 
 ## End of the pre-warm: hide the pooled rows again.
 func prewarm_hide() -> void:
 	hazards.prewarm_hide()
+	kit.release_all()
 	for row in _all_rows:
 		for cube in row.cubes:
 			cube.material_override = _obstacle_mat
@@ -495,6 +513,7 @@ func _acquire_row() -> Row:
 	return row
 
 func _release_row(row: Row) -> void:
+	kit.release_row(row)
 	_hide_row(row)
 	row.clear_state()
 	_rows.erase(row)
@@ -518,6 +537,9 @@ func _spawn_row(z: float) -> void:
 	# Rows are generated one ahead: `open` is this row, `next_open` the row after it.
 	var open: Array[bool] = _pending_open if not _pending_open.is_empty() else _generate_open_columns(_prev_open)
 	var next_open := _generate_open_columns(open)
+	if kit_on:   # the kit decides what is in the way; the row only carries it (cans, clouds) and says which columns are free
+		_spawn_kit_row(z)
+		return
 	_prev_open = open
 	_pending_open = next_open
 	_safe_col = _pick_safe_col(open, _safe_col)
@@ -559,6 +581,61 @@ func _spawn_row(z: float) -> void:
 	var can_col := _choose_can_column(open, next_open, _safe_col, row.cloud_cov)
 	if can_col >= 0:
 		_place_can(row, Tuning.column_center(can_col))
+
+## Countryside row: place kit things (a temporary random mix until the pattern generator takes over).
+func _spawn_kit_row(z: float) -> void:
+	var row := _acquire_row()
+	row.position = Vector3(0.0, 0.0, z)
+	row.visible = true
+	row.stripe.scale = Vector3(Tuning.ortho_size * 2.0, 0.1, 0.4)
+	var open: Array[bool] = []
+	for c in Tuning.column_count:
+		open.append(true)
+	_kit_generate(row, open)
+	for c in open.size():
+		row.open.append(open[c])
+	_safe_col = _pick_safe_col(open, _safe_col)
+	row.safe_col = _safe_col
+	_prev_open = open
+	_pending_open = open.duplicate()
+	_rows.append(row)
+	hazards.on_row_spawned(z)
+	_spawn_clouds_for_row(z)
+	for c in mini(open.size(), row.cloud_cov.size()):
+		row.cloud_cov[c] = open[c] and _covered(z, Tuning.column_center(c))
+	var can_col := _choose_can_column(open, open, _safe_col, row.cloud_cov)
+	if can_col >= 0:
+		_place_can(row, Tuning.column_center(can_col))
+
+var _kit_rows := 0
+func _kit_generate(row: Row, open: Array[bool]) -> void:
+	_kit_rows += 1
+	if _kit_rows % 2 == 0:
+		return
+	var col := randi() % Tuning.column_count
+	var x := Tuning.column_center(col)
+	var roll := randi() % 9
+	match roll:
+		0: _kit_put(Kit.BARN, row, x, 0.0, 1.6, 0.0, open, col, 1)
+		1: _kit_put(Kit.SILO, row, x, 0.0, 0.0, 0.0, open, col, 0)
+		2: _kit_put(Kit.WINDMILL, row, x, 0.0, 0.0, 0.0, open, col, 1, 0.0, 0.0, randf() * TAU, 1.0 if randf() < 0.5 else -1.0)
+		3:
+			for i in 3:
+				kit.spawn(Kit.CROW, row, Tuning.column_center(randi() % 5), 0.0, (i - 1) * 0.9, i * 0.5, 0.0, 0.0, 0.0, 1.0, i * 0.15)
+		4: _kit_put(Kit.BALLOON, row, x, 0.0, 0.0, 0.0, open, col, 0, Tuning.balloon_amp, Tuning.balloon_rate, randf() * TAU)
+		5:
+			var gx := Tuning.column_center(clampi(col, 1, 3))
+			kit.spawn(Kit.POWERLINE, row, -5.0, 0.0, gx - 1.2)
+			kit.spawn(Kit.POWERLINE, row, gx + 1.2, 0.0, 5.0)
+		6: kit.spawn(Kit.DUSTER, row, 0.0, 3.0 * (randf() - 0.5), 0.0, 0.0, 0.0, 0.0, 0.0, 1.0 if randf() < 0.5 else -1.0)
+		7: _kit_put(Kit.KITE, row, x, 0.0, 0.0, 0.0, open, col, 0, Tuning.kite_amp, Tuning.kite_rate, randf() * TAU)
+		8: _kit_put(Kit.HAY, row, x, 0.0, 0.0, 0.0, open, col, 0)
+
+func _kit_put(kind: int, row: Row, x: float, dz: float, a: float, b: float, open: Array[bool], col: int, wide: int, amp: float = 0.0, rate: float = 0.0, phase: float = 0.0, dir: float = 1.0) -> void:
+	kit.spawn(kind, row, x, dz, a, b, amp, rate, phase, dir)
+	for c in range(col - wide, col + wide + 1):
+		if c >= 0 and c < open.size():
+			open[c] = false
 
 func _place_can(row: Row, x: float) -> void:
 	row.has_can = true
@@ -681,6 +758,8 @@ func mark_hit_rows(p: Vector2, caps: PackedFloat32Array) -> void:
 				if _gap(p, caps, o, ox, r.position.z, half) < 0.0:
 					r.passed = true
 					r.min_clear = INF
+	if kit_on:
+		kit.mark_hit(p, caps)
 
 ## Apply the current obstacle_scale / can size to rows already in play (used by the tuning panel,
 ## so a slider change shows up at once instead of only on newly spawned rows).
@@ -762,6 +841,8 @@ func break_crates(p: Vector2, caps: PackedFloat32Array, battering: bool, speed_o
 				r.obs[k].visible = false
 				r.crate_glows[r.obs_cols[k]].visible = false
 				r.obs_ghosts[k].visible = false
+	if kit_on:
+		out.append_array(kit.break_hay(p, caps, battering, speed_ok, from_z))
 	return out
 
 ## ---- Gulls: obstacles that drift sideways ------------------------------------------------------------
@@ -887,6 +968,12 @@ func update_hazards(delta: float) -> void:
 		if not r.nudge_k.is_empty():
 			_update_nudges(r, delta, width)
 	hazards.update(delta)
+	if kit_on:
+		for k in 3:
+			kit.glow_mats[k].albedo_color = Tuning.crate_colors[k] * pulse
+		kit.plane_x = plane_x
+		kit.plane_z = plane_z
+		kit.update(delta)
 
 ## ---- Clouds: free-floating bundles --------------------------------------------------------------
 ## Bundles appear above the top of the screen at a random sideways position, in three size classes

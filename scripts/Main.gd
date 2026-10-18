@@ -691,7 +691,7 @@ func _on_near_miss(ev: Dictionary) -> void:
 	if whisker and randf() * 100.0 < picks.value("lucky_whiskers"):   # Lucky Whiskers: a can drops ahead
 		spawner.drop_can_ahead(player.position.x, combo_on("golden_whiskers"))
 	var wash := picks.level("prop_wash")      # Prop Wash: the obstacle you just passed gets shoved aside
-	if wash > 0 and ev.has("row"):
+	if wash > 0 and ev.get("row") != null:
 		spawner.nudge_obstacle(ev["row"], ev["k"], ev["side"], Tuning.prop_wash_push * (1.0 + 0.25 * (wash - 1)))
 	Save.add_stat("close_calls")
 	if whisker:
@@ -806,6 +806,7 @@ func _update_plane_zone() -> void:
 	var bottom := half_h - Tuning.plane_bottom_margin
 	var top := half_h - 2.0 * half_h * Tuning.plane_zone_fraction
 	player.set_zone(top, bottom)
+	spawner.kit.screen_top_z = -half_h
 
 func _input(event: InputEvent) -> void:
 	# A touch on the tuning panel's TUNE button belongs to the button, not the game.
