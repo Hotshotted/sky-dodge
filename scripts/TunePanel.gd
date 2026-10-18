@@ -21,9 +21,13 @@ const ENTRIES := [
 	["near_miss_distance", "Near-miss distance", 0.1, 1.5, 0.05],
 	["obstacle_scale", "Obstacle scale", 0.3, 0.9, 0.01],
 	["plane_tip_radius", "Plane tip radius", 0.05, 0.35, 0.01],
-	["move_accel", "Move accel", 40.0, 400.0, 5.0],
-	["move_damping", "Move damping", 2.0, 25.0, 0.5],
-	["snap_strength", "Snap strength", 0.0, 20.0, 0.5],
+	["sensitivity", "Sensitivity (1.0 = 1:1)", 0.3, 2.5, 0.05],
+	["visual_smoothing", "Visual smoothing (s)", 0.0, 0.1, 0.005],
+]
+
+## [Tuning property, label]: on/off switches.
+const TOGGLES := [
+	["snap_enabled", "Soft snap on release"],
 ]
 
 ## Screen rect of the TUNE button, so the game can ignore touches that land on it.
@@ -38,6 +42,7 @@ var last_copied_text := ""          # what the Copy button last put on the clipb
 var _defaults := {}                 # property -> default value, captured at build time
 var _sliders := {}                  # property -> HSlider
 var _value_labels := {}             # property -> Label
+var _toggles := {}                  # property -> CheckButton
 var _button_layer: CanvasLayer
 var _panel_layer: CanvasLayer
 var _button: Button
@@ -51,6 +56,8 @@ func _init() -> void:
 func build() -> void:
 	for e in ENTRIES:
 		_defaults[e[0]] = Tuning.get(e[0])
+	for t in TOGGLES:
+		_defaults[t[0]] = Tuning.get(t[0])
 	# Shared look for every slider: a thick track and a big round handle (the default is tiny on a phone).
 	var track := StyleBoxFlat.new()
 	track.bg_color = Color(0.22, 0.27, 0.36)
@@ -123,6 +130,15 @@ func build() -> void:
 		_sliders[e[0]] = slider
 		_value_labels[e[0]] = value_label
 		_show_value(e[0])
+	for t in TOGGLES:
+		var check := CheckButton.new()
+		check.text = t[1]
+		check.add_theme_font_size_override("font_size", 32)
+		check.custom_minimum_size = Vector2(0, 76)
+		check.button_pressed = Tuning.get(t[0])
+		check.toggled.connect(_on_toggle.bind(t[0]))
+		list.add_child(check)
+		_toggles[t[0]] = check
 	var buttons := HBoxContainer.new()
 	buttons.add_theme_constant_override("separation", 20)
 	var reset := _make_button("Reset", 36)
@@ -189,8 +205,17 @@ func _on_slider(value: float, property: String) -> void:
 	_show_value(property)
 	changed.emit(property)
 
+func _on_toggle(on: bool, property: String) -> void:
+	Tuning.set(property, on)
+	changed.emit(property)
+
 ## Put every tuned value back to its default (as captured when the panel was built).
 func reset_defaults() -> void:
+	for t in TOGGLES:
+		var name: String = t[0]
+		Tuning.set(name, _defaults[name])
+		_toggles[name].set_pressed_no_signal(_defaults[name])
+		changed.emit(name)
 	for e in ENTRIES:
 		var property: String = e[0]
 		Tuning.set(property, _defaults[property])
@@ -207,6 +232,10 @@ func changed_text() -> String:
 		var v: float = Tuning.get(property)
 		if not is_equal_approx(v, _defaults[property]):
 			lines.append("%s = %s" % [property, _format(v, e[4])])
+	for t in TOGGLES:
+		var name: String = t[0]
+		if bool(Tuning.get(name)) != bool(_defaults[name]):
+			lines.append("%s = %s" % [name, str(bool(Tuning.get(name))).to_lower()])
 	return "(no changes)" if lines.is_empty() else "\n".join(lines)
 
 ## Copy the changed values to the clipboard and show them on screen too (in case the browser

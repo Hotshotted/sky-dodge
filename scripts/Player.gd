@@ -13,14 +13,15 @@ const WING_THICKNESS := 0.08
 const BEAD_SPACING := 0.12               # collision circles along the wing (units apart)
 const CAP_STRIDE := 5                    # hit_capsules() floats per shape: ax, az, bx, bz, radius
 
-var velocity := Vector2.ZERO   # (x, z) velocity in units/s
+var velocity := Vector2.ZERO   # (x, z) the plane's ACTUAL velocity in units/s (how far it really moved); drives banking
+var prev_xz := Vector2.ZERO    # (x, z) at the start of the latest step: the start of the path Main sweeps for collisions
 var active := true             # false once crashed
 var touching := false          # finger currently down?
 var z_min := 0.0               # forward/back range, set by Main from the screen shape
 var z_max := 0.0
 var _zone_set := false
-var _pending_drag := Vector2.ZERO  # finger pixels accumulated since last frame
-var _input_vel := Vector2.ZERO     # smoothed velocity the finger is asking for
+var _pending_drag := Vector2.ZERO  # finger movement (viewport pixels) accumulated since the last step
+var _visual_xz := Vector2.ZERO     # where the plane is DRAWN (lags the true position by visual_smoothing)
 var _model: Node3D                 # visual child that banks/yaws
 var _wing_beads := PackedFloat32Array()  # collision circles along the wing (x, z, radius), unrotated
 var _caps := PackedFloat32Array()        # hit_capsules() output, updated in place every frame
@@ -40,6 +41,8 @@ func set_zone(top: float, bottom: float) -> void:
 	if not _zone_set:  # first call: start low in the zone, centred
 		_zone_set = true
 		position.z = lerpf(z_max, z_min, 0.25)
+		_visual_xz = Vector2(position.x, position.z)
+		prev_xz = _visual_xz
 
 func _input(event: InputEvent) -> void:
 	if (event is InputEventScreenTouch or event is InputEventScreenDrag) and TunePanel.button_hit(event.position):
@@ -52,54 +55,48 @@ func _input(event: InputEvent) -> void:
 		# Screen right = +x, screen down = +z, so no axis flip is needed.
 		_pending_drag += event.relative
 
-func _process(delta: float) -> void:
+func _process(_delta: float) -> void:
 	if _wing_built_for != Tuning.plane_tip_radius:
 		_fill_wing_mesh()   # tuning panel changed the tip radius: reshape the visible wing
+
+## World units per viewport pixel: the screen is ortho_size units wide, so a finger that moves
+## across the whole screen moves the plane across the whole play width.
+func world_per_pixel() -> float:
+	return Tuning.ortho_size / get_viewport().get_visible_rect().size.x
+
+## One frame of movement, called by Main (so it can sweep the path afterwards). The plane moves by
+## exactly the finger's movement since the last step: no velocity, acceleration or damping.
+func step(delta: float) -> void:
+	delta = maxf(minf(delta, 0.05), 0.0001)
+	prev_xz = Vector2(position.x, position.z)
 	if not active:
 		return
-	delta = minf(delta, 0.05)  # avoid huge steps after a hitch
-
-	# 1) Turn finger movement into a smoothed target velocity.
-	var raw := _pending_drag * Tuning.drag_sensitivity / delta
-	raw = raw.limit_length(Tuning.max_move_speed)
+	var wpp := world_per_pixel()
+	var tilt_stretch := 1.0 / cos(deg_to_rad(Tuning.camera_tilt_deg))  # the camera is tilted: depth is foreshortened
+	var move := Vector2(_pending_drag.x * wpp, _pending_drag.y * wpp * tilt_stretch) * Tuning.sensitivity
 	_pending_drag = Vector2.ZERO
-	_input_vel = _input_vel.lerp(raw, 1.0 - exp(-Tuning.input_smoothing * delta))
-
-	# 2) Update velocity per axis: accelerate, damp, or bleed off on reversal.
-	for axis in 2:
-		var want: float = _input_vel[axis]
-		var v: float = velocity[axis]
-		if absf(want) > 0.3:
-			if Tuning.reversal_decay_time > 0.0 and v * want < 0.0 and absf(v) > 0.4:
-				# Optional reversal penalty: old velocity dies out first; ~ln(100) decay over reversal_decay_time.
-				v *= exp(-4.6 * delta / Tuning.reversal_decay_time)
-			else:
-				v = move_toward(v, want, Tuning.move_accel * delta)
-		else:
-			v *= exp(-Tuning.move_damping * delta)
-		velocity[axis] = v
-
-	# 3) Soft snap (sideways only) toward the nearest column centre once the finger is lifted.
-	if not touching and Tuning.snap_strength > 0.0:
-		var target := _nearest_column_x(position.x)
-		velocity.x += ((target - position.x) * Tuning.snap_strength - velocity.x * Tuning.snap_damping) * delta
-
-	# 4) Integrate and clamp to the flyable area (full width, lower part of the screen).
-	var x := position.x + velocity.x * delta
-	var z := position.z + velocity.y * delta
+	var x := position.x + move.x
+	var z := position.z + move.y
+	# Optional soft snap (sideways only) once the finger is lifted: a plain ease, no velocity.
+	if Tuning.snap_enabled and not touching and Tuning.snap_strength > 0.0:
+		x += (_nearest_column_x(x) - x) * (1.0 - exp(-Tuning.snap_strength * delta))
+	# Clamp to the flyable area (full width, lower part of the screen).
 	var x_limit := Tuning.ortho_size * 0.5 - Tuning.plane_edge_margin
-	if absf(x) > x_limit:
-		x = signf(x) * x_limit
-		velocity.x = 0.0
-	if z < z_min or z > z_max:
-		z = clampf(z, z_min, z_max)
-		velocity.y = 0.0
+	x = clampf(x, -x_limit, x_limit)
+	z = clampf(z, z_min, z_max)
 	position = Vector3(x, PLANE_Y, z)
-
-	# 5) Visual banking (roll) and a slight yaw into the movement, smoothed.
+	# Banking and yaw come from how fast the plane ACTUALLY moved, smoothed so it still looks like a plane.
+	velocity = (Vector2(x, z) - prev_xz) / delta
 	var k := 1.0 - exp(-Tuning.tilt_smoothing * delta)
-	_model.rotation.z = lerpf(_model.rotation.z, -velocity.x * Tuning.bank_amount, k)
-	_model.rotation.y = lerpf(_model.rotation.y, -velocity.x * Tuning.yaw_amount, k)
+	_model.rotation.z = lerpf(_model.rotation.z, clampf(-velocity.x * Tuning.bank_amount, -Tuning.bank_max, Tuning.bank_max), k)
+	_model.rotation.y = lerpf(_model.rotation.y, clampf(-velocity.x * Tuning.yaw_amount, -Tuning.yaw_max, Tuning.yaw_max), k)
+	# Visual polish: the drawn plane may trail its true position very slightly. Collision never uses this.
+	if Tuning.visual_smoothing > 0.0:
+		_visual_xz += (Vector2(x, z) - _visual_xz) * (1.0 - exp(-delta / Tuning.visual_smoothing))
+		_model.position = Vector3(_visual_xz.x - x, 0.0, _visual_xz.y - z)
+	else:
+		_visual_xz = Vector2(x, z)
+		_model.position = Vector3.ZERO
 
 ## The wing's outline in model space: a tapered wing with rounded tips, the convex hull of a
 ## circle at each side of the root (full chord) and a circle at each tip. `tip_radius` sets how
@@ -211,7 +208,7 @@ func reset() -> void:
 	velocity = Vector2.ZERO
 	touching = false
 	_pending_drag = Vector2.ZERO
-	_input_vel = Vector2.ZERO
+	_model.position = Vector3.ZERO
 	_zone_set = false          # set_zone() will put the plane back at its start spot
 	position = Vector3(0.0, PLANE_Y, position.z)
 	_model.rotation = Vector3.ZERO

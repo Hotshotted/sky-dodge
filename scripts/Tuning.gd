@@ -128,22 +128,14 @@ var prewarm_stable_ms := 45.0
 ## ...and never runs longer than this, whatever the frame times are.
 var prewarm_max_seconds := 6.0
 
-# ---------- Plane movement (relative drag) ----------
-## The plane follows how far the finger MOVES, not where it is. Light momentum: it tracks the
-## finger closely and carries only a little after the finger stops.
-## World units the plane is asked to move per pixel of finger movement.
-var drag_sensitivity := 0.014
-## Fastest the plane can slide in either direction (units/second).
-var max_move_speed := 16.0
-## How quickly velocity builds toward the finger's motion (units/second^2). Higher = tighter follow.
-var move_accel := 160.0
-## Smoothing of the raw finger speed (higher = snappier, lower = smoother but laggier).
-var input_smoothing := 30.0
-## Exponential velocity damping while the finger is still or lifted (per second). Higher = stops sooner.
-var move_damping := 10.0
-## Reversing direction: old velocity decays to ~nothing over this many seconds before the new
-## direction takes over. 0 = off (reverse as fast as move_accel allows).
-var reversal_decay_time := 0.0
+# ---------- Plane movement (relative drag, 1:1, no momentum) ----------
+## The plane follows the finger directly: every frame it moves by how far the finger moved,
+## converted to world units. No acceleration, no damping, no carry after the finger stops.
+## 1.0 = the plane moves exactly as far across the screen as the finger does; 2.0 = twice as far.
+var sensitivity := 1.0
+## Visual polish only: seconds the DRAWN plane takes to catch up with its true position (0 = none,
+## exactly on the finger). Collision always uses the true position, so keep this tiny.
+var visual_smoothing := 0.0
 ## Plane stays this far (units) inside the left/right screen edges (wing half-width is 1.1).
 var plane_edge_margin := 1.1
 ## Forward/back range: the plane may use the bottom this fraction of the screen height.
@@ -152,16 +144,19 @@ var plane_zone_fraction := 0.4
 var plane_bottom_margin := 1.5
 
 # ---------- Soft snap (after the finger lifts, sideways only) ----------
-## Spring strength pulling the plane toward the nearest column centre. 0 disables snapping.
+## On: once the finger lifts, the plane eases sideways to the nearest column centre. Off by default.
+var snap_enabled := false
+## How fast it eases when snap is on (higher = quicker; 7 is about a third of a second).
 var snap_strength := 7.0
-## Spring damping; roughly 2*sqrt(snap_strength) is critically damped (no overshoot).
-var snap_damping := 5.5
 
 # ---------- Visual banking ----------
-## Roll (radians) per unit of sideways velocity.
+## Roll (radians) per unit of sideways velocity (the plane's actual velocity, from how far it moved).
 var bank_amount := 0.06
 ## Yaw (radians): nose turns toward the sideways motion, so banking reads from above.
 var yaw_amount := 0.025
+## The most the plane may roll / yaw, in radians, however hard it is flicked.
+var bank_max := 0.9
+var yaw_max := 0.45
 ## How quickly the visual tilt follows (higher = snappier).
 var tilt_smoothing := 10.0
 

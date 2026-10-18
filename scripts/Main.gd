@@ -9,6 +9,10 @@ extends Node3D
 @onready var hud: CanvasLayer = $Hud
 
 ## What ends a run, shown on the game-over screen as a big header plus a line under it.
+## The plane's path each frame is tested in steps no longer than this (units), so a flick can't
+## tunnel through an obstacle or skip a can (the thinnest thing it must not skip is ~1.3 wide).
+const SWEEP_STEP := 0.4
+const MAX_SWEEP_STEPS := 80
 const HEADER_CRASH := "CRASHED"
 const REASON_OBSTACLE := "Hit an obstacle"
 const HEADER_FUEL := "OUT OF FUEL"
@@ -142,6 +146,7 @@ func _process(delta: float) -> void:
 		return
 
 	elapsed += delta
+	player.step(delta)   # 1:1 finger movement this frame (the path from prev_xz to here is swept below)
 	var speed := minf(Tuning.base_speed + Tuning.speed_ramp * elapsed, Tuning.max_speed)
 	var step := speed * delta
 	score += step * (multiplier if Tuning.score_uses_multiplier else 1)
@@ -150,19 +155,35 @@ func _process(delta: float) -> void:
 	var plane := Vector2(player.position.x, player.position.z)
 	trail.advance(step, Vector2(plane.x, plane.y + 0.9), 1 if DebugFlags.off("trail") else multiplier, delta)
 	_decay_multiplier(delta)
-
-	var caps: PackedFloat32Array = player.hit_capsules()
-	if spawner.hits(plane, caps):
-		_end_run(HEADER_CRASH, REASON_OBSTACLE)
-		return
-
-	for ev in spawner.update_near_misses(plane, caps):
-		_on_near_miss(ev)
-
-	# Fuel: burn it, then pick up any cans touched (a can grabbed in the last moment still saves you).
 	fuel = maxf(fuel - Tuning.fuel_drain * delta, 0.0)
-	for pos in spawner.collect_cans(plane, caps):
-		_on_pickup(pos)
+
+	# Swept collision: the plane can move any distance in one frame (a fast flick), so test the whole
+	# path from where it was to where it is, in small steps, instead of only the end point. Obstacles,
+	# near misses and fuel cans are all checked along the way, and a crash stops the plane where it
+	# first touched.
+	var caps: PackedFloat32Array = player.hit_capsules()
+	var from: Vector2 = player.prev_xz
+	var steps := clampi(ceili(from.distance_to(plane) / SWEEP_STEP), 1, MAX_SWEEP_STEPS)
+	for i in range(1, steps + 1):
+		var p: Vector2 = from.lerp(plane, float(i) / steps)
+		if spawner.hits(p, caps):
+			# Found the step that hit: narrow it down to the exact first touch, so a fast flick
+			# stops AT the obstacle instead of up to a sweep step inside it.
+			var lo: Vector2 = from.lerp(plane, float(i - 1) / steps)
+			var hi := p
+			for k in 8:
+				var mid := lo.lerp(hi, 0.5)
+				if spawner.hits(mid, caps):
+					hi = mid
+				else:
+					lo = mid
+			player.position = Vector3(hi.x, player.position.y, hi.y)
+			_end_run(HEADER_CRASH, REASON_OBSTACLE)
+			return
+		for ev in spawner.update_near_misses(p, caps):
+			_on_near_miss(ev)
+		for pos in spawner.collect_cans(p, caps):   # a can grabbed in the last moment still saves you
+			_on_pickup(pos)
 	hud.set_fuel(fuel / Tuning.fuel_start)
 	if fuel <= 0.0:
 		_end_run(HEADER_FUEL, REASON_FUEL)

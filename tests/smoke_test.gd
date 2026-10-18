@@ -11,6 +11,9 @@ extends SceneTree
 ##       Reset work, closing resumes, and none of it allocates anything; absent without ?tune
 ##   2e. the opening: the first row reaches the plane after ~opening_seconds, and never starts on screen
 ##   2f. a tap on the TUNE button doesn't restart the game; a tap elsewhere does
+##   2g. controls: the plane moves 1:1 with the finger (no momentum), clamps to the play area, banks from
+##       its real velocity, snap and visual smoothing work; a fast flick through a cube still crashes and
+##       through a can still collects it (swept collision)
 ##   3. ?debug flags parse, and switching an effect off really skips it
 ##   4. plane collision capsules: span matches the wings, rounded corners graze past a cube corner
 ##   5. closest-approach near-miss detection reports the right side
@@ -64,6 +67,14 @@ func same_world(a: Dictionary, b: Dictionary) -> bool:
 
 func describe(a: Dictionary) -> String:
 	return "%d nodes, %d materials, %d engine nodes, %d resources" % [a["nodes"].size(), a["mats"].size(), a["node_count"], a["resource_count"]]
+
+## Feed the player a finger drag of `rel` viewport pixels (straight to its _input, in viewport units).
+func drag_by(pl: Node, rel: Vector2) -> void:
+	var ev := InputEventScreenDrag.new()
+	ev.index = 0
+	ev.position = Vector2(500.0, 900.0)
+	ev.relative = rel
+	pl._input(ev)
 
 func tap() -> void:
 	var ev := InputEventScreenTouch.new()
@@ -248,7 +259,9 @@ func _initialize() -> void:
 	var defaults := {}
 	for e in panel.ENTRIES:
 		defaults[e[0]] = tuning.get(e[0])
-	check(panel.ENTRIES.size() == 12 and panel._sliders.size() == 12, "12 sliders for the 12 tuned values")
+	for t in panel.TOGGLES:
+		defaults[t[0]] = tuning.get(t[0])
+	check(panel.ENTRIES.size() == 11 and panel._sliders.size() == 11 and panel._toggles.size() == 1, "11 sliders and 1 on/off switch for the tuned values")
 	var all_match := true
 	for e in panel.ENTRIES:
 		if not is_equal_approx(panel._sliders[e[0]].value, tuning.get(e[0])):
@@ -270,10 +283,14 @@ func _initialize() -> void:
 	check(absf(live_row.obs[0].scale.x - tuning.column_width() * 0.5) < 0.001, "obstacle scale applies to rows already on screen")
 	panel._sliders["plane_tip_radius"].value = 0.30
 	panel._sliders["base_speed"].value = 9.0
+	panel._sliders["sensitivity"].value = 1.5
+	panel._toggles["snap_enabled"].button_pressed = true
+	check(tuning.snap_enabled and events.has("snap_enabled") and is_equal_approx(tuning.sensitivity, 1.5), "the sensitivity slider and the snap switch edit Tuning live")
 	panel.copy_values()
 	var copied: String = panel.last_copied_text
 	check(copied.contains("fuel_drain = 4.0") and copied.contains("obstacle_scale = 0.50") and copied.contains("plane_tip_radius = 0.30")
-			and copied.contains("base_speed = 9.0") and not copied.contains("fuel_refill"),
+			and copied.contains("base_speed = 9.0") and copied.contains("sensitivity = 1.50") and copied.contains("snap_enabled = true")
+			and not copied.contains("fuel_refill"),
 			"Copy values lists only what changed  (\"%s\")" % copied.replace("\n", "; "))
 	check(panel._out.text.begins_with("Copied"), "the copied text is also shown on screen")
 	panel.reset_defaults()
@@ -281,7 +298,8 @@ func _initialize() -> void:
 	for e in panel.ENTRIES:
 		if not is_equal_approx(tuning.get(e[0]), defaults[e[0]]) or not is_equal_approx(panel._sliders[e[0]].value, defaults[e[0]]):
 			back = false
-	check(back and panel.changed_text() == "(no changes)", "Reset restores every default (and the sliders)")
+	back = back and not tuning.snap_enabled and not panel._toggles["snap_enabled"].button_pressed
+	check(back and panel.changed_text() == "(no changes)", "Reset restores every default (sliders and the snap switch)")
 	check(absf(live_row.obs[0].scale.x - tuning.column_width() * tuning.obstacle_scale) < 0.001, "...including the obstacle size on screen")
 	panel._sliders["plane_tip_radius"].value = 0.30   # leave one visual change to check after resuming
 	panel.close()
@@ -349,6 +367,140 @@ func _initialize() -> void:
 	check(main.alive, "a tap anywhere else restarts")
 
 	main.set_process(false)   # freeze the game loop: no real obstacles or near misses while the rest pokes at things
+
+	print("2g. controls: 1:1 follow, no momentum, swept collision")
+	var saved_ctl := {"blocked_a": tuning.blocked_columns_min, "blocked_b": tuning.blocked_columns_max, "chance": tuning.fuel_can_chance,
+			"sens": tuning.sensitivity, "smooth": tuning.visual_smoothing, "snap": tuning.snap_enabled}
+	tuning.blocked_columns_min = 0
+	tuning.blocked_columns_max = 0
+	tuning.fuel_can_chance = 0.0
+	tuning.sensitivity = 1.0
+	tuning.visual_smoothing = 0.0
+	tuning.snap_enabled = false
+	main.restart()
+	var pc = main.player
+	var spc = main.spawner
+	spc.reset(-200.0)   # nothing near the plane unless the test puts it there
+	var wpp: float = pc.world_per_pixel()
+	var stretch: float = 1.0 / cos(deg_to_rad(tuning.camera_tilt_deg))
+	var dt := 1.0 / 60.0
+	var x_start: float = pc.position.x
+	var z_start: float = pc.position.z
+	drag_by(pc, Vector2(120.0, 0.0))
+	main._process(dt)
+	check(absf((pc.position.x - x_start) - 120.0 * wpp) < 0.0001, "a 120 px drag moves the plane exactly 120 px of screen (%.4f units, expect %.4f)" % [pc.position.x - x_start, 120.0 * wpp])
+	drag_by(pc, Vector2(0.0, -60.0))
+	main._process(dt)
+	check(absf((pc.position.z - z_start) - (-60.0 * wpp * stretch)) < 0.0001, "up/down drags follow 1:1 on screen too (tilt-corrected)")
+	var x_now: float = pc.position.x
+	var v_move: float = pc.velocity.length()
+	main._process(dt)
+	main._process(dt)
+	check(pc.position.x == x_now and pc.velocity.length() < 0.0001 and v_move > 1.0, "no momentum: the plane stops the instant the finger does")
+	drag_by(pc, Vector2(60.0, 0.0))
+	main._process(dt)
+	check(absf(pc.velocity.x - 60.0 * wpp / dt) < 0.01, "velocity is the plane's actual movement (%.2f u/s)" % pc.velocity.x)
+	tuning.sensitivity = 0.5
+	x_now = pc.position.x
+	drag_by(pc, Vector2(100.0, 0.0))
+	main._process(dt)
+	check(absf((pc.position.x - x_now) - 50.0 * wpp) < 0.0001, "sensitivity 0.5 moves the plane half as far")
+	tuning.sensitivity = 1.0
+	drag_by(pc, Vector2(100000.0, 0.0))
+	main._process(dt)
+	var x_limit: float = tuning.ortho_size * 0.5 - tuning.plane_edge_margin
+	check(absf(pc.position.x - x_limit) < 0.0001, "a huge drag is clamped to the play area (x = %.2f)" % pc.position.x)
+	check(main.alive, "...and flying into the screen edge doesn't crash")
+	drag_by(pc, Vector2(0.0, 100000.0))
+	main._process(dt)
+	check(absf(pc.position.z - pc.z_max) < 0.0001, "...and so is the forward/back range")
+	# banking and yaw follow the real velocity, smoothed, and stay bounded
+	pc.position.x = -2.0
+	for i in 8:
+		drag_by(pc, Vector2(80.0, 0.0))
+		main._process(dt)
+	var roll: float = pc._model.rotation.z
+	var yaw: float = pc._model.rotation.y
+	check(roll < -0.05 and roll >= -tuning.bank_max - 0.001 and yaw < 0.0 and yaw >= -tuning.yaw_max - 0.001,
+			"moving right banks and yaws the plane, within limits (roll %.2f, yaw %.2f)" % [roll, yaw])
+	for i in 60:
+		main._process(dt)
+	check(absf(pc._model.rotation.z) < 0.02, "it levels out again once it stops")
+	# soft snap: off by default, eases to the nearest column centre when on, never while the finger is down
+	pc.position.x = 0.8
+	pc.touching = false
+	for i in 90:
+		main._process(dt)
+	check(absf(pc.position.x - 0.8) < 0.0001, "snap off: the plane stays exactly where the finger left it")
+	tuning.snap_enabled = true
+	pc.touching = true
+	for i in 30:
+		main._process(dt)
+	check(absf(pc.position.x - 0.8) < 0.0001, "snap on, finger down: no snapping")
+	pc.touching = false
+	for i in 120:
+		main._process(dt)
+	check(absf(pc.position.x - 0.0) < 0.01, "snap on, finger lifted: eases to the nearest column centre (x = %.3f)" % pc.position.x)
+	tuning.snap_enabled = false
+	# visual smoothing lags only the DRAWN plane, never the collision position
+	tuning.visual_smoothing = 0.1
+	x_now = pc.position.x
+	drag_by(pc, Vector2(200.0, 0.0))
+	main._process(dt)
+	check(absf((pc.position.x - x_now) - 200.0 * wpp) < 0.0001 and pc._model.position.length() > 0.2,
+			"visual smoothing: true position jumps, the drawn plane trails (%.2f behind)" % pc._model.position.length())
+	for i in 60:
+		main._process(dt)
+	check(pc._model.position.length() < 0.05, "...and catches up")
+	tuning.visual_smoothing = 0.0
+	drag_by(pc, Vector2(200.0, 0.0))
+	main._process(dt)
+	check(pc._model.position == Vector3.ZERO, "smoothing 0: the drawn plane is exactly on the true position")
+
+	# swept collision: a flick of 6 units in ONE frame
+	main.restart()
+	spc.reset(-200.0)
+	pc.position.x = -3.0
+	var cube_row = spc._rows_make_for_test(pc.position.z, [0.0])
+	var end_x := 3.0
+	var end_clear: bool = not spc.hits(Vector2(end_x, pc.position.z), pc.hit_capsules())
+	drag_by(pc, Vector2((end_x - pc.position.x) / wpp, 0.0))
+	main._process(dt)
+	check(end_clear, "(setup) the flick's END point alone is clear of the cube, so only a swept test can see it")
+	check(not main.alive and main.hud._over.text.contains(main.HEADER_CRASH), "a fast flick through a cube crashes")
+	var touch_x: float = -(spc._obstacle_half().x + pc.collision_half_span())   # wingtip meets the cube's left edge
+	check(absf(pc.position.x - touch_x) < 0.02, "...stopping exactly where it first touched, not inside it or on the far side (x = %.3f, touch at %.3f)" % [pc.position.x, touch_x])
+	main.restart()
+	spc.reset(-200.0)
+	pc.position.x = -3.0
+	spc._rows_make_for_test(pc.position.z, [])   # an empty row: nothing to hit
+	drag_by(pc, Vector2(6.0 / wpp, 0.0))
+	main._process(dt)
+	check(main.alive and absf(pc.position.x - 3.0) < 0.0001, "the same flick through empty space is fine")
+	# ...and through a fuel can
+	main.restart()
+	spc.reset(-200.0)
+	pc.position.x = -3.0
+	main.fuel = 50.0
+	var can_row = spc._rows_make_for_test(pc.position.z, [])
+	spc._place_can_for_test(can_row, 0.0)
+	var cans_caps: PackedFloat32Array = pc.hit_capsules()
+	var closest := INF
+	for o in range(0, cans_caps.size(), 5):
+		closest = minf(closest, Vector2(end_x + cans_caps[o], pc.position.z + cans_caps[o + 1]).distance_to(Vector2(0.0, can_row.position.z)) - cans_caps[o + 4])
+	drag_by(pc, Vector2((end_x - pc.position.x) / wpp, 0.0))
+	main._process(dt)
+	check(closest > tuning.fuel_pickup_radius, "(setup) the flick's end point alone would miss the can (%.2f away)" % closest)
+	check(not can_row.has_can and main.fuel > 50.0 + tuning.fuel_refill - 1.0, "a fast flick through a fuel can collects it (fuel %.1f)" % main.fuel)
+	check(main.alive, "...without crashing")
+	tuning.blocked_columns_min = saved_ctl["blocked_a"]
+	tuning.blocked_columns_max = saved_ctl["blocked_b"]
+	tuning.fuel_can_chance = saved_ctl["chance"]
+	tuning.sensitivity = saved_ctl["sens"]
+	tuning.visual_smoothing = saved_ctl["smooth"]
+	tuning.snap_enabled = saved_ctl["snap"]
+	main.restart()
+	main.set_process(false)
 	await real_wait(1.2)      # let the last popup / streaks / flash expire
 	var sp: Node = main.spawner
 	var pl: Node = main.player
