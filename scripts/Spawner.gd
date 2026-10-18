@@ -456,6 +456,7 @@ func _choose_can_column(open: Array[bool], next_open: Array[bool], safe: int, co
 ## (the same array object every call: nothing is allocated).
 func collect_cans(p: Vector2, caps: PackedFloat32Array) -> Array[Vector3]:
 	_picked.clear()
+	var reach := Tuning.pickup_reach()   # the Can Magnet upgrade
 	for r in _rows:
 		if not r.has_can or absf(r.position.z - p.y) > NEAR_RANGE:
 			continue
@@ -463,7 +464,7 @@ func collect_cans(p: Vector2, caps: PackedFloat32Array) -> Array[Vector3]:
 		for o in range(0, caps.size(), 5):
 			var a := Vector2(p.x + caps[o], p.y + caps[o + 1])
 			var b := Vector2(p.x + caps[o + 2], p.y + caps[o + 3])
-			if Collision.point_segment(centre, a, b) - caps[o + 4] < Tuning.fuel_pickup_radius:
+			if Collision.point_segment(centre, a, b) - caps[o + 4] < Tuning.fuel_pickup_radius + reach:
 				r.has_can = false
 				r.can.visible = false
 				_picked.append(Vector3(r.can_x, 0.4, r.position.z))

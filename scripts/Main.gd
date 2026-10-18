@@ -18,6 +18,12 @@ const REASON_OBSTACLE := "Hit an obstacle"
 const HEADER_FUEL := "OUT OF FUEL"
 const REASON_FUEL := "The tank ran dry"
 
+## Which screen is up. A run is only on while screen == SCREEN_PLAY and alive.
+enum { SCREEN_MENU, SCREEN_HANGAR, SCREEN_PLAY, SCREEN_OVER }
+var screen := SCREEN_MENU
+var run_cans := 0       # fuel cans collected this run (they pay coins at the end)
+var last_earned := 0    # coins the last run paid
+var last_was_best := false
 var score := 0.0        # accumulates distance flown x bonus
 var streak := 0.0   # close-call streak (each near miss adds 1; it drops gradually after the hold time)
 var bonus := 1.0    # points bonus from the streak, 1.0 = none
@@ -35,7 +41,7 @@ var trail := Trail.new()
 var tune_panel: TunePanel   # only exists when the URL has ?tune
 
 func _ready() -> void:
-	fuel = Tuning.fuel_start
+	fuel = Tuning.fuel_max()
 	add_child(fx)
 	add_child(trail)
 	if DebugFlags.tune_enabled():
@@ -60,6 +66,12 @@ func _ready() -> void:
 		_warmed = true
 		if DebugFlags.prewarm_enabled():
 			_prewarm()
+	hud.play_pressed.connect(restart)
+	hud.hangar_pressed.connect(_open_hangar)
+	hud.back_pressed.connect(_show_menu)
+	hud.upgrade_pressed.connect(_buy)
+	if not _warming:
+		_show_menu()
 	if not _warming and tune_panel:
 		tune_panel.set_available(true)
 
@@ -123,16 +135,19 @@ func _prewarm() -> void:
 		tune_panel.prewarm_show(false)
 		tune_panel.set_available(true)
 	_warming = false
+	_show_menu()
 
 ## Start a fresh run IN PLACE. Nothing is reloaded, created or freed: every pooled effect,
 ## material and UI node stays alive (and warm) across runs; only the game state is reset.
 func restart() -> void:
+	screen = SCREEN_PLAY
+	run_cans = 0
 	score = 0.0
 	_reset_bonus()
 	elapsed = 0.0
 	alive = true
 	spawner.run_time = 0.0
-	fuel = Tuning.fuel_start
+	fuel = Tuning.fuel_max()
 	fx.clear()
 	trail.clear()
 	hud.reset_for_run()
@@ -160,7 +175,7 @@ func _process(delta: float) -> void:
 	var plane := Vector2(player.position.x, player.position.z)
 	trail.advance(step, Vector2(plane.x, plane.y + 0.9), 1 if DebugFlags.off("trail") else bonus, delta)
 	_decay_bonus(delta)
-	fuel = maxf(fuel - Tuning.fuel_drain * delta, 0.0)
+	fuel = maxf(fuel - Tuning.drain_rate() * delta, 0.0)
 
 	# Swept collision: the plane can move any distance in one frame (a fast flick), so test the whole
 	# path from where it was to where it is, in small steps, instead of only the end point. Obstacles,
@@ -189,7 +204,7 @@ func _process(delta: float) -> void:
 			_on_near_miss(ev)
 		for pos in spawner.collect_cans(p, caps):   # a can grabbed in the last moment still saves you
 			_on_pickup(pos)
-	hud.set_fuel(fuel / Tuning.fuel_start)
+	hud.set_fuel(fuel / Tuning.fuel_max())
 	if fuel <= 0.0:
 		_end_run(HEADER_FUEL, REASON_FUEL)
 
@@ -200,11 +215,15 @@ func _end_run(header: String, reason: String) -> void:
 	player.crash()
 	_reset_bonus()   # a crash / the end of the run ends the streak
 	hud.clear_bonus()
-	hud.show_game_over(int(score), header, reason)
+	screen = SCREEN_OVER
+	last_earned = int(score * Tuning.coins_per_score) + run_cans * Tuning.coins_per_can
+	last_was_best = Save.record_run(int(score), last_earned)
+	hud.show_game_over(int(score), header, reason, last_earned, last_was_best, Save.high_score)
 
 ## A fuel can was collected at `pos`: refill (never past a full tank) and pop.
 func _on_pickup(pos: Vector3) -> void:
-	fuel = minf(fuel + Tuning.fuel_refill, Tuning.fuel_start)
+	run_cans += 1
+	fuel = minf(fuel + Tuning.refill_amount(), Tuning.fuel_max())
 	if not DebugFlags.off("pickup"):
 		fx.pickup(pos)
 		hud.fuel_pulse()
@@ -305,9 +324,24 @@ func _input(event: InputEvent) -> void:
 		if not DebugFlags.off("haptic"):
 			Input.vibrate_handheld(1)
 	# Tap to restart (small delay so the crash-causing drag can't restart instantly).
-	if not alive and event is InputEventScreenTouch and event.pressed \
-			and Time.get_ticks_msec() / 1000.0 - _death_time > 0.5:
+	if screen == SCREEN_OVER and event is InputEventScreenTouch and event.pressed \
+			and Time.get_ticks_msec() / 1000.0 - _death_time > 0.5 and not hud.over_hangar_hit(event.position):
 		restart()
+
+## The start screen: the world waits (nothing scrolls) behind it.
+func _show_menu() -> void:
+	screen = SCREEN_MENU
+	alive = false
+	hud.show_menu()
+
+func _open_hangar() -> void:
+	screen = SCREEN_HANGAR
+	alive = false
+	hud.show_hangar()
+
+## A Hangar buy button: the effect applies from the next run (the fuel in the tank right now is untouched).
+func _buy(id: String) -> void:
+	Save.buy(id)   # (the Hangar redraws itself from Save.changed)
 
 func _setup_environment() -> void:
 	var env := Environment.new()

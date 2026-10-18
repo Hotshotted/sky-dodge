@@ -14,6 +14,18 @@ var _bonus_shown := 1.0                # the bonus the label currently shows
 var _score_bonus := 1.0                # drives the score label's tint, size and ticking
 var _last_points := 0
 var _score_tick_ms := -10000         # when the score number last ticked up while a bonus was active
+## Menu buttons, wired up by Main.
+signal play_pressed
+signal hangar_pressed
+signal back_pressed
+signal upgrade_pressed(id: String)
+var _menu: Control                   # start screen: title, best score, coins, PLAY, HANGAR
+var _menu_best: Label
+var _menu_coins: Label
+var _hangar: Control                 # upgrade screen
+var _hangar_coins: Label
+var _hangar_rows: Array[Dictionary] = []   # per upgrade: {id, title, effect, buy}
+var _over_hangar: Button             # small "Hangar" button on the game-over screen
 const POPUP_POOL := 4            # labels reused for "Close!" popups
 var _pop_labels: Array[Label] = []
 var _pop_born := PackedInt64Array()   # real ms when started; 0 = idle
@@ -63,6 +75,150 @@ func _ready() -> void:
 	_over.set_anchors_and_offsets_preset(Control.PRESET_FULL_RECT)
 	_over.vertical_alignment = VERTICAL_ALIGNMENT_CENTER
 	_over.visible = false
+	_build_menus()
+	Save.changed.connect(refresh_menus)
+	refresh_menus()
+
+# ---------- Start screen, Hangar, game-over button ----------
+# All of it is created once here; screens are only shown / hidden afterwards.
+
+func _make_button(text: String, font_size: int, size: Vector2) -> Button:
+	var b := Button.new()
+	b.text = text
+	b.add_theme_font_size_override("font_size", font_size)
+	b.custom_minimum_size = size
+	b.size = size
+	for state in ["normal", "hover", "pressed", "disabled", "focus"]:
+		var sb := StyleBoxFlat.new()
+		sb.set_corner_radius_all(24)
+		sb.bg_color = {"normal": Color(0.2, 0.55, 0.9), "hover": Color(0.25, 0.6, 0.95), "pressed": Color(0.12, 0.4, 0.75),
+				"disabled": Color(0.22, 0.26, 0.34), "focus": Color(0.2, 0.55, 0.9)}[state]
+		b.add_theme_stylebox_override(state, sb)
+	b.add_theme_color_override("font_disabled_color", Color(0.6, 0.65, 0.75))
+	b.focus_mode = Control.FOCUS_NONE
+	return b
+
+func _place(c: Control, x: float, y: float, w: float, h: float) -> void:
+	c.position = Vector2(x, y)
+	c.size = Vector2(w, h)
+
+func _screen_label(parent: Control, text: String, font_size: int, x: float, y: float, w: float, h: float, align: HorizontalAlignment) -> Label:
+	var l := _make_label(font_size)
+	remove_child(l)
+	parent.add_child(l)
+	l.text = text
+	l.horizontal_alignment = align
+	l.vertical_alignment = VERTICAL_ALIGNMENT_CENTER
+	_place(l, x, y, w, h)
+	return l
+
+func _screen_root() -> Control:
+	var root := Control.new()
+	root.set_anchors_and_offsets_preset(Control.PRESET_FULL_RECT)
+	root.mouse_filter = Control.MOUSE_FILTER_STOP   # taps on the screen don't reach the game
+	var bg := ColorRect.new()
+	bg.color = Color(0.08, 0.1, 0.16, 0.94)
+	bg.set_anchors_and_offsets_preset(Control.PRESET_FULL_RECT)
+	bg.mouse_filter = Control.MOUSE_FILTER_IGNORE
+	root.add_child(bg)
+	root.visible = false
+	add_child(root)
+	return root
+
+func _build_menus() -> void:
+	const W := 1080.0
+	_menu = _screen_root()
+	_screen_label(_menu, "SKY DODGE", 140, 0, 330, W, 180, HORIZONTAL_ALIGNMENT_CENTER)
+	_menu_best = _screen_label(_menu, "", 56, 0, 600, W, 90, HORIZONTAL_ALIGNMENT_CENTER)
+	_menu_coins = _screen_label(_menu, "", 56, 0, 690, W, 90, HORIZONTAL_ALIGNMENT_CENTER)
+	var play := _make_button("PLAY", 84, Vector2(560, 170))
+	_place(play, (W - 560.0) * 0.5, 920, 560, 170)
+	play.pressed.connect(func(): play_pressed.emit())
+	_menu.add_child(play)
+	var hangar := _make_button("HANGAR", 64, Vector2(560, 140))
+	_place(hangar, (W - 560.0) * 0.5, 1140, 560, 140)
+	hangar.pressed.connect(func(): hangar_pressed.emit())
+	_menu.add_child(hangar)
+
+	_hangar = _screen_root()
+	_screen_label(_hangar, "HANGAR", 100, 0, 70, W, 130, HORIZONTAL_ALIGNMENT_CENTER)
+	_hangar_coins = _screen_label(_hangar, "", 56, 0, 200, W, 90, HORIZONTAL_ALIGNMENT_CENTER)
+	for i in Tuning.upgrades.size():
+		var id: String = Tuning.upgrades[i]["id"]
+		var y := 320.0 + 250.0 * i
+		var panel := ColorRect.new()
+		panel.color = Color(1, 1, 1, 0.07)
+		_place(panel, 40, y, W - 80.0, 230)
+		panel.mouse_filter = Control.MOUSE_FILTER_IGNORE
+		_hangar.add_child(panel)
+		var title := _screen_label(_hangar, "", 50, 70, y + 12, 600, 80, HORIZONTAL_ALIGNMENT_LEFT)
+		var effect := _screen_label(_hangar, "", 42, 70, y + 100, 620, 110, HORIZONTAL_ALIGNMENT_LEFT)
+		effect.add_theme_color_override("font_color", Color(0.8, 0.9, 1.0))
+		var buy := _make_button("", 50, Vector2(290, 150))
+		_place(buy, W - 40.0 - 310.0, y + 40, 290, 150)
+		buy.pressed.connect(func(): upgrade_pressed.emit(id))
+		_hangar.add_child(buy)
+		_hangar_rows.append({"id": id, "title": title, "effect": effect, "buy": buy})
+	var back := _make_button("BACK", 56, Vector2(380, 120))
+	_place(back, 70, 1720, 380, 120)
+	back.pressed.connect(func(): back_pressed.emit())
+	_hangar.add_child(back)
+	var go := _make_button("PLAY", 56, Vector2(380, 120))
+	_place(go, W - 70.0 - 380.0, 1720, 380, 120)
+	go.pressed.connect(func(): play_pressed.emit())
+	_hangar.add_child(go)
+
+	_over_hangar = _make_button("Hangar", 48, Vector2(320, 100))
+	_over_hangar.set_anchors_and_offsets_preset(Control.PRESET_CENTER_BOTTOM)
+	_over_hangar.offset_left = -160.0
+	_over_hangar.offset_right = 160.0
+	_over_hangar.offset_top = -330.0
+	_over_hangar.offset_bottom = -230.0
+	_over_hangar.visible = false
+	_over_hangar.pressed.connect(func(): hangar_pressed.emit())
+	add_child(_over_hangar)
+
+## Re-read the save into the start screen and the Hangar (called whenever the save changes).
+func refresh_menus() -> void:
+	if _menu == null:
+		return
+	_menu_best.text = "Best: %d" % Save.high_score
+	_menu_coins.text = "Coins: %d" % Save.coins
+	_hangar_coins.text = "Coins: %d" % Save.coins
+	for row in _hangar_rows:
+		var id: String = row["id"]
+		var lv := Save.level(id)
+		var u := Tuning.upgrade_def(id)
+		(row["title"] as Label).text = "%s   Lv %d/%d" % [u["name"], lv, u["max_level"]]
+		(row["effect"] as Label).text = Tuning.upgrade_text(id, lv)
+		var b := row["buy"] as Button
+		b.text = "MAX" if Save.is_maxed(id) else "%d coins" % Save.cost_of_next(id)
+		b.disabled = not Save.can_buy(id)
+
+func show_menu() -> void:
+	refresh_menus()
+	_hangar.visible = false
+	_over_hangar.visible = false
+	_over.visible = false
+	_menu.visible = true
+
+func show_hangar() -> void:
+	refresh_menus()
+	_menu.visible = false
+	_over_hangar.visible = false
+	_over.visible = false
+	_hangar.visible = true
+
+func hide_menus() -> void:
+	_menu.visible = false
+	_hangar.visible = false
+	_over_hangar.visible = false
+
+## Is a touch at `pos` on the game-over "Hangar" button? (Main uses it so that tap doesn't restart.)
+func over_hangar_hit(pos: Vector2) -> bool:
+	return _over_hangar.visible and _over_hangar.get_global_rect().has_point(pos)
+
+## The play-time readouts (score, bonus, fuel gauge) only show while a run is on screen.
 
 ## Fuel gauge under the bonus: dark trough + a fill that shrinks, green -> amber -> red.
 func _build_fuel_gauge() -> void:
@@ -233,12 +389,14 @@ func _process(delta: float) -> void:
 
 ## End-of-run screen: a header ("CRASHED" / "OUT OF FUEL"), what ended the run, the final score and
 ## the restart hint.
-func show_game_over(points: int, header: String, reason: String) -> void:
-	_over.text = _game_over_text(points, header, reason)
+func show_game_over(points: int, header: String, reason: String, earned: int = 0, new_best: bool = false, best: int = 0) -> void:
+	_over.text = _game_over_text(points, header, reason, earned, new_best, best)
 	_over.visible = true
+	_over_hangar.visible = true
 
-func _game_over_text(points: int, header: String, reason: String) -> String:
-	return "%s\n%s\n\nScore: %d\n\nTap to restart" % [header, reason, points]
+func _game_over_text(points: int, header: String, reason: String, earned: int = 0, new_best: bool = false, best: int = 0) -> String:
+	var best_line := "NEW BEST!" if new_best else "Best: %d" % best
+	return "%s\n%s\n\nScore: %d\n%s\n+%d coins\n\nTap to restart" % [header, reason, points, best_line, earned]
 
 func _make_label(font_size: int) -> Label:
 	var l := Label.new()
@@ -315,9 +473,13 @@ func begin_prewarm(with_popups: bool) -> void:
 			l.position = Vector2(20.0, 120.0 + 90.0 * t)
 			l.set_meta("prewarm", true)
 	# Both end screens' glyphs, so neither is first drawn when a run ends.
-	_over.text = _game_over_text(1234567890, Main.HEADER_CRASH, Main.REASON_OBSTACLE) + "\n" \
-			+ _game_over_text(1234567890, Main.HEADER_FUEL, Main.REASON_FUEL)
+	_over.text = _game_over_text(1234567890, Main.HEADER_CRASH, Main.REASON_OBSTACLE, 1234567890, true, 1234567890) + "\n" \
+			+ _game_over_text(1234567890, Main.HEADER_FUEL, Main.REASON_FUEL, 1234567890, false, 1234567890)
 	_over.visible = true
+	refresh_menus()
+	_menu.visible = true      # the start screen, Hangar and Hangar button are drawn too (under the splash)
+	_hangar.visible = true
+	_over_hangar.visible = true
 	_splash = Control.new()
 	_splash.set_anchors_and_offsets_preset(Control.PRESET_FULL_RECT)
 	_splash.mouse_filter = Control.MOUSE_FILTER_IGNORE
@@ -349,6 +511,7 @@ func prewarm_popups() -> void:
 ## Every label stays alive; nothing is created or freed.
 func reset_for_run() -> void:
 	_over.visible = false
+	hide_menus()
 	for i in POPUP_POOL:
 		_pop_labels[i].visible = false
 		_pop_born[i] = 0
@@ -368,5 +531,6 @@ func end_prewarm() -> void:
 		if c.has_meta("prewarm"):
 			c.queue_free()
 	_over.visible = false
+	hide_menus()
 	if is_instance_valid(_splash):
 		_splash.queue_free()

@@ -101,6 +101,81 @@ var cloud_max_drift := 0.12
 var fuel_can_under_cloud_chance := 0.45
 var cloud_color := Color(1.0, 1.0, 1.0)
 
+# ---------- Progression: coins and upgrades ----------
+## Coins earned at the end of a run: this many per point of score, plus a fixed amount per fuel can.
+## (A typical early run of ~15 s scores about 150-250 and picks up 1-3 cans: roughly 20-30 coins.)
+var coins_per_score := 0.1
+var coins_per_can := 3
+## The upgrade table: ONE place for every upgrade's values. Level L (0..max_level) gives
+## `per_level` * L on top of the matching base value (the tuning value of the same name); the next
+## level costs round(cost_base * cost_growth ^ L). The text shown is "<label> <now> -> <next>".
+var upgrades: Array[Dictionary] = [
+	{"id": "fuel_tank", "name": "Fuel Tank", "label": "Tank", "prefix": "", "unit": "", "decimals": 0,
+			"max_level": 10, "per_level": 15.0, "cost_base": 30.0, "cost_growth": 1.5},      # +15 max fuel per level
+	{"id": "efficiency", "name": "Efficiency", "label": "Fuel use", "prefix": "", "unit": "/s", "decimals": 1,
+			"max_level": 10, "per_level": -0.05, "cost_base": 30.0, "cost_growth": 1.5},     # drain x(1 - 5% per level)
+	{"id": "refill", "name": "Refill", "label": "Per can", "prefix": "+", "unit": "", "decimals": 0,
+			"max_level": 10, "per_level": 4.0, "cost_base": 30.0, "cost_growth": 1.5},       # +4 fuel per can per level
+	{"id": "magnet", "name": "Can Magnet", "label": "Reach", "prefix": "+", "unit": "", "decimals": 2,
+			"max_level": 8, "per_level": 0.25, "cost_base": 35.0, "cost_growth": 1.55},      # +0.25 pickup radius per level
+	{"id": "bonus_cap", "name": "Bonus Cap", "label": "Cap", "prefix": "x", "unit": "", "decimals": 1,
+			"max_level": 8, "per_level": 0.5, "cost_base": 40.0, "cost_growth": 1.6},        # +0.5 bonus cap per level
+]
+
+func upgrade_def(id: String) -> Dictionary:
+	for u in upgrades:
+		if u["id"] == id:
+			return u
+	return {}
+
+## The stat an upgrade controls, at the given level (what the game actually uses, and what the
+## Hangar shows: "Tank 100 -> 115").
+func upgrade_value(id: String, level: int) -> float:
+	var u := upgrade_def(id)
+	var l := clampi(level, 0, int(u["max_level"]))
+	match id:
+		"fuel_tank":
+			return fuel_start + u["per_level"] * l
+		"efficiency":
+			return fuel_drain * (1.0 + u["per_level"] * l)
+		"refill":
+			return fuel_refill + u["per_level"] * l
+		"magnet":
+			return u["per_level"] * l
+		"bonus_cap":
+			return bonus_cap + u["per_level"] * l
+	return 0.0
+
+func upgrade_cost(id: String, level: int) -> int:
+	var u := upgrade_def(id)
+	return int(round(float(u["cost_base"]) * pow(float(u["cost_growth"]), level)))
+
+func _fmt_stat(u: Dictionary, v: float) -> String:
+	return "%s%s%s" % [u["prefix"], String.num(v, int(u["decimals"])), u["unit"]]
+
+## "Tank 100 -> 115" for the next level, "Tank 250 (max)" when there is none.
+func upgrade_text(id: String, level: int) -> String:
+	var u := upgrade_def(id)
+	if level >= int(u["max_level"]):
+		return "%s %s (max)" % [u["label"], _fmt_stat(u, upgrade_value(id, level))]
+	return "%s %s -> %s" % [u["label"], _fmt_stat(u, upgrade_value(id, level)), _fmt_stat(u, upgrade_value(id, level + 1))]
+
+## What the game uses, upgrades included (the plain tuning values are the level-0 numbers).
+func fuel_max() -> float:
+	return upgrade_value("fuel_tank", Save.level("fuel_tank"))
+
+func drain_rate() -> float:
+	return upgrade_value("efficiency", Save.level("efficiency"))
+
+func refill_amount() -> float:
+	return upgrade_value("refill", Save.level("refill"))
+
+func pickup_reach() -> float:
+	return upgrade_value("magnet", Save.level("magnet"))
+
+func bonus_cap_now() -> float:
+	return upgrade_value("bonus_cap", Save.level("bonus_cap"))
+
 # ---------- Near miss & bonus ----------
 ## A row counts as a near miss if the plane passed it with less than this gap (units) between the
 ## plane's hit box and the closest obstacle edge (0 = touching = crash).
@@ -215,20 +290,20 @@ func tier_index(bonus: float, count: int) -> int:
 
 ## The points bonus for a streak of close calls.
 func streak_bonus(streak: float) -> float:
-	return clampf(1.0 + bonus_scale * log(1.0 + maxf(streak, 0.0)), 1.0, maxf(bonus_cap, 1.0))
+	return clampf(1.0 + bonus_scale * log(1.0 + maxf(streak, 0.0)), 1.0, maxf(bonus_cap_now(), 1.0))
 
 ## The streak that just reaches the cap (the streak never goes above it).
 func streak_at_cap() -> float:
-	if bonus_cap <= 1.0 or bonus_scale <= 0.0:
+	if bonus_cap_now() <= 1.0 or bonus_scale <= 0.0:
 		return 0.0
-	return exp((bonus_cap - 1.0) / bonus_scale) - 1.0
+	return exp((bonus_cap_now() - 1.0) / bonus_scale) - 1.0
 
 ## Is there a bonus worth showing? (The label disappears as the bonus eases down to x1.)
 func bonus_active(bonus: float) -> bool:
 	return bonus >= 1.05
 
 func at_cap(bonus: float) -> bool:
-	return bonus_cap > 1.0 and bonus >= bonus_cap - 0.001
+	return bonus_cap_now() > 1.0 and bonus >= bonus_cap_now() - 0.001
 
 ## Which popup tier (index into near_miss_texts) a bonus belongs to.
 func popup_tier(bonus: float) -> int:

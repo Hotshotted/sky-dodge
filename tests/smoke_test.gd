@@ -19,6 +19,7 @@ extends SceneTree
 ##       generated rows, checked every step), fade in late, sit above obstacles/cans but below the plane,
 ##       hide cans more often, ?nofx=clouds disables them, restart clears them, nothing new is allocated
 ##   2i. bonus: logarithmic streak bonus, cap (gold MAX label), gradual decay, reset on crash, huge caps
+##   2j. progression: save file round trip (versioned), coin award, Hangar purchases apply, ?tune save buttons
 ##   3. ?debug flags parse, and switching an effect off really skips it
 ##   4. plane collision capsules: span matches the wings, rounded corners graze past a cube corner
 ##   5. closest-approach near-miss detection reports the right side
@@ -112,6 +113,9 @@ func _initialize() -> void:
 	var tuning := root.get_node("Tuning")
 	tuning.blocked_columns_min = 4   # crowded rows: easy to crash on purpose
 	tuning.blocked_columns_max = 4
+	var save := root.get_node("Save")
+	save.path = "user://smoke_test_save.json"   # never touch a real save
+	save.reset_all()
 	DebugFlags.parse(["tune"])   # the whole run has the tuning panel, so it is part of the "nothing new" baseline
 
 	print("1. boot and the visible pre-warm")
@@ -171,7 +175,10 @@ func _initialize() -> void:
 	check(count_visible(blobs) == 0, "no pre-warm cloud puffs left behind (no clouds in the first %.0f s)" % tuning.cloud_start_time)
 	check(count_visible(cubes) == in_play and count_visible(main.fx._streak_nodes) == 0 and main.trail._pts.is_empty()
 			and count_visible(main.fx._emitters) == 0, "no pre-warm effects left behind (only the live game's own cubes are showing: %d)" % in_play)
-	check(main.alive, "run starts alive")
+	check(main.screen == main.SCREEN_MENU and main.hud._menu.visible and not main.alive and not main.hud._hangar.visible,
+			"after start-up the start screen is showing and the world waits")
+	main.hud.play_pressed.emit()   # PLAY
+	check(main.alive and main.screen == main.SCREEN_PLAY and not main.hud._menu.visible, "PLAY starts a run")
 	check(not main.tune_panel._panel.visible and main.tune_panel._button.visible, "?tune: panel hidden and TUNE button shown once started")
 
 	print("1b. pre-warm length adapts to frame times")
@@ -194,6 +201,7 @@ func _initialize() -> void:
 	tuning.prewarm_max_seconds = saved_max
 	tuning.prewarm_stable_ms = saved_ms
 	check(not main._warming and count_visible(main.fx._streak_nodes) == 0, "repeat pre-warm cleans up after itself")
+	main.hud.play_pressed.emit()   # (the pre-warm ends on the start screen)
 
 	print("2. three runs, restarted in place")
 	await process_frame
@@ -883,6 +891,144 @@ func _initialize() -> void:
 	tuning.bonus_scale = bsaved["scale"]
 	tuning.bonus_cap = bsaved["cap"]
 
+	print("2j. progression: save file, coins, Hangar upgrades")
+	var tsave := root.get_node("Save")
+	tsave.reset_all()
+	# (a) save/load round trip, versioned, tolerant of damage
+	tsave.high_score = 777
+	tsave.coins = 55
+	tsave.levels["fuel_tank"] = 3
+	tsave.levels["magnet"] = 2
+	tsave.save_game()
+	var raw = JSON.parse_string(FileAccess.get_file_as_string(tsave.path))
+	check(raw is Dictionary and int(raw["version"]) == tsave.VERSION and int(raw["high_score"]) == 777, "the save file is JSON and carries a format version (%d)" % tsave.VERSION)
+	tsave.high_score = 0
+	tsave.coins = 0
+	tsave.levels = {}
+	tsave.load_game()
+	check(tsave.high_score == 777 and tsave.coins == 55 and tsave.level("fuel_tank") == 3 and tsave.level("magnet") == 2 and tsave.level("refill") == 0,
+			"save/load round trip keeps high score, coins and upgrade levels")
+	var bad := FileAccess.open(tsave.path, FileAccess.WRITE)
+	bad.store_string("{ not json")
+	bad.close()
+	tsave.load_game()
+	check(tsave.high_score == 0 and tsave.coins == 0 and tsave.level("fuel_tank") == 0, "a corrupt save file starts fresh instead of crashing")
+	var old := FileAccess.open(tsave.path, FileAccess.WRITE)
+	old.store_string(JSON.stringify({"high_score": 42, "coins": 9, "levels": {"fuel_tank": 99}, "future_field": true}))
+	old.close()
+	tsave.load_game()
+	check(tsave.high_score == 42 and tsave.coins == 9 and tsave.level("fuel_tank") == 10, "an old (unversioned) file migrates; unknown fields are ignored; levels are clamped to max")
+	tsave.reset_all()
+	# (b) coin award at the end of a run + game-over text
+	main.restart()
+	main.set_process(false)
+	main.score = 1000.0
+	main.run_cans = 2
+	var expect_coins: int = int(1000.0 * tuning.coins_per_score) + 2 * tuning.coins_per_can
+	main._end_run(main.HEADER_CRASH, main.REASON_OBSTACLE)
+	check(main.last_earned == expect_coins and tsave.coins == expect_coins, "a run pays score x rate + coins per can (%d coins)" % main.last_earned)
+	check(main.last_was_best and tsave.high_score == 1000 and main.hud._over.text.contains("+%d coins" % expect_coins) and main.hud._over.text.contains("NEW BEST!"),
+			"game over shows +%d coins and NEW BEST!" % expect_coins)
+	check(main.hud._over_hangar.visible and main.screen == main.SCREEN_OVER, "game over has the Hangar button")
+	main.restart()
+	main.set_process(false)
+	main.score = 400.0
+	main.run_cans = 0
+	main._end_run(main.HEADER_FUEL, main.REASON_FUEL)
+	check(not main.last_was_best and tsave.high_score == 1000 and main.hud._over.text.contains("Best: 1000") and not main.hud._over.text.contains("NEW BEST"),
+			"a lower score is not a new best (shows Best: 1000)")
+	check(tsave.coins == expect_coins + int(400.0 * tuning.coins_per_score), "coins add up across runs (%d)" % tsave.coins)
+	# the Hangar button on the game-over screen, and a tap on it doesn't restart
+	main._death_time -= 2.0
+	var hb: Button = main.hud._over_hangar
+	var hpos: Vector2 = hb.get_global_rect().get_center()
+	check(main.hud.over_hangar_hit(hpos), "the Hangar button's rectangle is known to Main")
+	var tev := InputEventScreenTouch.new()
+	tev.pressed = true
+	tev.position = hpos
+	main._input(tev)
+	check(main.screen == main.SCREEN_OVER and not main.alive, "tapping the Hangar button does not restart the run")
+	hb.pressed.emit()
+	check(main.screen == main.SCREEN_HANGAR and main.hud._hangar.visible and not main.hud._over_hangar.visible, "Hangar button opens the Hangar")
+	# (c) the Hangar lists five upgrades with level, effect and cost
+	check(main.hud._hangar_rows.size() == 5 and tuning.upgrades.size() == 5, "five upgrades in the Hangar")
+	var tank_row: Dictionary = main.hud._hangar_rows[0]
+	check((tank_row["effect"] as Label).text == "Tank 100 -> 115" and (tank_row["title"] as Label).text.contains("Lv 0/10") and (tank_row["buy"] as Button).text == "30 coins",
+			"Fuel Tank row says \"%s\", %s, %s" % [(tank_row["effect"] as Label).text, (tank_row["title"] as Label).text, (tank_row["buy"] as Button).text])
+	var costs_ok := true
+	for u in tuning.upgrades:
+		for l in int(u["max_level"]) - 1:
+			costs_ok = costs_ok and tuning.upgrade_cost(u["id"], l + 1) > tuning.upgrade_cost(u["id"], l)
+		costs_ok = costs_ok and tuning.upgrade_cost(u["id"], 0) <= 45
+	check(costs_ok, "costs rise every level and the first level of each costs <= 45 coins (about two typical runs of ~21 coins)")
+	# (d) purchases apply their effect
+	tsave.reset_all()
+	check(not tsave.buy("fuel_tank") and tsave.level("fuel_tank") == 0, "can't buy without enough coins")
+	check((main.hud._hangar_rows[0]["buy"] as Button).disabled, "...and the button is greyed out")
+	tsave.add_coins(5000)
+	check(not (main.hud._hangar_rows[0]["buy"] as Button).disabled and main.hud._hangar_coins.text == "Coins: 5000", "buy buttons enable and the coin balance updates")
+	(main.hud._hangar_rows[0]["buy"] as Button).pressed.emit()
+	check(tsave.level("fuel_tank") == 1 and tsave.coins == 5000 - 30 and tuning.fuel_max() == 115.0 and (main.hud._hangar_rows[0]["effect"] as Label).text == "Tank 115 -> 130",
+			"Fuel Tank 1 costs 30 and raises max fuel 100 -> 115")
+	tsave.buy("efficiency")
+	check(is_equal_approx(tuning.drain_rate(), tuning.fuel_drain * 0.95), "Efficiency 1: fuel drain x0.95 (%.2f/s)" % tuning.drain_rate())
+	tsave.buy("refill")
+	check(is_equal_approx(tuning.refill_amount(), tuning.fuel_refill + 4.0), "Refill 1: +4 fuel per can (%.0f)" % tuning.refill_amount())
+	tsave.buy("bonus_cap")
+	check(is_equal_approx(tuning.bonus_cap_now(), tuning.bonus_cap + 0.5) and is_equal_approx(tuning.streak_bonus(1000.0), 3.5), "Bonus Cap 1: the cap rises 3.0 -> 3.5")
+	main.restart()
+	main.set_process(false)
+	check(main.fuel == 115.0, "the next run starts with the bigger tank (%.0f)" % main.fuel)
+	# Can Magnet: a can ahead out of normal reach is collected once the magnet is upgraded
+	var mrow = main.spawner._rows_make_for_test(main.player.position.z - 2.6, [])
+	main.spawner._place_can_for_test(mrow, main.player.position.x)
+	var mcaps: PackedFloat32Array = main.player.hit_capsules()
+	var mp := Vector2(main.player.position.x, main.player.position.z)
+	var got_before: int = main.spawner.collect_cans(mp, mcaps).size()
+	tsave.buy("magnet")
+	tsave.buy("magnet")
+	tsave.buy("magnet")
+	var got_after: int = main.spawner.collect_cans(mp, mcaps).size()
+	check(got_before == 0 and got_after == 1 and is_equal_approx(tuning.pickup_reach(), 0.75), "Can Magnet widens the pickup radius (a can 2.6 ahead: before %d, after 3 levels %d)" % [got_before, got_after])
+	main.spawner._release_row(mrow)
+	# max level stops further buying
+	tsave.add_coins(10000000)
+	while tsave.buy("bonus_cap"):
+		pass
+	check(tsave.is_maxed("bonus_cap") and not tsave.buy("bonus_cap") and (main.hud._hangar_rows[4]["buy"] as Button).text == "MAX", "a maxed upgrade shows MAX and can't be bought")
+	# (e) it all persists
+	var lv_before: int = tsave.level("fuel_tank")
+	var coins_before: int = tsave.coins
+	tsave.coins = 0
+	tsave.levels = {}
+	tsave.load_game()
+	check(tsave.level("fuel_tank") == lv_before and tsave.coins == coins_before and tsave.is_maxed("bonus_cap"), "purchases and coins survive a reload")
+	# (f) start screen texts, BACK, PLAY from the Hangar
+	main.hud.back_pressed.emit()
+	check(main.screen == main.SCREEN_MENU and main.hud._menu.visible and main.hud._menu_best.text == "Best: %d" % tsave.high_score and main.hud._menu_coins.text == "Coins: %d" % tsave.coins,
+			"start screen shows the high score and the coin balance")
+	main.hud.hangar_pressed.emit()
+	check(main.screen == main.SCREEN_HANGAR, "HANGAR button on the start screen opens the Hangar")
+	# (g) ?tune debug buttons
+	var add_btn: Button = null
+	var reset_btn: Button = null
+	for b in main.tune_panel.find_children("*", "Button", true, false):
+		if b.get_meta("debug", "") == "add_coins":
+			add_btn = b
+		elif b.get_meta("debug", "") == "reset_save":
+			reset_btn = b
+	check(add_btn != null and reset_btn != null, "?tune has \"Add 1000 coins\" and \"Reset save\" buttons")
+	var c0: int = tsave.coins
+	add_btn.pressed.emit()
+	check(tsave.coins == c0 + 1000, "Add 1000 coins adds 1000")
+	reset_btn.pressed.emit()
+	check(tsave.coins == 0 and tsave.high_score == 0 and tsave.level("fuel_tank") == 0 and tuning.fuel_max() == 100.0, "Reset save wipes coins, high score and upgrades")
+	# (h) none of this created anything
+	main.hud.play_pressed.emit()
+	main.set_process(false)
+	var snap_prog := snapshot(main)
+	check(same_world(base, snap_prog), "buying, saving and the menus created nothing new  [%s]" % describe(snap_prog))
+
 	print("3. debug flags")
 	DebugFlags.parse(["nofx=sparks,bogus", "noprewarm", "perf", "v=abc1234"])
 	check(DebugFlags.off("sparks") and not DebugFlags.off("streaks"), "nofx=sparks switches off only sparks")
@@ -1003,6 +1149,7 @@ func _initialize() -> void:
 	check(plain.tune_panel == null, "without ?tune there is no tuning panel at all")
 	plain.queue_free()
 
+	DirAccess.remove_absolute(ProjectSettings.globalize_path("user://smoke_test_save.json"))
 	print("")
 	if failures.is_empty():
 		print("SMOKE TEST PASSED")
