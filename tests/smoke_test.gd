@@ -19,7 +19,7 @@ extends SceneTree
 ##       generated rows, checked every step), fade in late, sit above obstacles/cans but below the plane,
 ##       hide cans more often, ?nofx=clouds disables them, restart clears them, nothing new is allocated
 ##   2i. bonus: step-table streak bonus, cap (gold glowing label), steps coming off one by one, number-only text, reset on crash, huge caps
-##   2l. maps: unlocks, medals, palettes, gulls / wind gusts / lightning and their fairness rules
+##   2m. in-run picks: prices, pause + three cards, card odds, every perk / boost / supply effect\n##   2l. maps: unlocks, medals, palettes, gulls / wind gusts / lightning and their fairness rules
 ##   2k. Whisker close: doubled step, popup/burst, decay, cap, detection by clearance
 ##   2j. progression: save file round trip (versioned), coin award, Hangar purchases apply, ?tune save buttons
 ##   3. ?debug flags parse, and switching an effect off really skips it
@@ -125,6 +125,7 @@ func _initialize() -> void:
 	var main: Node = load("res://scenes/main.tscn").instantiate()
 	root.add_child(main)
 	current_scene = main
+	main.picks.enabled = false   # (the tests set scores by hand; the pick tests switch it back on)
 	await process_frame
 	await process_frame
 	await process_frame
@@ -158,6 +159,7 @@ func _initialize() -> void:
 			"every pooled cloud puff (%d) is drawn during the pre-warm" % blobs.size())
 	check(count_visible(main.fx._pickup_emitters) == main.fx.PICKUP_EMITTERS, "both fuel-pickup emitters are drawing during the pre-warm")
 	check(count_visible(main.spawner.hazards._all_gusts) == main.spawner.hazards.GUST_POOL and count_visible(main.spawner.hazards._bolts) == main.spawner.hazards.BOLT_POOL, "every pooled wind gust and lightning strip is drawn during the pre-warm")
+	check(main.pick_screen.is_shown() and count_visible(main.pick_screen._cards) == 3, "the pick cards are drawn during the pre-warm")
 	check(count_visible(main.fx._whisker_emitters) == main.fx.WHISKER_EMITTERS, "both Whisker-close burst emitters are drawing during the pre-warm")
 	var whisker_popup_drawn := false
 	for pl_ in main.hud._pop_labels:
@@ -1564,6 +1566,328 @@ func _initialize() -> void:
 	var snap_maps := snapshot(main)
 	snap_maps["mats"].erase(sp._gull_mat.get_instance_id())   # (pre-built at start-up; it only shows up in the walk while a gull is on screen)
 	check(same_world(base, snap_maps), "maps, gulls, gusts and lightning created nothing new  [%s]" % describe(snap_maps))
+
+	print("2m. in-run picks: perks, boosts, supplies, the paused pick screen")
+	tsave.reset_all()
+	tsave.select_map(0)
+	var pk = main.picks
+	pk.enabled = true
+	# (a) prices: pick_first x permanent multiplier, +20% each
+	pk.start_run(1.0)
+	check(is_equal_approx(pk.next_pick, 500.0) and is_equal_approx(pk.price(1), 600.0) and is_equal_approx(pk.price(2), 720.0), "the first pick is at 500 x the multiplier; each pick costs 20% more (500, 600, 720)")
+	pk.advance()
+	check(is_equal_approx(pk.next_pick, 1100.0), "...and the next score needed adds up (1,100)")
+	pk.start_run(2.2)
+	check(is_equal_approx(pk.next_pick, 1100.0), "with a x2.2 permanent multiplier the first pick is at 1,100")
+	tsave.levels["coin_value"] = 5
+	tsave.select_map(0)
+	main.restart()
+	main.set_process(false)
+	check(is_equal_approx(main.coin_mult, 1.5) and is_equal_approx(pk.next_pick, 750.0) and main.hud._next_label.text == "Next: 750", "in a run: multiplier = map x Coin Value (x1.5) -> first pick at 750, shown as \"%s\"" % main.hud._next_label.text)
+	tsave.levels["coin_value"] = 0
+	main.restart()
+	main.set_process(false)
+	sp.reset(-500.0)
+	check(main.hud._next_label.text == "Next: 500", "the HUD shows \"Next: 500\" under the score")
+	# (b) reaching it pauses the game completely and deals three cards
+	var elapsed0: float = main.elapsed
+	main.score = 500.0
+	main._process(0.02)
+	check(main.get_tree().paused and main.pick_screen.is_shown() and main._pick_cards.size() == 3, "reaching the score pauses the game and shows three cards")
+	var ids := {}
+	for c in main._pick_cards:
+		ids[c["kind"] + c["id"]] = true
+	check(ids.size() == 3, "three different cards (%s)" % ", ".join(main._pick_cards.map(func(c): return c["name"])))
+	await real_wait(0.2)
+	main.pick_screen._on_card(0)
+	check(main.get_tree().paused, "a tap in the first moment is ignored (no accidental picks)")
+	await real_wait(0.45)
+	check(is_equal_approx(main.elapsed, elapsed0 + 0.02) and absf(main.pick_screen._cards[0].position.x - 60.0) < 1.0, "while paused nothing advances, and the cards have slid into place")
+	var first_card: Dictionary = main._pick_cards[0]
+	main.pick_screen._on_card(0)
+	check(not main.get_tree().paused and not main.pick_screen.is_shown() and pk.next_pick > 1000.0, "choosing a card resumes the game and sets the next pick (%.0f)" % pk.next_pick)
+	check(main.hud._next_label.text == "Next: 1.1K", "...shown as \"%s\"" % main.hud._next_label.text)
+	if first_card["kind"] == "perk":
+		check(pk.level(first_card["id"]) == 1, "a picked perk is owned at level 1")
+	pk.start_run(1.0)
+	# (c) card odds
+	tsave.milestones = {}
+	var starting := {}
+	var seen_kinds := {}
+	var dup := false
+	for i in 1500:
+		var cs: Array[Dictionary] = pk.roll(1.0, 3)
+		var local := {}
+		for c in cs:
+			starting[c["id"]] = true
+			seen_kinds[c["kind"]] = true
+			dup = dup or local.has(c["id"])
+			local[c["id"]] = true
+	var want := ["glide", "cloud_diver", "lucky_whiskers", "fuel_miser", "hot_streak", "scavenger", "tailwind", "daredevil",
+			"double_coins", "shield", "magnet_storm", "whisker_window", "fuel_freeze", "full_tank", "patch", "coin_bag"]
+	var pool_ok := starting.size() == want.size()
+	for w in want:
+		pool_ok = pool_ok and starting.has(w)
+	check(pool_ok and not dup, "starting pool: perks 1, 2, 3, 6, 7, 8, 9, 10 + all five boosts + the supplies; never the same card twice (%d kinds)" % starting.size())
+	check(not starting.has("prop_wash") and not starting.has("battering_ram") and not starting.has("second_wind") and not starting.has("golden_touch") and not starting.has("crate_shower"),
+			"Prop Wash, Battering Ram, Second Wind and Golden Touch are locked (milestones), Crate Shower waits for crates")
+	tsave.unlock_milestone("prop_wash")
+	tsave.unlock_milestone("second_wind")
+	var unlocked_seen := {}
+	for i in 600:
+		for c in pk.roll(1.0, 3):
+			unlocked_seen[c["id"]] = true
+	check(unlocked_seen.has("prop_wash") and unlocked_seen.has("second_wind") and not unlocked_seen.has("battering_ram"), "a milestone puts its perk in the pool")
+	tsave.milestones = {}
+	pk.start_run(1.0)
+	pk.set_perk("glide", 1)
+	var n_owned := 0
+	var n_new := 0
+	for i in 4000:
+		for c in pk.roll(1.0, 3):
+			if c["id"] == "glide":
+				n_owned += 1
+			elif c["id"] == "cloud_diver":
+				n_new += 1
+	check(float(n_owned) / n_new > 2.6 and float(n_owned) / n_new < 5.0, "an owned perk is offered more often: Glide %d vs Cloud Diver %d (about %.1fx)" % [n_owned, n_new, float(n_owned) / n_new])
+	pk.set_perk("glide", 3)
+	var maxed_seen := false
+	for i in 500:
+		for c in pk.roll(1.0, 3):
+			maxed_seen = maxed_seen or c["id"] == "glide"
+	check(not maxed_seen, "a level-3 perk is never offered again")
+	pk.set_perk("glide", 0)
+	var tank_low := 0
+	var tank_full := 0
+	for i in 3000:
+		for c in pk.roll(0.1, 3):
+			tank_low += int(c["id"] == "full_tank")
+		for c in pk.roll(1.0, 3):
+			tank_full += int(c["id"] == "full_tank")
+	check(tank_low > tank_full * 1.5, "Full Tank is offered more when the tank is low (%d vs %d)" % [tank_low, tank_full])
+	pk.set_perk("scavenger", 2)
+	var two_cards: Array[Dictionary] = [pk.perk_card(tuning.perk_def("scavenger"), 3, true), pk.roll(1.0, 3)[0]]
+	main.pick_screen.show_cards(two_cards, ["Combo", ""])
+	var pips_lit := 0
+	for pip in main.pick_screen._parts[0]["pips"]:
+		pips_lit += int((pip.get_theme_stylebox("panel") as StyleBoxFlat).bg_color.is_equal_approx(Color(1.0, 0.9, 0.35)))
+	check(pips_lit == 3 and main.pick_screen._parts[0]["tag"].text.contains("LEVEL 2 -> 3") and main.pick_screen._parts[0]["combo"].visible and not main.pick_screen._parts[1]["combo"].visible,
+			"cards show level pips and \"LEVEL 2 -> 3\", and a combo card is highlighted")
+	main.pick_screen.hide_cards()
+	pk.start_run(1.0)
+	# (d) perk effects
+	var fresh := func():
+		main.restart()
+		main.set_process(false)
+		sp.reset(-500.0)
+		pk.enabled = false
+		pk.next_pick = INF
+	fresh.call()
+	# Glide
+	pk.set_perk("glide", 1)
+	main.fuel = 0.001
+	for i in 30:
+		main._process(0.05)
+	check(main.alive and main._gliding and main.fuel == 0.0, "Glide level 1: with an empty tank the plane glides on (alive after 1.5 s)")
+	for i in 15:
+		main._process(0.05)
+	check(not main.alive and main.hud._over.text.begins_with(main.HEADER_FUEL), "...and the run ends when the 2 s glide is over")
+	fresh.call()
+	pk.set_perk("glide", 3)
+	main.fuel = 0.001
+	for i in 40:
+		main._process(0.05)
+	main._on_pickup(Vector3(0, 0.4, -3))
+	main._process(0.05)
+	check(main.alive and not main._gliding and main.fuel > 10.0, "picking up a can during the glide ends it (level 3 = 6 s)")
+	# Cloud Diver
+	fresh.call()
+	pk.set_perk("cloud_diver", 3)
+	sp.run_time = 100.0
+	sp._spawn_cloud(main.player.position.z)
+	var dcl = sp._clouds[-1]
+	dcl.position = Vector3(main.player.position.x, 0.0, main.player.position.z)
+	dcl.ox[0] = 0.0
+	dcl.oz[0] = 0.0
+	dcl.rad[0] = 3.0
+	dcl.on[0] = true
+	main.fuel = 50.0
+	main._process(0.05)
+	check(absf(main.fuel - (50.0 - tuning.drain_rate() * 0.05 + 4.5 * 0.05)) < 0.01, "Cloud Diver level 3: flying under a cloud refunds fuel (%.3f after 0.05 s; a plain frame would give %.3f)" % [main.fuel, 50.0 - tuning.drain_rate() * 0.05])
+	sp.reset(-500.0)
+	# Lucky Whiskers
+	fresh.call()
+	pk.set_perk("lucky_whiskers", 3)
+	var lrow2 = sp._rows_make_for_test(main.player.position.z - 12.0, [])
+	for c in tuning.column_count:
+		lrow2.open.append(c != 1)
+	check(sp.drop_can_ahead(0.0) and lrow2.has_can and lrow2.can_x != tuning.column_center(1), "a can can be dropped in an open column of a row ahead")
+	check(not sp.drop_can_ahead(0.0), "...but not where a row already has one")
+	lrow2.has_can = false
+	var drops := 0
+	var wdrow = sp._rows_make_for_test(-3.0, [1.0])
+	for i in 400:
+		lrow2.has_can = false
+		lrow2.can.visible = false
+		main._on_near_miss({"side": 1, "node": wdrow.obs[0], "outline": wdrow.outlines[0], "whisker": true})
+		drops += int(lrow2.has_can)
+	check(drops > 400 * 0.62 and drops < 400 * 0.88, "Lucky Whiskers level 3: a Whisker close drops a can about 75%% of the time (%d of 400)" % drops)
+	main.hud.reset_for_run()
+	# Prop Wash
+	tsave.unlock_milestone("prop_wash")
+	fresh.call()
+	pk.set_perk("prop_wash", 1)
+	var pwrow = sp._rows_make_for_test(-5.0, [-2.0, 0.0])
+	main.score = 0.0
+	var evw := {"side": 1, "node": pwrow.obs[0], "outline": pwrow.outlines[0], "whisker": false, "row": pwrow, "k": 0}
+	main._on_near_miss(evw)
+	for i in 30:
+		sp.update_hazards(0.05)
+	check(pwrow.xs[0] > -2.0 and is_equal_approx(main.score, 0.5 * 1.0 * 0.0 + 8.0 + 0.0) or main.score >= 8.0, "Prop Wash: the obstacle you passed is shoved sideways, bumps its neighbour and pays coins (%.0f)" % main.score)
+	check(pwrow.xs[0] > -2.0 and pwrow.xs[0] <= 0.0 - 0.01 and pwrow.nudge_k.is_empty(), "...and stops there (moved %.2f)" % (pwrow.xs[0] + 2.0))
+	tsave.milestones = {}
+	# Fuel Miser / Hot Streak / Scavenger / Tailwind / Daredevil / Second Wind
+	fresh.call()
+	pk.set_perk("fuel_miser", 3)
+	main.fuel = 100.0
+	main._process(0.05)
+	check(is_equal_approx(main.fuel, 100.0 - tuning.drain_rate() * 0.7 * 0.05), "Fuel Miser level 3: 30%% less fuel burned (%.3f in 0.05 s)" % (100.0 - main.fuel))
+	main._steps.append(0.5)
+	main._refresh_bonus()
+	main._bonus_timer = 0.0
+	main._decay_acc = 0.0
+	pk.set_perk("hot_streak", 2)
+	main._decay_bonus(0.1)
+	check(is_equal_approx(main._decay_acc, tuning.bonus_decay_rate * 0.5 * 0.1), "Hot Streak level 2: the bonus fades 50%% slower")
+	fresh.call()
+	pk.set_perk("scavenger", 2)
+	main.coin_mult = 2.0
+	main.score = 0.0
+	main._on_pickup(Vector3(0, 0.4, -3))
+	check(is_equal_approx(main.score, 25.0 * 2.0), "Scavenger level 2: each can pays 25 extra coins (x the multiplier)")
+	fresh.call()
+	pk.set_perk("tailwind", 3)
+	main.coin_mult = 1.0
+	main.elapsed = 0.0
+	main.score = 0.0
+	main.run_distance = 0.0
+	main._process(0.05)
+	var sp1: float = tuning.map_speed(0, 0.05)
+	check(absf(main.run_distance - sp1 * 1.3 * 0.05) < 0.001 and absf(main.score - sp1 * 1.3 * 0.05 * 1.3) < 0.001, "Tailwind level 3: +30%% speed and +30%% coins")
+	fresh.call()
+	pk.set_perk("daredevil", 3)
+	var ddrow = sp._rows_make_for_test(-4.0, [main.player.position.x + tuning.pickup_reach() + 0.0])
+	var wing: float = main.player.collision_half_span()
+	var dd_half: Vector2 = sp._obstacle_half()
+	ddrow.xs[0] = main.player.position.x + wing + dd_half.x + 0.35
+	var found_dd: Array[Dictionary] = []
+	var found_no: Array[Dictionary] = []
+	var pcaps: PackedFloat32Array = main.player.hit_capsules()
+	var ppos := Vector2(main.player.position.x, 0.0)
+	sp.near_miss_scale = 1.3
+	var zz2 := -4.0
+	while zz2 < 6.0:
+		ddrow.position.z = zz2
+		found_dd.append_array(sp.update_near_misses(ppos, pcaps))
+		zz2 += 0.1
+	ddrow.passed = false
+	ddrow.entered = false
+	ddrow.min_clear = INF
+	sp.near_miss_scale = 1.0
+	zz2 = -4.0
+	while zz2 < 6.0:
+		ddrow.position.z = zz2
+		found_no.append_array(sp.update_near_misses(ppos, pcaps))
+		zz2 += 0.1
+	check(found_dd.size() == 1 and found_no.is_empty(), "Daredevil level 3: a pass 0.35 clear counts as a close call (normally 0.30)")
+	fresh.call()
+	pk.set_perk("second_wind", 2)
+	main.fuel = 10.0
+	main._process(0.05)
+	check(main.fuel > 55.0 and main.fuel < 61.0 and main._second_wind_used, "Second Wind level 2: under 15%% fuel it refills half the tank (%.0f)" % main.fuel)
+	main.fuel = 10.0
+	main._process(0.05)
+	check(main.fuel < 12.0, "...once per run")
+	pk.set_perk("second_wind", 0)
+	# (e) boosts
+	fresh.call()
+	pk.take({"kind": "boost", "id": "double_coins"})
+	check(is_equal_approx(main.earn_mult(), 2.0) and pk.has_boost("double_coins") and is_equal_approx(pk.boost_left("double_coins"), tuning.boost_time), "Double Coins: everything pays double for %.0f s" % tuning.boost_time)
+	main._process(0.05)
+	check(main.hud._effect_labels[0].visible and main.hud._effect_labels[0].text == "DOUBLE COINS  20s", "...with a countdown on the HUD (\"%s\")" % main.hud._effect_labels[0].text)
+	pk.update(tuning.boost_time + 0.1)
+	check(not pk.has_boost("double_coins") and is_equal_approx(main.earn_mult(), 1.0), "...and it ends after about 20 s")
+	fresh.call()
+	pk.take({"kind": "boost", "id": "shield"})
+	var shrow = sp._rows_make_for_test(main.player.position.z, [main.player.position.x])
+	main._process(0.02)
+	check(main.alive and not pk.has_boost("shield") and main._invuln > 0.0 and main.lives == 0, "Shield: one free hit, then it is gone")
+	fresh.call()
+	pk.take({"kind": "boost", "id": "magnet_storm"})
+	var msrow = sp._rows_make_for_test(main.player.position.z - 2.0, [])
+	sp._place_can_for_test(msrow, main.player.position.x + 5.0)
+	for i in 20:
+		main._process(0.03)
+	check(main.run_cans == 1, "Magnet Storm: a can 5 units away flies to the plane")
+	fresh.call()
+	pk.take({"kind": "boost", "id": "whisker_window"})
+	var wwrow = sp._rows_make_for_test(-5.0, [1.0])
+	main._on_near_miss({"side": 1, "node": wwrow.obs[0], "outline": wwrow.outlines[0], "whisker": false})
+	check(is_equal_approx(main.bonus, 2.0), "Whisker Window: a plain close call earns the doubled step (x2.0)")
+	fresh.call()
+	pk.take({"kind": "boost", "id": "fuel_freeze"})
+	main.fuel = 50.0
+	main._process(0.1)
+	check(main.fuel == 50.0, "Fuel Freeze: no fuel burns")
+	# (f) supplies
+	fresh.call()
+	main.fuel = 10.0
+	main._apply_card({"kind": "supply", "id": "full_tank"})
+	check(main.fuel == tuning.fuel_max(), "Full Tank fills the tank")
+	main._apply_card({"kind": "supply", "id": "patch"})
+	check(main.lives == 1 and main.hud._lives_pips[0].visible, "Patch: +1 hit you can survive")
+	pk.start_run(1.0)
+	main.score = 0.0
+	var bag: float = pk.coin_bag_amount()
+	main._apply_card({"kind": "supply", "id": "coin_bag"})
+	check(is_equal_approx(bag, floorf(0.3 * pk.price(1))) and is_equal_approx(main.score, bag), "Coin Bag: instant coins, %.0f%% of the next pick's price (%.0f)" % [tuning.coin_bag_fraction * 100.0, bag])
+	# HUD: perk icons
+	fresh.call()
+	pk.set_perk("glide", 2)
+	pk.set_perk("tailwind", 1)
+	var icons_on := 0
+	for ic in main.hud._perk_icons:
+		icons_on += int(ic["panel"].visible)
+	check(icons_on == 2, "the run's perks show as small icons on the HUD (%d)" % icons_on)
+	pk.set_perk("glide", 0)
+	pk.set_perk("tailwind", 0)
+	# (g) ?tune: grant any perk at any level
+	var btns := {}
+	for bt in main.tune_panel.find_children("*", "Button", true, false):
+		if bt.get_meta("debug", "") != "":
+			btns[bt.get_meta("debug")] = bt
+	fresh.call()
+	for i in 3:   # Glide -> Cloud Diver -> Lucky Whiskers -> Prop Wash
+		btns["perk_cycle"].pressed.emit()
+	btns["level_cycle"].pressed.emit()   # level 3 -> 0
+	btns["level_cycle"].pressed.emit()   # 1
+	btns["level_cycle"].pressed.emit()   # 2
+	btns["grant_perk"].pressed.emit()
+	check(pk.level("prop_wash") == 2 and pk.debug_grants.get("prop_wash", 0) == 2 and main.hud._perk_icons[0]["panel"].visible, "?tune: Grant gives any perk at any level (Prop Wash 2, even though it is locked)")
+	main.restart()
+	main.set_process(false)
+	check(pk.level("prop_wash") == 2, "...and it is there at the start of every run")
+	pk.debug_grants.clear()
+	pk.set_perk("prop_wash", 0)
+	# (h) none of it allocated anything
+	pk.enabled = false
+	main.hud.play_pressed.emit()
+	main.set_process(false)
+	main.fx.clear()
+	var snap_picks := snapshot(main)
+	snap_picks["mats"].erase(sp._gull_mat.get_instance_id())
+	check(same_world(base, snap_picks), "picks, perks, boosts and supplies created nothing new  [%s]" % describe(snap_picks))
+	tsave.reset_all()
 
 	print("3. debug flags")
 	DebugFlags.parse(["nofx=sparks,bogus", "noprewarm", "perf", "v=abc1234"])

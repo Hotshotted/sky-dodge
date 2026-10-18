@@ -45,6 +45,8 @@ static var _button_rect := Rect2()
 static func button_hit(pos: Vector2) -> bool:
 	return _button_rect.has_point(pos)
 
+var _grant_idx := 0                 # ?tune: which perk the Grant button gives
+var _grant_level := 3               # ...and at which level
 var is_open := false
 var last_copied_text := ""          # what the Copy button last put on the clipboard
 var _defaults := {}                 # property -> default value, captured at build time
@@ -176,6 +178,26 @@ func build() -> void:
 	save_buttons2.add_theme_constant_override("separation", 20)
 	save_buttons2.add_child(unlock_maps)
 	column.add_child(save_buttons2)
+	# Grant any perk at any level (applies to this run and every run after, until the save is reset).
+	var grant_row := HBoxContainer.new()
+	grant_row.add_theme_constant_override("separation", 12)
+	var perk_btn := _make_button("Perk: %s" % Tuning.perks[0]["name"], 30)
+	perk_btn.pressed.connect(func():
+		_grant_idx = (_grant_idx + 1) % Tuning.perks.size()
+		perk_btn.text = "Perk: %s" % Tuning.perks[_grant_idx]["name"])
+	perk_btn.set_meta("debug", "perk_cycle")
+	var level_btn := _make_button("Level: %d" % _grant_level, 30)
+	level_btn.pressed.connect(func():
+		_grant_level = (_grant_level + 1) % 4
+		level_btn.text = "Level: %d" % _grant_level)
+	level_btn.set_meta("debug", "level_cycle")
+	var grant_btn := _make_button("Grant", 30)
+	grant_btn.pressed.connect(grant_perk)
+	grant_btn.set_meta("debug", "grant_perk")
+	grant_row.add_child(perk_btn)
+	grant_row.add_child(level_btn)
+	grant_row.add_child(grant_btn)
+	column.add_child(grant_row)
 	add_coins.set_meta("debug", "add_coins")
 	reset_save.set_meta("debug", "reset_save")
 	_out = _make_label("", 26, HORIZONTAL_ALIGNMENT_LEFT)
@@ -238,6 +260,17 @@ func _on_slider(value: float, property: String) -> void:
 func _on_toggle(on: bool, property: String) -> void:
 	Tuning.set(property, on)
 	changed.emit(property)
+
+## Give the chosen perk at the chosen level: now, and at the start of every run.
+func grant_perk() -> void:
+	var main := get_parent()
+	var id: String = Tuning.perks[_grant_idx]["id"]
+	if _grant_level <= 0:
+		main.picks.debug_grants.erase(id)
+	else:
+		main.picks.debug_grants[id] = _grant_level
+	main.picks.set_perk(id, _grant_level)
+	_out.text = "%s at level %d." % [Tuning.perks[_grant_idx]["name"], _grant_level]
 
 ## Put every tuned value back to its default (as captured when the panel was built).
 func reset_defaults() -> void:

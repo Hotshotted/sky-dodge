@@ -175,6 +175,86 @@ func fmt_m(meters_value: float) -> String:
 		txt = txt.substr(0, txt.length() - 3)
 	return txt + out + " m"
 
+# ---------- In-run picks ----------
+## The first pick comes at pick_first x your permanent multiplier (map multiplier x Coin Value) in score; each
+## following pick costs pick_growth times the one before. The game pauses, three cards slide in, you choose.
+var pick_first := 500.0
+var pick_growth := 1.2
+var pick_cards := 3
+## How much more often a perk you already own is offered (a card for each owned perk at 1.0 + this).
+var perk_owned_weight := 3.0
+## Offer odds of the other card kinds, relative to one new perk (1.0). Full Tank gets a boost when the tank is low.
+var boost_weight := 0.8
+var supply_weight := 0.7
+var full_tank_low_weight := 3.0
+## Boosts last this many seconds.
+var boost_time := 20.0
+## Magnet Storm's pull radius (units), and the Coin Bag's size as a fraction of the NEXT pick's price.
+var storm_radius := 6.0
+var coin_bag_fraction := 0.3
+## Under 15% fuel Second Wind fires; Glide / Cloud Diver / Prop Wash push their effects in the tables below.
+var second_wind_below := 0.15
+var prop_wash_push := 7.0          # how hard (units/second at first) a close call shoves an obstacle sideways
+var prop_wash_friction := 5.0
+
+## PERKS last the run (levels 1-3, `vals` = the effect at each level). `unlock`: "" = in the starting pool,
+## otherwise the milestone that unlocks it. `needs`: "crates" = only offered once crates exist.
+var perks: Array[Dictionary] = [
+	{"id": "glide", "name": "Glide", "glyph": "G", "color": Color(0.6, 0.85, 1.0), "unlock": "", "vals": [2.0, 4.0, 6.0],
+			"line": "Fuel runs out? Glide {v} s instead of ending."},
+	{"id": "cloud_diver", "name": "Cloud Diver", "glyph": "D", "color": Color(0.9, 0.95, 1.0), "unlock": "", "vals": [1.5, 3.0, 4.5],
+			"line": "Fly under a cloud: get {v} fuel back every second."},
+	{"id": "lucky_whiskers", "name": "Lucky Whiskers", "glyph": "W", "color": Color(1.0, 0.4, 0.85), "unlock": "", "vals": [25, 50, 75],
+			"line": "A Whisker close drops a fuel can {v}% of the time."},
+	{"id": "prop_wash", "name": "Prop Wash", "glyph": "P", "color": Color(0.6, 0.9, 0.7), "unlock": "prop_wash", "vals": [8, 16, 30],
+			"line": "Close calls shove obstacles aside. Ones that bump others pay {v} coins."},
+	{"id": "battering_ram", "name": "Battering Ram", "glyph": "B", "color": Color(0.85, 0.6, 0.35), "unlock": "battering_ram", "needs": "crates", "vals": [1.0, 1.5, 2.0],
+			"line": "Crates break on any touch, not just rams. Crate coins x{v}."},
+	{"id": "fuel_miser", "name": "Fuel Miser", "glyph": "M", "color": Color(0.4, 0.9, 0.5), "unlock": "", "vals": [10, 20, 30],
+			"line": "Burn {v}% less fuel."},
+	{"id": "hot_streak", "name": "Hot Streak", "glyph": "H", "color": Color(1.0, 0.55, 0.2), "unlock": "", "vals": [25, 50, 75],
+			"line": "Your close-call bonus fades {v}% slower."},
+	{"id": "scavenger", "name": "Scavenger", "glyph": "S", "color": Color(1.0, 0.85, 0.3), "unlock": "", "vals": [10, 25, 60],
+			"line": "Each fuel can pays {v} extra coins."},
+	{"id": "tailwind", "name": "Tailwind", "glyph": "T", "color": Color(0.5, 0.8, 1.0), "unlock": "", "vals": [10, 20, 30],
+			"line": "+{v}% speed and +{v}% coins."},
+	{"id": "daredevil", "name": "Daredevil", "glyph": "!", "color": Color(1.0, 0.35, 0.35), "unlock": "", "vals": [10, 20, 30],
+			"line": "Close calls count from {v}% farther away."},
+	{"id": "second_wind", "name": "Second Wind", "glyph": "2", "color": Color(0.5, 1.0, 0.8), "unlock": "second_wind", "vals": [25, 50, 75],
+			"line": "Once a run, refill {v}% of the tank when it runs low."},
+	{"id": "golden_touch", "name": "Golden Touch", "glyph": "$", "color": Color(1.0, 0.8, 0.1), "unlock": "golden_touch", "needs": "crates", "vals": [2, 3, 4],
+			"line": "Crates pay x{v}."},
+]
+## BOOSTS (boost_time seconds) and SUPPLIES (instant).
+var boosts: Array[Dictionary] = [
+	{"id": "double_coins", "name": "Double Coins", "glyph": "x", "color": Color(1.0, 0.85, 0.2), "line": "Everything you earn pays double."},
+	{"id": "shield", "name": "Shield", "glyph": "O", "color": Color(0.4, 0.8, 1.0), "line": "One free hit."},
+	{"id": "magnet_storm", "name": "Magnet Storm", "glyph": "M", "color": Color(0.8, 0.5, 1.0), "line": "Fuel cans fly to you from far away."},
+	{"id": "whisker_window", "name": "Whisker Window", "glyph": "W", "color": Color(1.0, 0.4, 0.85), "line": "Every close call counts as a Whisker close."},
+	{"id": "fuel_freeze", "name": "Fuel Freeze", "glyph": "*", "color": Color(0.7, 0.95, 1.0), "line": "No fuel burns."},
+]
+var supplies: Array[Dictionary] = [
+	{"id": "full_tank", "name": "Full Tank", "glyph": "F", "color": Color(0.3, 0.9, 0.4), "line": "Fill the tank right now."},
+	{"id": "patch", "name": "Patch", "glyph": "+", "color": Color(1.0, 0.4, 0.4), "line": "+1 hit you can survive this run."},
+	{"id": "crate_shower", "name": "Crate Shower", "glyph": "C", "color": Color(0.9, 0.7, 0.3), "needs": "crates", "line": "The next rows are full of crates."},
+	{"id": "coin_bag", "name": "Coin Bag", "glyph": "$", "color": Color(1.0, 0.8, 0.2), "line": "Instant coins: {v}."},
+]
+## Crates exist only once Phase 5 turns this on (the crate perks and the Crate Shower need them).
+var crates_enabled := false
+
+func perk_def(id: String) -> Dictionary:
+	for d in perks:
+		if d["id"] == id:
+			return d
+	return {}
+
+## The effect of a perk at a level (0 = none).
+func perk_value(id: String, level: int) -> float:
+	if level <= 0:
+		return 0.0
+	var d := perk_def(id)
+	return float(d["vals"][clampi(level, 1, 3) - 1])
+
 # ---------- Economy: score is coins ----------
 ## Coins per world unit flown, before the close-call bonus, the map multiplier and Coin Value. The run
 ## total on screen IS the coins you earn (a crash keeps them all).

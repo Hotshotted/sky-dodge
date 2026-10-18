@@ -10,7 +10,8 @@ signal changed
 ##   1: high_score, coins (ints), levels {fuel_tank, efficiency, refill, magnet, bonus_cap}
 ##   2: coins and high_score are floats (score IS coins), upgrade tabs, gear slots + loadout, stats
 ##   3: maps: unlocked flags, the selected map, and per map the best distance, best score and medals
-const VERSION := 3
+##   4: milestones (unlocked perks etc.)
+const VERSION := 4
 
 var path := "user://save.json"      # (tests point this somewhere else)
 var high_score := 0.0               # most coins earned in one run
@@ -21,6 +22,7 @@ var loadout: Array = ["", "", ""]   # gear id equipped in each slot ("" = empty)
 var stats := {}                     # lifetime counters (cans, close calls ...)
 var maps_unlocked: Array = [true, false, false, false]
 var selected_map := 0
+var milestones := {}                # milestone id -> true (unlocks perks etc.)
 var map_stats := {}                 # map id -> {"best_distance": meters, "best_score": coins, "medals": 0..3 earned}
 
 func _ready() -> void:
@@ -37,6 +39,7 @@ func _defaults() -> void:
 	stats = {}
 	maps_unlocked = [true, false, false, false]
 	selected_map = 0
+	milestones = {}
 	map_stats = {}
 	for m in Tuning.maps:
 		map_stats[m["id"]] = {"best_distance": 0.0, "best_score": 0.0, "medals": 0}
@@ -76,6 +79,9 @@ func _migrate(d: Dictionary) -> Dictionary:
 		d["selected_map"] = 0
 		d["map_stats"] = {"countryside": {"best_distance": 0.0, "best_score": float(d.get("high_score", 0.0)), "medals": 0}}
 		d["version"] = 3
+	if v < 4:
+		d["milestones"] = {}   # v3 -> v4: milestones (none earned yet)
+		d["version"] = 4
 	return d
 
 func _apply(d: Dictionary) -> void:
@@ -96,6 +102,11 @@ func _apply(d: Dictionary) -> void:
 	var st: Variant = d.get("stats", {})
 	if st is Dictionary:
 		stats = st.duplicate()
+	var mi: Variant = d.get("milestones", {})
+	if mi is Dictionary:
+		for k in mi:
+			if bool(mi[k]):
+				milestones[String(k)] = true
 	var mu: Variant = d.get("maps_unlocked", [])
 	if mu is Array:
 		for i in 4:
@@ -117,7 +128,7 @@ func _is_gear(id: String) -> bool:
 func to_dict() -> Dictionary:
 	return {"version": VERSION, "high_score": high_score, "coins": coins, "levels": levels.duplicate(),
 			"slots": slots, "loadout": loadout.duplicate(), "stats": stats.duplicate(),
-			"maps_unlocked": maps_unlocked.duplicate(), "selected_map": selected_map, "map_stats": map_stats.duplicate(true)}
+			"milestones": milestones.duplicate(), "maps_unlocked": maps_unlocked.duplicate(), "selected_map": selected_map, "map_stats": map_stats.duplicate(true)}
 
 func save_game() -> void:
 	var f := FileAccess.open(path, FileAccess.WRITE)
@@ -202,6 +213,14 @@ func record_run(earned: float) -> bool:
 	coins += earned
 	save_game()
 	return best
+
+## Is a perk in the pool? (Starting perks always are; the others need their milestone.)
+func perk_unlocked(id: String) -> bool:
+	var d := Tuning.perk_def(id)
+	return not d.is_empty() and (d["unlock"] == "" or bool(milestones.get(d["unlock"], false)))
+
+func unlock_milestone(id: String) -> void:
+	milestones[id] = true
 
 func map_unlocked(i: int) -> bool:
 	return bool(maps_unlocked[clampi(i, 0, 3)])

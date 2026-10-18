@@ -26,6 +26,12 @@ var _menu_coins: Label
 var _map_cards: Array[Button] = []         # start screen: one card per map
 var _map_dots: Array = []                  # per card: its three medal dots
 var _distance_label: Label
+var _next_label: Label                    # "Next: 1.5K" (the score of the next pick)
+const PERK_ICONS := 12
+var _perk_icons: Array[Dictionary] = []   # pooled small icons for the perks held this run: panel, glyph, level
+const EFFECT_LABELS := 6
+var _effect_labels: Array[Label] = []     # active boosts (and Glide) with seconds left
+var _effect_shown := PackedInt32Array()
 var _flash_rect: ColorRect
 var _flash_ms := -10000
 var _last_meters := -1
@@ -90,6 +96,45 @@ func _ready() -> void:
 	_distance_label.horizontal_alignment = HORIZONTAL_ALIGNMENT_LEFT
 	_distance_label.position = Vector2(24, 26)
 	_distance_label.modulate = Color(1, 1, 1, 0.8)
+	_next_label = _make_label(34)
+	_next_label.set_anchors_and_offsets_preset(Control.PRESET_TOP_WIDE)
+	_next_label.offset_top = 335
+	_next_label.modulate = Color(1, 1, 1, 0.8)
+	for i in PERK_ICONS:
+		var panel := Panel.new()
+		var sb := StyleBoxFlat.new()
+		sb.set_corner_radius_all(26)
+		panel.add_theme_stylebox_override("panel", sb)
+		panel.size = Vector2(52, 52)
+		panel.mouse_filter = Control.MOUSE_FILTER_IGNORE
+		panel.visible = false
+		add_child(panel)
+		var gl := Label.new()
+		gl.add_theme_font_size_override("font_size", 30)
+		gl.add_theme_constant_override("outline_size", 6)
+		gl.add_theme_color_override("font_outline_color", Color.BLACK)
+		gl.horizontal_alignment = HORIZONTAL_ALIGNMENT_CENTER
+		gl.vertical_alignment = VERTICAL_ALIGNMENT_CENTER
+		gl.size = Vector2(52, 44)
+		gl.mouse_filter = Control.MOUSE_FILTER_IGNORE
+		panel.add_child(gl)
+		var lv := Label.new()
+		lv.add_theme_font_size_override("font_size", 22)
+		lv.add_theme_constant_override("outline_size", 6)
+		lv.add_theme_color_override("font_outline_color", Color.BLACK)
+		lv.horizontal_alignment = HORIZONTAL_ALIGNMENT_RIGHT
+		lv.position = Vector2(28, 26)
+		lv.size = Vector2(24, 26)
+		lv.mouse_filter = Control.MOUSE_FILTER_IGNORE
+		panel.add_child(lv)
+		_perk_icons.append({"panel": panel, "style": sb, "glyph": gl, "level": lv})
+	for i in EFFECT_LABELS:
+		var el := _make_label(34)
+		el.horizontal_alignment = HORIZONTAL_ALIGNMENT_LEFT
+		el.position = Vector2(24, 450 + 44.0 * i)
+		el.visible = false
+		_effect_labels.append(el)
+	_effect_shown.resize(EFFECT_LABELS)
 	_flash_rect = ColorRect.new()
 	_flash_rect.color = Color(1, 1, 1, 0)
 	_flash_rect.set_anchors_and_offsets_preset(Control.PRESET_FULL_RECT)
@@ -388,6 +433,49 @@ func hide_menus() -> void:
 ## Is a touch at `pos` on the game-over "Hangar" button? (Main uses it so that tap doesn't restart.)
 func over_hangar_hit(pos: Vector2) -> bool:
 	return _over_hangar.visible and _over_hangar.get_global_rect().has_point(pos)
+
+## "Next: 1.5K": the score of the next pick (empty text hides it).
+func set_next(score_needed: float) -> void:
+	_next_label.text = ("Next: %s" % Tuning.fmt(score_needed)) if (score_needed > 0.0 and score_needed < 1e300) else ""
+
+## The perks held this run, as small icons in a row under the fuel gauge (a perk id -> level dictionary).
+func set_perks(levels: Dictionary) -> void:
+	var held: Array[Dictionary] = []
+	for d in Tuning.perks:
+		if int(levels.get(d["id"], 0)) > 0:
+			held.append(d)
+	for i in PERK_ICONS:
+		var ic := _perk_icons[i]
+		var panel := ic["panel"] as Panel
+		panel.visible = i < held.size()
+		if i < held.size():
+			(ic["style"] as StyleBoxFlat).bg_color = held[i]["color"]
+			(ic["glyph"] as Label).text = held[i]["glyph"]
+			(ic["level"] as Label).text = str(int(levels[held[i]["id"]]))
+			panel.position = Vector2(540.0 + 58.0 * (i - (held.size() - 1) * 0.5) - 26.0, 384)
+
+## Boosts running (and Glide): one line each with the seconds left. `boosts` = boost id -> seconds left.
+func refresh_effects(boosts: Dictionary, glide_left: float) -> void:
+	for i in EFFECT_LABELS:
+		var secs := 0.0
+		var title := ""
+		var col := Color.WHITE
+		if i < Tuning.boosts.size():
+			var d: Dictionary = Tuning.boosts[i]
+			secs = float(boosts.get(d["id"], 0.0))
+			title = String(d["name"]).to_upper()
+			col = d["color"]
+		else:
+			secs = glide_left
+			title = "GLIDE"
+			col = Color(0.6, 0.85, 1.0)
+		var shown := int(ceil(secs)) if secs > 0.0 else 0
+		var lbl := _effect_labels[i]
+		if shown != _effect_shown[i]:
+			_effect_shown[i] = shown
+			lbl.visible = shown > 0
+			lbl.text = "%s  %ds" % [title, shown]
+			lbl.add_theme_color_override("font_color", col)
 
 ## The distance flown, in meters (top-left).
 func set_distance(meters_value: float) -> void:
@@ -701,6 +789,16 @@ func begin_prewarm(with_popups: bool) -> void:
 			l.text = Tuning.popup_text(2.0 + t) + "\n0123456789.x" if t < Tuning.near_miss_sizes.size() else Tuning.whisker_text + "\n" + Tuning.popup_text(2.0 + t)   # (digits too: every bonus value shows up as popup text)
 			l.position = Vector2(20.0, 120.0 + 90.0 * t)
 			l.set_meta("prewarm", true)
+	# The pick HUD: "Next:", every perk icon, every boost line.
+	set_next(2400000.0)
+	var all_perks := {}
+	for d in Tuning.perks:
+		all_perks[d["id"]] = 3
+	set_perks(all_perks)
+	var all_boosts := {}
+	for d in Tuning.boosts:
+		all_boosts[d["id"]] = 12.0
+	refresh_effects(all_boosts, 3.0)
 	# Both end screens' glyphs, so neither is first drawn when a run ends.
 	var extra := "12,345 m  NEW BEST!\nBronze medal!  +3K coins\nCoast unlocked!"
 	_over.text = _game_over_text(Main.HEADER_CRASH, Main.REASON_OBSTACLE, 1234567890, true, 1234567890, extra) + "\n" \
@@ -755,6 +853,9 @@ func reset_for_run() -> void:
 		_coin_pops[i].visible = false
 		_coin_born[i] = 0
 	set_lives(0)
+	set_next(0.0)
+	set_perks({})
+	refresh_effects({}, 0.0)
 	_nm_frames_left = 0
 	_fuel_pulse_ms = -10000
 	set_fuel(1.0)
@@ -764,6 +865,9 @@ func reset_for_run() -> void:
 	clear_bonus()
 
 func end_prewarm() -> void:
+	set_next(0.0)
+	set_perks({})
+	refresh_effects({}, 0.0)
 	for i in POPUP_POOL:
 		_pop_labels[i].visible = false
 		_pop_born[i] = 0

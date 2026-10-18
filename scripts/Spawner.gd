@@ -38,6 +38,8 @@ class Row extends Node3D:
 	var gull_hi: Array[float] = []
 	var gull_v: Array[float] = []
 	var gull_phase: Array[float] = []
+	var nudge_k: Array[int] = []          # obstacles being shoved sideways by Prop Wash (index into xs / obs)
+	var nudge_v: Array[float] = []        # ...and their sideways velocity (units/second)
 	var cloud_cov: Array[bool] = []       # per column: cloud will cover that column's centre line (for can placement)
 	var xs: Array[float] = []             # x of each blocked column this time round
 	var ghosts: Array[MeshInstance3D] = []        # one Cloud Eye outline frame per column (hidden unless needed)
@@ -61,6 +63,8 @@ class Row extends Node3D:
 		gull_hi.clear()
 		gull_v.clear()
 		gull_phase.clear()
+		nudge_k.clear()
+		nudge_v.clear()
 		xs.clear()
 		obs.clear()
 		obs_ghosts.clear()
@@ -122,6 +126,9 @@ var _cloud_color := Color.WHITE
 var _blocked_add := 0
 var _gull_share := 0.0
 var _cloud_mult := 1.0
+var crate_shower_rows := 0          # Crate Shower supply: how many of the next rows are crate-rich (Phase 5)
+var near_miss_scale := 1.0         # Daredevil: close calls count from this much farther
+signal bump(pos: Vector3)           # a shoved obstacle hit another one (Prop Wash)
 
 func _ready() -> void:
 	# One shared material for every cube. Each cube gets its OWN outline material (same shader),
@@ -260,10 +267,10 @@ func update_near_misses(p: Vector2, caps: PackedFloat32Array) -> Array[Dictionar
 						r.min_idx = i
 		if r.position.z - p.y > behind + half.y:  # row has fully scrolled past the plane
 			r.passed = true
-			if r.entered and r.min_idx >= 0 and r.min_clear < Tuning.near_miss_distance:
+			if r.entered and r.min_idx >= 0 and r.min_clear < Tuning.near_miss_distance * near_miss_scale:
 				var side := 1 if r.xs[r.min_idx] > p.x else -1
 				events.append({"side": side, "node": r.obs[r.min_idx], "outline": r.outlines[r.min_idx],
-						"clearance": r.min_clear, "whisker": r.min_clear <= Tuning.whisker_close_distance})
+						"clearance": r.min_clear, "whisker": r.min_clear <= Tuning.whisker_close_distance, "row": r, "k": r.min_idx})
 	return events
 
 ## Flash one obstacle's outline white for near_miss_flash_time seconds: just uniform changes on
@@ -660,6 +667,62 @@ func _make_gulls(row: Row, width: float) -> void:
 		row.gull_v.append(Tuning.gull_speed * (1.0 if randf() < 0.5 else -1.0) if hi - lo > 0.01 else 0.0)
 		row.gull_phase.append(randf() * TAU)
 
+## Prop Wash: shove obstacle `k` of `row` sideways (dir = -1 / +1) at `speed` units/second. Gulls keep to their own drift.
+func nudge_obstacle(row: Row, k: int, dir: int, speed: float) -> void:
+	if k < 0 or k >= row.xs.size() or row.gull_k.has(k):
+		return
+	var i := row.nudge_k.find(k)
+	if i < 0:
+		row.nudge_k.append(k)
+		row.nudge_v.append(dir * speed)
+	else:
+		row.nudge_v[i] = dir * speed
+
+func _update_nudges(r: Row, delta: float, width: float) -> void:
+	var half := Tuning.ortho_size * 0.5
+	for i in range(r.nudge_k.size() - 1, -1, -1):
+		var k: int = r.nudge_k[i]
+		var v: float = r.nudge_v[i]
+		var x: float = clampf(r.xs[k] + v * delta, -half, half)
+		var hit_other := -1
+		for j in r.xs.size():
+			if j != k and absf(r.xs[j] - x) < width and (r.xs[j] - r.xs[k]) * v > 0.0:
+				hit_other = j
+				break
+		r.xs[k] = x
+		r.obs[k].position.x = x
+		r.obs_ghosts[k].position.x = x
+		if hit_other >= 0:
+			bump.emit(Vector3(x, 0.4, r.position.z))
+			r.nudge_k.remove_at(i)
+			r.nudge_v.remove_at(i)
+			continue
+		v *= exp(-Tuning.prop_wash_friction * delta)
+		if absf(v) < 0.3 or absf(x) >= half:
+			r.nudge_k.remove_at(i)
+			r.nudge_v.remove_at(i)
+		else:
+			r.nudge_v[i] = v
+
+## Lucky Whiskers: put a fuel can in the nearest row ahead of the plane that has none, in the open column closest to x.
+func drop_can_ahead(x: float) -> bool:
+	var best: Row = null
+	for r in _rows:
+		if r.has_can or r.open.is_empty() or r.position.z > plane_z - 4.0 or r.position.z < plane_z - 24.0:
+			continue
+		if best == null or r.position.z > best.position.z:
+			best = r
+	if best == null:
+		return false
+	var col := -1
+	for c in best.open.size():
+		if best.open[c] and (col < 0 or absf(Tuning.column_center(c) - x) < absf(Tuning.column_center(col) - x)):
+			col = c
+	if col < 0:
+		return false
+	_place_can(best, Tuning.column_center(col))
+	return true
+
 ## Per-frame hazard update (Main calls it during a run): gulls drift and flap, gusts and lightning run.
 func update_hazards(delta: float) -> void:
 	var now := Time.get_ticks_msec() / 1000.0
@@ -679,6 +742,8 @@ func update_hazards(delta: float) -> void:
 			mi.position.x = x
 			mi.scale.y = width * GULL_HEIGHT * (0.85 + 0.2 * sin(now * 9.0 + r.gull_phase[gi]))
 			r.obs_ghosts[k].position.x = x
+		if not r.nudge_k.is_empty():
+			_update_nudges(r, delta, width)
 	hazards.update(delta)
 
 ## ---- Clouds: free-floating bundles --------------------------------------------------------------
