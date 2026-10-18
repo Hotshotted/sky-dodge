@@ -19,6 +19,7 @@ extends SceneTree
 ##       generated rows, checked every step), fade in late, sit above obstacles/cans but below the plane,
 ##       hide cans more often, ?nofx=clouds disables them, restart clears them, nothing new is allocated
 ##   2i. bonus: step-table streak bonus, cap (gold glowing label), steps coming off one by one, number-only text, reset on crash, huge caps
+##   2l. maps: unlocks, medals, palettes, gulls / wind gusts / lightning and their fairness rules
 ##   2k. Whisker close: doubled step, popup/burst, decay, cap, detection by clearance
 ##   2j. progression: save file round trip (versioned), coin award, Hangar purchases apply, ?tune save buttons
 ##   3. ?debug flags parse, and switching an effect off really skips it
@@ -156,6 +157,7 @@ func _initialize() -> void:
 	check(blobs.size() == main.spawner.CLOUD_POOL * main.spawner.PUFFS_PER_CLOUD and count_visible(blobs) == blobs.size(),
 			"every pooled cloud puff (%d) is drawn during the pre-warm" % blobs.size())
 	check(count_visible(main.fx._pickup_emitters) == main.fx.PICKUP_EMITTERS, "both fuel-pickup emitters are drawing during the pre-warm")
+	check(count_visible(main.spawner.hazards._all_gusts) == main.spawner.hazards.GUST_POOL and count_visible(main.spawner.hazards._bolts) == main.spawner.hazards.BOLT_POOL, "every pooled wind gust and lightning strip is drawn during the pre-warm")
 	check(count_visible(main.fx._whisker_emitters) == main.fx.WHISKER_EMITTERS, "both Whisker-close burst emitters are drawing during the pre-warm")
 	var whisker_popup_drawn := false
 	for pl_ in main.hud._pop_labels:
@@ -1275,6 +1277,293 @@ func _initialize() -> void:
 	main.fx.clear()
 	var snap_prog := snapshot(main)
 	check(same_world(base, snap_prog), "buying, saving, the Hangar and gear created nothing new  [%s]" % describe(snap_prog))
+
+	print("2l. maps: unlocks, medals, palettes, gulls, wind gusts, lightning")
+	tsave.reset_all()
+	# (a) the map table
+	var mm: Array = tuning.maps
+	check(mm.size() == 4 and mm[0]["name"] == "Countryside" and mm[1]["name"] == "Coast" and mm[2]["name"] == "Mountains" and mm[3]["name"] == "Stormfront", "four maps: Countryside, Coast, Mountains, Stormfront")
+	check(tuning.map_coin_mult[0] == 1.0 and tuning.map_coin_mult[1] == 2.0 and tuning.map_coin_mult[2] == 4.0 and tuning.map_coin_mult[3] == 8.0, "coin multipliers x1, x2, x4, x8")
+	check(mm[1]["unlock_from"] == 0 and mm[1]["unlock_meters"] == 3000.0 and mm[2]["unlock_from"] == 1 and mm[2]["unlock_meters"] == 4000.0 and mm[3]["unlock_from"] == 2 and mm[3]["unlock_meters"] == 5000.0,
+			"unlocks: 3,000 m in Countryside, 4,000 m in Coast, 5,000 m in Mountains")
+	check(mm[1]["gull_share"] > 0.0 and mm[0]["gull_share"] == 0.0 and mm[2]["gust_chance"] > 0.0 and mm[1]["gust_chance"] == 0.0 and mm[3]["lightning_interval"] > 0.0 and mm[2]["lightning_interval"] == 0.0,
+			"each map brings its own hazard: gulls (Coast), gusts (Mountains), lightning (Stormfront)")
+	var pal_ok := true
+	for i in 4:
+		for j in range(i + 1, 4):
+			pal_ok = pal_ok and not mm[i]["sky"].is_equal_approx(mm[j]["sky"]) and not mm[i]["obstacle"].is_equal_approx(mm[j]["obstacle"])
+		pal_ok = pal_ok and mm[i]["medals"].size() == 3 and mm[i]["medals"][0][0] < mm[i]["medals"][1][0] and mm[i]["medals"][1][0] < mm[i]["medals"][2][0] and mm[i]["medals"][0][1] < mm[i]["medals"][2][1]
+	check(pal_ok, "every map has its own palette and three medal goals with rising rewards")
+	check(tuning.meters(100.0) == 100.0 * tuning.meters_per_unit and tuning.fmt_m(3120.0) == "3,120 m" and tuning.fmt_m(999.0) == "999 m" and tuning.fmt_m(1234567.0) == "1,234,567 m", "meters are a Tuning conversion of world units (%.1f m per unit); 3,120 m formatting" % tuning.meters_per_unit)
+	check(is_equal_approx(tuning.map_speed(1, 0.0), tuning.base_speed * 1.1) and tuning.map_speed(3, 1000.0) <= tuning.max_speed * 1.3 + 0.001 and tuning.map_speed(3, 0.0) > tuning.map_speed(0, 0.0), "harder maps start faster")
+	# (b) saves: per-map bests, medals (paid once), unlocks, migration from v2
+	var r1: Dictionary = tsave.record_map_run(0, 1600.0, 500.0)
+	check(r1["medals"] == [0] and r1["reward"] == mm[0]["medals"][0][1] and r1["unlocked"].is_empty() and r1["new_best_distance"], "1,600 m on Countryside: bronze medal and its coins, no unlock yet")
+	var coins_before: float = tsave.coins
+	var r2: Dictionary = tsave.record_map_run(0, 1600.0, 400.0)
+	check(r2["medals"].is_empty() and tsave.coins == coins_before and not r2["new_best_distance"], "the same medal is not paid twice")
+	var r3: Dictionary = tsave.record_map_run(0, 3100.0, 900.0)
+	check(r3["medals"] == [1] and r3["unlocked"] == [1] and tsave.map_unlocked(1) and not tsave.map_unlocked(2), "3,100 m: silver medal and Coast unlocks")
+	check(tsave.map_stat(0)["best_distance"] == 3100.0 and tsave.map_stat(0)["best_score"] == 900.0 and tsave.map_stat(1)["best_distance"] == 0.0, "bests are kept per map")
+	check(not tsave.select_map(2) and tsave.select_map(1) and tsave.selected_map == 1, "a locked map can't be selected; Coast can")
+	var r4: Dictionary = tsave.record_map_run(1, 3999.0, 5000.0)
+	check(r4["unlocked"].is_empty() and not tsave.map_unlocked(2), "3,999 m on Coast does not unlock Mountains")
+	var r5: Dictionary = tsave.record_map_run(1, 4000.0, 5000.0)
+	check(r5["unlocked"] == [2], "4,000 m on Coast unlocks Mountains")
+	tsave.save_game()
+	tsave.load_game()
+	check(tsave.map_unlocked(2) and tsave.selected_map == 1 and tsave.map_stat(0)["medals"] == 2, "map progress survives save and load")
+	var v2 := FileAccess.open(tsave.path, FileAccess.WRITE)
+	v2.store_string(JSON.stringify({"version": 2, "high_score": 8000, "coins": 70, "levels": {}, "slots": 1, "loadout": ["", "", ""]}))
+	v2.close()
+	tsave.load_game()
+	check(tsave.map_stat(0)["best_score"] == 8000.0 and tsave.map_unlocked(0) and not tsave.map_unlocked(1) and tsave.coins == 70.0, "a v2 save migrates: the old high score becomes the Countryside best")
+	tsave.reset_all()
+	# (c) the start screen: map cards, locks, selection, PLAY uses the selected map
+	main.hud.show_menu()
+	var cards: Array = main.hud._map_cards
+	check(cards.size() == 4 and not (cards[0] as Button).disabled and (cards[1] as Button).disabled and (cards[1] as Button).text.contains("Reach 3,000 m on Countryside") and (cards[0] as Button).text.contains("x1 coins"),
+			"start screen: four map cards, the locked ones say how to unlock (\"%s\")" % (cards[1] as Button).text.replace("\n", " / "))
+	tsave.record_map_run(0, 3000.0, 100.0)
+	check(not (cards[1] as Button).disabled and (cards[1] as Button).text.contains("x2 coins") and (cards[2] as Button).disabled and main.hud._map_dots[0][1].get_theme_stylebox("panel").bg_color.is_equal_approx(Color(0.82, 0.86, 0.92)),
+			"Coast opens (x2 coins) and the Countryside silver medal dot lights up")
+	(cards[1] as Button).pressed.emit()
+	check(tsave.selected_map == 1, "tapping a card selects that map")
+	main.hud.play_pressed.emit()
+	main.set_process(false)
+	check(main.map == 1 and main.coin_mult == 2.0 * tuning.coin_value_mult() and sp.map == 1 and sp._obs_color.is_equal_approx(mm[1]["obstacle"]) and main._env.background_color.is_equal_approx(mm[1]["sky"]),
+			"PLAY starts on the selected map: x2 coins, the Coast palette, the Coast sky")
+	check(sp._ground_mat.albedo_color.is_equal_approx(mm[1]["ground"]) and sp._cloud_color.is_equal_approx(mm[1]["cloud"]), "...ground and clouds recoloured too")
+	# (d) distance on the HUD and the result screen
+	sp.reset(-500.0)
+	main.run_distance = 0.0
+	main._process(0.05)
+	check(main.hud._distance_label.text.ends_with(" m") and main.run_distance > 0.0, "the HUD shows the distance in meters (\"%s\")" % main.hud._distance_label.text)
+	tsave.reset_all()
+	tsave.unlock_all_maps()
+	tsave.select_map(0)
+	main.restart()
+	main.set_process(false)
+	main.run_distance = 3300.0 / tuning.meters_per_unit
+	main.score = 777.0
+	main._end_run(main.HEADER_CRASH, main.REASON_OBSTACLE)
+	var over_txt: String = main.hud._over.text
+	check(over_txt.contains("3,300 m  NEW BEST!") and over_txt.contains("Bronze medal!") and over_txt.contains("Silver medal!") and not over_txt.contains("Gold medal"), "the game-over screen shows the distance and the medals earned")
+	check(tsave.map_stat(0)["best_distance"] == 3300.0 and tsave.map_stat(0)["best_score"] == 777.0, "...and per-map bests update")
+	main.hud.hide_menus()
+	# (e) GULLS (Coast): drifting obstacles that never close the safe path
+	tsave.reset_all()
+	tsave.unlock_all_maps()
+	sp.apply_map(1)
+	sp.run_time = 0.0
+	sp.reset(-500.0)
+	var n_obs := 0
+	var n_gulls := 0
+	var gull_ok := true
+	var gull_mat_ok := true
+	var hw: float = tuning.column_width() * tuning.obstacle_scale * 0.5 + tuning.outline_thickness
+	for i in 1500:
+		sp._spawn_row(-30.0)
+		var gr = sp._rows[-1]
+		n_obs += gr.obs.size()
+		n_gulls += gr.gull_k.size()
+		var keep_x: float = tuning.column_center(gr.safe_col)
+		for gi in gr.gull_k.size():
+			var k: int = gr.gull_k[gi]
+			gull_mat_ok = gull_mat_ok and gr.obs[k].material_override == sp._gull_mat
+			var x0: float = gr.xs[k]
+			var need: float = hw + 1.1 + 0.15
+			var worst: float = minf(absf(keep_x - gr.gull_lo[gi]), absf(keep_x - gr.gull_hi[gi]))
+			gull_ok = gull_ok and worst >= minf(absf(keep_x - x0), need) - 0.0001
+		sp._release_row(gr)
+	check(n_gulls > 0 and absf(float(n_gulls) / n_obs - 0.5) < 0.08 and gull_mat_ok, "Coast: about half the obstacles are gulls (%.0f%%), drawn in their own white material" % (100.0 * n_gulls / maxf(n_obs, 1.0)))
+	check(gull_ok, "FAIRNESS: over 1500 rows no gull's drift range ever intrudes on the safe-path column")
+	sp.reset(-500.0)
+	var grow = null
+	while grow == null or grow.gull_k.is_empty() or grow.gull_hi[0] - grow.gull_lo[0] < 0.5:
+		if grow != null:
+			sp._release_row(grow)
+		sp._spawn_row(-30.0)
+		grow = sp._rows[-1]
+	var gk: int = grow.gull_k[0]
+	var gx0: float = grow.xs[gk]
+	grow.gull_v[0] = absf(tuning.gull_speed) if grow.gull_hi[0] > gx0 + 0.01 else -absf(tuning.gull_speed)
+	sp.update_hazards(0.2)
+	check(absf(grow.xs[gk] - gx0) > 0.1 and absf(grow.xs[gk] - gx0) < 0.4 and is_equal_approx(grow.obs[gk].position.x, grow.xs[gk]), "a gull drifts sideways slowly (%.2f units in 0.2 s) and its block moves with it" % (grow.xs[gk] - gx0))
+	for i in 600:
+		sp.update_hazards(0.05)
+	check(grow.xs[gk] >= grow.gull_lo[0] - 0.001 and grow.xs[gk] <= grow.gull_hi[0] + 0.001, "...and turns around at the end of its range")
+	sp._release_row(grow)
+	# (f) WIND GUSTS (Mountains)
+	sp.apply_map(2)
+	sp.run_time = 0.0
+	sp.plane_z = 4.0
+	sp.reset(-40.0)
+	var hz = sp.hazards
+	var gust_seen := 0
+	var gust_clear_ok := true
+	var gust_max := 0
+	for i in 900:
+		sp.advance(1.5)
+		gust_max = maxi(gust_max, hz.gusts_in_play().size())
+		for g in hz.gusts_in_play():
+			gust_seen += 1
+			for r in sp._rows:
+				gust_clear_ok = gust_clear_ok and absf(r.position.z - g.position.z) - g.length * 0.5 >= tuning.gust_clear - 0.001
+	check(gust_seen > 100 and gust_max <= hz.GUST_POOL, "Mountains: gusts appear between rows (pool of %d, never more)" % hz.GUST_POOL)
+	check(gust_clear_ok, "FAIRNESS: a gust is never closer than %.0f units to any row of obstacles" % tuning.gust_clear)
+	hz.configure(1.0, 0.0)
+	hz.on_row_spawned(-30.0)
+	check(hz.gusts_in_play().size() == 1, "a gust spawns")
+	var gu = hz.gusts_in_play()[0]
+	gu.position.z = -30.0
+	sp.plane_z = 4.0
+	hz.update(0.01)
+	var far_alpha: float = gu.mat.albedo_color.a
+	gu.position.z = 2.0
+	hz.update(0.01)
+	check(not hz.is_lit(hz.gusts_in_play()[0]) == false and gu.mat.albedo_color.a > far_alpha + 0.2, "a gust is faint from far away (%.2f) and lights up when close (%.2f): telegraphed" % [far_alpha, gu.mat.albedo_color.a])
+	gu.x0 = -4.0
+	gu.x1 = 4.0
+	gu.dir = 1.0
+	check(is_equal_approx(hz.push_at(0.0, 2.0), tuning.gust_push) and hz.push_at(0.0, 30.0) == 0.0 and hz.push_at(9.0, 2.0) == 0.0, "the gust pushes sideways only inside its zone (%.1f units/s)" % tuning.gust_push)
+	tsave.select_map(2)
+	main.restart()
+	main.set_process(false)
+	sp.reset(-500.0)
+	sp.hazards.configure(1.0, 0.0)
+	sp.hazards.on_row_spawned(-30.0)
+	var gu2 = sp.hazards.gusts_in_play()[0]
+	gu2.x0 = -5.0
+	gu2.x1 = 5.0
+	gu2.dir = -1.0
+	var px0: float = main.player.position.x
+	gu2.position.z = main.player.position.z
+	main._process(0.05)
+	check(is_equal_approx(main.player.position.x, px0 - tuning.gust_push * 0.05), "in a run the wind moves the plane sideways (%.3f -> %.3f)" % [px0, main.player.position.x])
+	sp.hazards.reset()
+	# (g) LIGHTNING (Stormfront)
+	tsave.select_map(3)
+	main.restart()
+	main.set_process(false)
+	sp.reset(-500.0)
+	sp.run_time = 30.0
+	sp.plane_z = main.player.position.z
+	sp.plane_x = 0.0
+	sp.scroll_speed = 10.0
+	hz = sp.hazards
+	check(hz.lightning_interval > 0.0, "Stormfront has lightning")
+	var struck := {"n": 0}
+	hz.lightning_struck.connect(func(): struck["n"] += 1)
+	hz._next_strike = 0.0
+	hz.update(0.01)
+	var bolt = null
+	for b in hz.bolts_in_play():
+		if b.state == 1:
+			bolt = b
+	check(bolt != null and bolt.visible, "a strike starts as a visible warning on one column")
+	var bcol: int = bolt.col
+	var bx: float = tuning.column_center(bcol)
+	var elapsed_w := 0.0
+	var struck_early := false
+	while bolt.state == 1 and elapsed_w < 3.0:
+		struck_early = struck_early or hz.hit(bx)
+		hz.update(0.05)
+		elapsed_w += 0.05
+	check(not struck_early and absf(elapsed_w - tuning.lightning_warn) < 0.12 and bolt.state == 2 and struck["n"] == 1, "...about %.1f s later it strikes (warned %.2f s, nothing hurt before that)" % [tuning.lightning_warn, elapsed_w])
+	check(hz.hit(bx) and hz.hit(bx + 0.5) and not hz.hit(bx + tuning.column_width() * 1.0 + 0.9), "the strike hurts the plane in that column only")
+	var strike_t := 0.0
+	while bolt.state == 2 and strike_t < 2.0:
+		hz.update(0.05)
+		strike_t += 0.05
+	check(absf(strike_t - tuning.lightning_strike) < 0.12 and not hz.hit(bx), "the strike lasts %.1f s, then the bolt fades" % tuning.lightning_strike)
+	for i in 20:
+		hz.update(0.05)
+	check(bolt.state == 0 and not bolt.visible, "...and goes back to the pool")
+	# lightning fairness: random rows near the plane, picks never break the rule
+	var lf_ok := true
+	var lf_picks := 0
+	var lf_none := 0
+	for trial in 600:
+		sp.reset(-500.0)
+		hz.reset()
+		for k in randi_range(1, 3):
+			var lr = sp._rows_make_for_test(main.player.position.z - randf_range(-2.0, 18.0), [])
+			var cnt := 0
+			for c in tuning.column_count:
+				var is_open := randf() < 0.5
+				lr.open.append(is_open)
+				cnt += int(is_open)
+			if cnt == 0:
+				lr.open[randi() % tuning.column_count] = true
+			var opens: Array[int] = []
+			for c in tuning.column_count:
+				if lr.open[c]:
+					opens.append(c)
+			lr.safe_col = opens.pick_random()
+		var pick: int = hz._pick_column()
+		if pick < 0:
+			lf_none += 1
+			continue
+		lf_picks += 1
+		for lr2 in hz._rows_in_window():
+			var other := false
+			for c in tuning.column_count:
+				if lr2.open[c] and c != pick:
+					other = true
+			lf_ok = lf_ok and lr2.safe_col != pick and other
+	check(lf_ok and lf_picks > 100, "FAIRNESS: in %d random situations lightning never picked the safe path or the last open column of a passing row (%d picks, %d held back)" % [lf_picks + lf_none, lf_picks, lf_none])
+	# a row arrives whose only way is the warned column: the strike fizzles
+	sp.reset(-500.0)
+	hz.reset()
+	hz._begin(hz.bolts_in_play()[0], 2)
+	var trap = sp._rows_make_for_test(main.player.position.z - 4.0, [])
+	for c in tuning.column_count:
+		trap.open.append(c == 2)
+	trap.safe_col = 2
+	struck["n"] = 0
+	for i in 40:
+		hz.update(0.05)
+	check(struck["n"] == 0 and not hz.hit(tuning.column_center(2)), "if a row arrives whose only way is the warned column, the strike is cancelled")
+	sp.reset(-500.0)
+	hz.reset()
+	# lightning damages the plane in a run: crash, or a life
+	main.restart()
+	main.set_process(false)
+	sp.reset(-500.0)
+	main.lives = 0
+	var pb = hz.bolts_in_play()[0]
+	hz._begin(pb, roundi(main.player.position.x / tuning.column_width() + (tuning.column_count - 1) * 0.5))
+	pb.state = 2
+	main._process(0.02)
+	check(not main.alive and main.hud._over.text.begins_with(main.HEADER_STRUCK), "standing in a strike ends the run (STRUCK)")
+	main.restart()
+	main.set_process(false)
+	sp.reset(-500.0)
+	main.lives = 1
+	pb = hz.bolts_in_play()[0]
+	hz._begin(pb, roundi(main.player.position.x / tuning.column_width() + (tuning.column_count - 1) * 0.5))
+	pb.state = 2
+	main._process(0.02)
+	check(main.alive and main.lives == 0 and main._invuln > 0.0, "...unless a life absorbs it")
+	hz.reset()
+	# (h) the ?tune debug button, pre-warm drew the hazard pools, nothing new allocated
+	var um: Button = null
+	for bt in main.tune_panel.find_children("*", "Button", true, false):
+		if bt.get_meta("debug", "") == "unlock_maps":
+			um = bt
+	tsave.reset_all()
+	um.pressed.emit()
+	check(tsave.map_unlocked(1) and tsave.map_unlocked(2) and tsave.map_unlocked(3), "?tune: Unlock all maps")
+	tsave.reset_all()
+	tsave.select_map(0)
+	main.hud.play_pressed.emit()
+	main.set_process(false)
+	main.fx.clear()
+	sp.apply_map(0)
+	var snap_maps := snapshot(main)
+	snap_maps["mats"].erase(sp._gull_mat.get_instance_id())   # (pre-built at start-up; it only shows up in the walk while a gull is on screen)
+	check(same_world(base, snap_maps), "maps, gulls, gusts and lightning created nothing new  [%s]" % describe(snap_maps))
 
 	print("3. debug flags")
 	DebugFlags.parse(["nofx=sparks,bogus", "noprewarm", "perf", "v=abc1234"])

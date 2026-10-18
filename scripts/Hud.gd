@@ -17,11 +17,18 @@ var _score_tick_ms := -10000         # when the score number last ticked up whil
 ## Menu buttons, wired up by Main.
 signal play_pressed
 signal hangar_pressed
+signal map_pressed(index: int)
 signal back_pressed
 signal upgrade_pressed(id: String)
 var _menu: Control                   # start screen: title, best score, coins, PLAY, HANGAR
 var _menu_best: Label
 var _menu_coins: Label
+var _map_cards: Array[Button] = []         # start screen: one card per map
+var _map_dots: Array = []                  # per card: its three medal dots
+var _distance_label: Label
+var _flash_rect: ColorRect
+var _flash_ms := -10000
+var _last_meters := -1
 var _hangar: Control                 # upgrade screen
 var _hangar_coins: Label
 var _over_hangar: Button             # small "Hangar" button on the game-over screen
@@ -79,6 +86,15 @@ func _ready() -> void:
 	_bonus_label.set_anchors_and_offsets_preset(Control.PRESET_TOP_WIDE)
 	_bonus_label.offset_top = 170
 	clear_bonus()
+	_distance_label = _make_label(40)
+	_distance_label.horizontal_alignment = HORIZONTAL_ALIGNMENT_LEFT
+	_distance_label.position = Vector2(24, 26)
+	_distance_label.modulate = Color(1, 1, 1, 0.8)
+	_flash_rect = ColorRect.new()
+	_flash_rect.color = Color(1, 1, 1, 0)
+	_flash_rect.set_anchors_and_offsets_preset(Control.PRESET_FULL_RECT)
+	_flash_rect.mouse_filter = Control.MOUSE_FILTER_IGNORE
+	add_child(_flash_rect)
 	_build_fuel_gauge()
 	for i in POPUP_POOL:
 		var l := _make_label(64)
@@ -162,15 +178,33 @@ func _screen_root() -> Control:
 func _build_menus() -> void:
 	const W := 1080.0
 	_menu = _screen_root()
-	_screen_label(_menu, "SKY DODGE", 140, 0, 330, W, 180, HORIZONTAL_ALIGNMENT_CENTER)
-	_menu_best = _screen_label(_menu, "", 56, 0, 600, W, 90, HORIZONTAL_ALIGNMENT_CENTER)
-	_menu_coins = _screen_label(_menu, "", 56, 0, 690, W, 90, HORIZONTAL_ALIGNMENT_CENTER)
+	_screen_label(_menu, "SKY DODGE", 130, 0, 90, W, 160, HORIZONTAL_ALIGNMENT_CENTER)
+	_menu_best = _screen_label(_menu, "", 44, 0, 260, W, 70, HORIZONTAL_ALIGNMENT_CENTER)
+	_menu_coins = _screen_label(_menu, "", 52, 0, 335, W, 80, HORIZONTAL_ALIGNMENT_CENTER)
+	for i in Tuning.maps.size():
+		var card := _make_button("", 36, Vector2(960, 150))
+		_place(card, 60, 450 + 165.0 * i, 960, 150)
+		card.alignment = HORIZONTAL_ALIGNMENT_LEFT
+		card.pressed.connect(func(): map_pressed.emit(i))
+		_menu.add_child(card)
+		_map_cards.append(card)
+		var dots := []
+		for k in 3:
+			var dot := Panel.new()
+			var sbd := StyleBoxFlat.new()
+			sbd.set_corner_radius_all(15)
+			dot.add_theme_stylebox_override("panel", sbd)
+			_place(dot, 960 - 60 - 36.0 * (3 - k), 60, 30, 30)
+			dot.mouse_filter = Control.MOUSE_FILTER_IGNORE
+			card.add_child(dot)
+			dots.append(dot)
+		_map_dots.append(dots)
 	var play := _make_button("PLAY", 84, Vector2(560, 170))
-	_place(play, (W - 560.0) * 0.5, 920, 560, 170)
+	_place(play, (W - 560.0) * 0.5, 1150, 560, 170)
 	play.pressed.connect(func(): play_pressed.emit())
 	_menu.add_child(play)
-	var hangar := _make_button("HANGAR", 64, Vector2(560, 140))
-	_place(hangar, (W - 560.0) * 0.5, 1140, 560, 140)
+	var hangar := _make_button("HANGAR", 60, Vector2(560, 130))
+	_place(hangar, (W - 560.0) * 0.5, 1350, 560, 130)
 	hangar.pressed.connect(func(): hangar_pressed.emit())
 	_menu.add_child(hangar)
 
@@ -276,7 +310,24 @@ func _on_slot_button(i: int) -> void:
 func refresh_menus(all_tabs: bool = false) -> void:
 	if _menu == null:
 		return
-	_menu_best.text = "Best: %s" % Tuning.fmt(Save.high_score)
+	var sel_stat: Dictionary = Save.map_stat(Save.selected_map)
+	_menu_best.text = "%s best: %s  |  %s" % [Tuning.map_def(Save.selected_map)["name"], Tuning.fmt(sel_stat["best_score"]), Tuning.fmt_m(sel_stat["best_distance"])]
+	for i in Tuning.maps.size():
+		var m := Tuning.map_def(i)
+		var card := _map_cards[i]
+		var st: Dictionary = Save.map_stat(i)
+		if Save.map_unlocked(i):
+			card.text = "  %s    x%s coins\n  Best %s   Score %s" % [m["name"], Tuning.fmt(Tuning.map_coin_mult[i]), Tuning.fmt_m(st["best_distance"]), Tuning.fmt(st["best_score"])]
+			card.disabled = false
+			card.modulate = Color(1.4, 1.4, 0.75) if i == Save.selected_map else Color(0.9, 0.95, 1.0)
+		else:
+			var from_name: String = Tuning.map_def(m["unlock_from"])["name"]
+			card.text = "  %s    LOCKED\n  Reach %s on %s" % [m["name"], Tuning.fmt_m(m["unlock_meters"]), from_name]
+			card.disabled = true
+			card.modulate = Color.WHITE
+		for k in 3:
+			var sbx := (_map_dots[i][k] as Panel).get_theme_stylebox("panel") as StyleBoxFlat
+			sbx.bg_color = [Color(0.8, 0.5, 0.25), Color(0.82, 0.86, 0.92), Color(1.0, 0.85, 0.2)][k] if k < int(st["medals"]) else Color(0.2, 0.24, 0.32)
 	_menu_coins.text = "Coins: %s" % Tuning.fmt(Save.coins)
 	_hangar_coins.text = "Coins: %s" % Tuning.fmt(Save.coins)
 	for t in TABS:
@@ -337,6 +388,17 @@ func hide_menus() -> void:
 ## Is a touch at `pos` on the game-over "Hangar" button? (Main uses it so that tap doesn't restart.)
 func over_hangar_hit(pos: Vector2) -> bool:
 	return _over_hangar.visible and _over_hangar.get_global_rect().has_point(pos)
+
+## The distance flown, in meters (top-left).
+func set_distance(meters_value: float) -> void:
+	var n := int(meters_value)
+	if n != _last_meters:
+		_last_meters = n
+		_distance_label.text = Tuning.fmt_m(n)
+
+## A lightning flash across the whole screen.
+func flash() -> void:
+	_flash_ms = Time.get_ticks_msec()
 
 ## Lives (Nine Lives, Patch): small red pips under the fuel gauge.
 func set_lives(n: int) -> void:
@@ -538,6 +600,8 @@ func _process(delta: float) -> void:
 		l.position.y = _pop_base_y[i] - 150.0 * (1.0 - pow(1.0 - t, 2.0))  # rise, easing out
 		l.modulate.a = 1.0 if t < 0.5 else 1.0 - (t - 0.5) / 0.5
 
+	var fa := 1.0 - (now - _flash_ms) / 1000.0 / 0.22
+	_flash_rect.color.a = 0.6 * clampf(fa, 0.0, 1.0)
 	# Coin pops: rise a little and fade.
 	for i in COIN_POP_POOL:
 		if _coin_born[i] == 0:
@@ -553,15 +617,15 @@ func _process(delta: float) -> void:
 
 ## End-of-run screen: a header ("CRASHED" / "OUT OF FUEL"), what ended the run, the final score and
 ## the restart hint.
-func show_game_over(header: String, reason: String, earned: float, new_best: bool, best: float) -> void:
-	_over.text = _game_over_text(header, reason, earned, new_best, best)
+func show_game_over(header: String, reason: String, earned: float, new_best: bool, best: float, extra: String = "") -> void:
+	_over.text = _game_over_text(header, reason, earned, new_best, best, extra)
 	_over.visible = true
 	_over_hangar.visible = true
 
 ## The score IS the coins earned this run.
-func _game_over_text(header: String, reason: String, earned: float, new_best: bool, best: float) -> String:
+func _game_over_text(header: String, reason: String, earned: float, new_best: bool, best: float, extra: String = "") -> String:
 	var best_line := "NEW BEST!" if new_best else "Best: %s" % Tuning.fmt(best)
-	return "%s\n%s\n\n+%s coins\n%s\n\nTap to restart" % [header, reason, Tuning.fmt(earned), best_line]
+	return "%s\n%s\n\n+%s coins\n%s\n%s\n\nTap to restart" % [header, reason, Tuning.fmt(earned), best_line, extra]
 
 func _make_label(font_size: int) -> Label:
 	var l := Label.new()
@@ -638,8 +702,10 @@ func begin_prewarm(with_popups: bool) -> void:
 			l.position = Vector2(20.0, 120.0 + 90.0 * t)
 			l.set_meta("prewarm", true)
 	# Both end screens' glyphs, so neither is first drawn when a run ends.
-	_over.text = _game_over_text(Main.HEADER_CRASH, Main.REASON_OBSTACLE, 1234567890, true, 1234567890) + "\n" \
-			+ _game_over_text(Main.HEADER_FUEL, Main.REASON_FUEL, 2400000000, false, 1234567890)
+	var extra := "12,345 m  NEW BEST!\nBronze medal!  +3K coins\nCoast unlocked!"
+	_over.text = _game_over_text(Main.HEADER_CRASH, Main.REASON_OBSTACLE, 1234567890, true, 1234567890, extra) + "\n" \
+			+ _game_over_text(Main.HEADER_FUEL, Main.REASON_FUEL, 2400000000, false, 1234567890, extra) + "\n" \
+			+ Main.HEADER_STRUCK + " " + Main.REASON_STRUCK + " Silver Gold Mountains Stormfront Countryside LOCKED Reach 0123456789"
 	_over.visible = true
 	refresh_menus(true)
 	_menu.visible = true      # the start screen, Hangar and Hangar button are drawn too (under the splash)

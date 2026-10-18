@@ -101,12 +101,86 @@ var cloud_max_drift := 0.12
 var fuel_can_under_cloud_chance := 0.45
 var cloud_color := Color(1.0, 1.0, 1.0)
 
+# ---------- Maps ----------
+## Four maps, each a separate run chosen on the start screen. Fields: id, name, unlock_from (the map whose
+## best distance unlocks it, -1 = open) and unlock_meters, coin multiplier (map_coin_mult, below), the
+## difficulty curve (speed_mult scales the start and top speed, ramp_mult the climb, blocked_add adds
+## blocked columns per row), the obstacle/hazard mix (gull_share = share of obstacles that are drifting
+## gulls, gust_chance = chance a gap between two rows gets a wind gust, lightning_interval = seconds
+## between lightning strikes at the start of a run, 0 = none), cloud_mult (how many clouds), the palette
+## (sky, ground, stripe, obstacle, cloud, ambient), and the medals: [distance in meters, coin reward].
+var maps: Array[Dictionary] = [
+	{"id": "countryside", "name": "Countryside", "unlock_from": -1, "unlock_meters": 0.0,
+			"speed_mult": 1.0, "ramp_mult": 1.0, "blocked_add": 0, "gull_share": 0.0, "gust_chance": 0.0, "lightning_interval": 0.0, "cloud_mult": 1.0,
+			"sky": Color(0.2, 0.26, 0.34), "ground": Color(0.2, 0.26, 0.34), "stripe": Color(0.3, 0.38, 0.5),
+			"obstacle": Color(1.0, 0.3, 0.12), "cloud": Color(1.0, 1.0, 1.0), "ambient": Color(0.75, 0.78, 0.9),
+			"medals": [[1500.0, 3000.0], [3000.0, 20000.0], [6000.0, 120000.0]]},
+	{"id": "coast", "name": "Coast", "unlock_from": 0, "unlock_meters": 3000.0,
+			"speed_mult": 1.1, "ramp_mult": 1.1, "blocked_add": 0, "gull_share": 0.5, "gust_chance": 0.0, "lightning_interval": 0.0, "cloud_mult": 1.0,
+			"sky": Color(0.16, 0.36, 0.5), "ground": Color(0.1, 0.42, 0.56), "stripe": Color(0.3, 0.62, 0.74),
+			"obstacle": Color(1.0, 0.45, 0.2), "cloud": Color(1.0, 0.98, 0.95), "ambient": Color(0.85, 0.9, 1.0),
+			"medals": [[2000.0, 25000.0], [4000.0, 160000.0], [7000.0, 900000.0]]},
+	{"id": "mountains", "name": "Mountains", "unlock_from": 1, "unlock_meters": 4000.0,
+			"speed_mult": 1.2, "ramp_mult": 1.2, "blocked_add": 1, "gull_share": 0.3, "gust_chance": 0.4, "lightning_interval": 0.0, "cloud_mult": 1.3,
+			"sky": Color(0.3, 0.28, 0.38), "ground": Color(0.32, 0.3, 0.36), "stripe": Color(0.5, 0.47, 0.56),
+			"obstacle": Color(0.95, 0.62, 0.2), "cloud": Color(0.92, 0.9, 1.0), "ambient": Color(0.8, 0.78, 0.95),
+			"medals": [[2500.0, 150000.0], [5000.0, 1000000.0], [8000.0, 6000000.0]]},
+	{"id": "stormfront", "name": "Stormfront", "unlock_from": 2, "unlock_meters": 5000.0,
+			"speed_mult": 1.3, "ramp_mult": 1.3, "blocked_add": 1, "gull_share": 0.3, "gust_chance": 0.3, "lightning_interval": 5.0, "cloud_mult": 1.8,
+			"sky": Color(0.09, 0.1, 0.16), "ground": Color(0.12, 0.13, 0.2), "stripe": Color(0.22, 0.24, 0.36),
+			"obstacle": Color(0.78, 0.3, 0.95), "cloud": Color(0.5, 0.53, 0.62), "ambient": Color(0.6, 0.62, 0.8),
+			"medals": [[3000.0, 1000000.0], [6000.0, 7000000.0], [9000.0, 45000000.0]]},
+]
+## GULLS: white obstacles that drift sideways slowly (units/second), at most this fraction of a column
+## each way. A gull never drifts toward the main safe-path column unless it is far from it.
+var gull_speed := 1.3
+var gull_drift := 0.35
+## WIND GUSTS: a zone `gust_width` wide (x) and `gust_length` long (z) sitting between two rows (never
+## closer than gust_clear to either). It shows faintly from far off and lights up when its front edge
+## is within gust_telegraph units of the plane; the plane inside it is pushed sideways at gust_push u/s.
+var gust_width := 6.0
+var gust_length := 4.0
+var gust_clear := 3.0
+var gust_telegraph := 12.0
+var gust_push := 3.0
+## LIGHTNING: a column strip is shown for lightning_warn seconds, then strikes for lightning_strike
+## seconds: the plane inside it is hit. Strikes come every lightning_interval seconds (x0.8-1.2) at the
+## start of a run, faster as it goes (lightning_ramp = fewer seconds per minute), never before
+## lightning_start seconds, and never on the safe path of a row that is passing the plane.
+var lightning_warn := 1.0
+var lightning_strike := 0.3
+var lightning_start := 6.0
+var lightning_ramp := 1.0
+var lightning_aim := 0.6     # chance a strike is aimed at the plane's own column
+
+func map_def(i: int) -> Dictionary:
+	return maps[clampi(i, 0, maps.size() - 1)]
+
+## Scroll speed on a map `t` seconds into a run.
+func map_speed(map: int, t: float) -> float:
+	var m := map_def(map)
+	return minf(base_speed * m["speed_mult"] + speed_ramp * m["ramp_mult"] * t, max_speed * m["speed_mult"])
+
+## Meters shown to the player for a distance in world units.
+func meters(units: float) -> float:
+	return units * meters_per_unit
+
+## "3,120 m"
+func fmt_m(meters_value: float) -> String:
+	var n := int(meters_value)
+	var txt := str(n)
+	var out := ""
+	while txt.length() > 3:
+		out = "," + txt.substr(txt.length() - 3) + out
+		txt = txt.substr(0, txt.length() - 3)
+	return txt + out + " m"
+
 # ---------- Economy: score is coins ----------
 ## Coins per world unit flown, before the close-call bonus, the map multiplier and Coin Value. The run
 ## total on screen IS the coins you earn (a crash keeps them all).
 var coins_per_unit := 1.0
 ## Multiplier on everything earned, per map (Countryside, Coast, Mountains, Stormfront).
-var map_coin_mult: Array[float] = [1.0, 2.0, 4.0, 8.0]
+var map_coin_mult: Array[float] = [1.0, 2.0, 4.0, 8.0]   # (Countryside x1, Coast x2, Mountains x4, Stormfront x8)
 
 ## Distance shown to the player in meters = world units x this (maps unlock at 3,000 m / 4,000 m / 5,000 m).
 var meters_per_unit := 5.0

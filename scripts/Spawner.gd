@@ -32,6 +32,12 @@ class Row extends Node3D:
 	var can_x := 0.0
 	var can_dz := 0.0                     # how far the Can Magnet has pulled the can along z (relative to the row)
 	var open: Array[bool] = []            # per column: open (no cube); the fairness check reads this
+	var safe_col := -1                    # the main safe-path column through this row (lightning never strikes it)
+	var gull_k: Array[int] = []           # which of the obstacles (index into xs / obs) are drifting gulls
+	var gull_lo: Array[float] = []        # how far each may drift (x range) and how fast / which way
+	var gull_hi: Array[float] = []
+	var gull_v: Array[float] = []
+	var gull_phase: Array[float] = []
 	var cloud_cov: Array[bool] = []       # per column: cloud will cover that column's centre line (for can placement)
 	var xs: Array[float] = []             # x of each blocked column this time round
 	var ghosts: Array[MeshInstance3D] = []        # one Cloud Eye outline frame per column (hidden unless needed)
@@ -49,6 +55,12 @@ class Row extends Node3D:
 		for i in cloud_cov.size():
 			cloud_cov[i] = false
 		can_dz = 0.0
+		safe_col = -1
+		gull_k.clear()
+		gull_lo.clear()
+		gull_hi.clear()
+		gull_v.clear()
+		gull_phase.clear()
 		xs.clear()
 		obs.clear()
 		obs_ghosts.clear()
@@ -99,6 +111,17 @@ var _outline_shader: Shader = preload("res://shaders/outline.gdshader")
 var _stripe_mesh := BoxMesh.new()
 var _last_thickness := -1.0
 var _flashes: Array[Dictionary] = []   # {mat, end_ms}: outlines currently flashing white
+var map := 0                       # the map being played (see Tuning.maps)
+var plane_x := 0.0                 # set by Main each frame (lightning likes to aim at the plane)
+var hazards := Hazards.new()       # wind gusts and lightning
+var _gull_mat := StandardMaterial3D.new()   # gulls are white (the cubes' material is swapped at spawn, both pre-built)
+var _ground_mat := StandardMaterial3D.new()
+var _stripe_mat := StandardMaterial3D.new()
+var _obs_color := Color(1.0, 0.3, 0.12)
+var _cloud_color := Color.WHITE
+var _blocked_add := 0
+var _gull_share := 0.0
+var _cloud_mult := 1.0
 
 func _ready() -> void:
 	# One shared material for every cube. Each cube gets its OWN outline material (same shader),
@@ -118,21 +141,39 @@ func _ready() -> void:
 	# Ground far below the obstacles; the stripes on each row give a sense of scrolling speed.
 	var ground := MeshInstance3D.new()
 	var gm := BoxMesh.new()
-	var gmat := StandardMaterial3D.new()
-	gmat.albedo_color = Color(0.2, 0.26, 0.34)
-	gm.material = gmat
+	_ground_mat.albedo_color = Color(0.2, 0.26, 0.34)
+	gm.material = _ground_mat
 	ground.mesh = gm
 	ground.scale = Vector3(60.0, 0.1, 120.0)
 	ground.position = Vector3(0, GROUND_Y - 0.1, 0)
 	add_child(ground)
-	var stripe_mat := StandardMaterial3D.new()
-	stripe_mat.albedo_color = Color(0.3, 0.38, 0.5)
-	_stripe_mesh.material = stripe_mat
+	_stripe_mat.albedo_color = Color(0.3, 0.38, 0.5)
+	_stripe_mesh.material = _stripe_mat
+	_gull_mat.albedo_color = Color(0.96, 0.97, 1.0)
+	_gull_mat.roughness = 1.0
+	_gull_mat.metallic_specular = 0.0
+	hazards.spawner = self
+	add_child(hazards)
 	for i in POOL_ROWS:  # everything is created now, so nothing is allocated while playing
 		_make_row()
 	for i in CLOUD_POOL:
 		_make_cloud_node()
 	reset()
+
+## Choose the map for the next run: palette, how many columns get blocked, the gull share, how many clouds, and
+## the hazards (gusts, lightning). Call before reset().
+func apply_map(index: int) -> void:
+	map = clampi(index, 0, Tuning.maps.size() - 1)
+	var m := Tuning.map_def(map)
+	_obs_color = m["obstacle"]
+	_cloud_color = m["cloud"]
+	_blocked_add = int(m["blocked_add"])
+	_gull_share = float(m["gull_share"])
+	_cloud_mult = float(m["cloud_mult"])
+	_ground_mat.albedo_color = m["ground"]
+	_stripe_mat.albedo_color = m["stripe"]
+	hazards.configure(float(m["gust_chance"]), float(m["lightning_interval"]))
+	_update_look()
 
 ## Put every row back in the pool and start the obstacle stream over (restart in place). The first
 ## row of the new run appears at world z = first_row_z (negative = above the plane).
@@ -145,6 +186,7 @@ func reset(first_row_z: float = -12.0) -> void:
 	_pending_open.clear()
 	for c in _clouds.duplicate():
 		_release_cloud(c)
+	hazards.reset()
 	_safe_col = Tuning.column_count / 2
 	for i in Tuning.column_count:
 		_prev_open.append(true)  # first row may use any column
@@ -157,6 +199,7 @@ func advance(dist: float) -> void:
 		r.position.z += dist
 	_last_row_z += dist
 	_advance_clouds(dist)
+	hazards.advance(dist)
 	while _last_row_z > -Tuning.spawn_distance:
 		_last_row_z -= Tuning.spawn_spacing
 		_spawn_row(_last_row_z)
@@ -291,6 +334,8 @@ func prewarm_show(with_flash: bool, with_clouds: bool = true) -> void:
 			mi.position = Vector3(Tuning.column_center(i), 0.0, 0.0)
 			mi.scale = Vector3.ONE
 			row.cube_outlines[i].set_shader_parameter("outline_color", Color.WHITE if (with_flash and idx % 2 == 1) else Color.BLACK)
+		for i in row.cubes.size():   # every other cube is drawn as a gull, so that material is warm too
+			row.cubes[i].material_override = _gull_mat if (idx + i) % 2 == 0 else _obstacle_mat
 		for g in row.ghosts:   # ...and every Cloud Eye frame
 			g.visible = true
 			g.position = Vector3(Tuning.column_center(row.ghosts.find(g)), GHOST_Y, 0.0)
@@ -304,14 +349,18 @@ func prewarm_show(with_flash: bool, with_clouds: bool = true) -> void:
 			cl.position = Vector3(Tuning.column_center(idx % Tuning.column_count), 0.0, -8.0 + 1.5 * idx)
 			cl.visible = true
 			for k in cl.puffs.size():
-				cl.mats[k].albedo_color = Color(Tuning.cloud_color, 0.6)
+				cl.mats[k].albedo_color = Color(_cloud_color, 0.6)
 				cl.puffs[k].visible = true
 				cl.puffs[k].position = Vector3((k - 3) * 0.8, CLOUD_Y, 0.0)
 				cl.puffs[k].scale = Vector3(1.5, 1.0, 1.5)
+	hazards.prewarm_show()   # every pooled wind gust and lightning strip too
 
 ## End of the pre-warm: hide the pooled rows again.
 func prewarm_hide() -> void:
+	hazards.prewarm_hide()
 	for row in _all_rows:
+		for cube in row.cubes:
+			cube.material_override = _obstacle_mat
 		_hide_row(row)
 	for cl in _all_clouds:
 		_hide_cloud(cl)
@@ -330,7 +379,7 @@ func _rows_make_for_test(z: float, xs: Array) -> Row:
 	return row
 
 func _update_look() -> void:
-	_obstacle_mat.albedo_color = Tuning.obstacle_color
+	_obstacle_mat.albedo_color = _obs_color
 	_can_mat.albedo_color = Tuning.fuel_can_color
 	if Tuning.outline_thickness != _last_thickness:  # live-tuning: push a changed width to every outline
 		_last_thickness = Tuning.outline_thickness
@@ -422,6 +471,7 @@ func _spawn_row(z: float) -> void:
 		var mi := row.cubes[i]
 		mi.position = Vector3(x, 0, 0)
 		mi.scale = Vector3(width, width, Tuning.obstacle_depth)  # mesh is a unit cube
+		mi.material_override = _obstacle_mat
 		mi.visible = true
 		var g := row.ghosts[i]
 		g.position = Vector3(x, GHOST_Y, 0.0)
@@ -433,7 +483,10 @@ func _spawn_row(z: float) -> void:
 	row.stripe.scale = Vector3(Tuning.ortho_size * 2.0, 0.1, 0.4)
 	for c in open.size():
 		row.open.append(open[c])
+	row.safe_col = _safe_col
+	_make_gulls(row, width)
 	_rows.append(row)
+	hazards.on_row_spawned(z)
 	if not DebugFlags.off("clouds") and run_time >= Tuning.cloud_start_time:
 		_keep_row_fair(row)
 	_spawn_clouds_for_row(z)
@@ -575,6 +628,59 @@ func refresh_obstacles() -> void:
 func _place_can_for_test(row: Row, x: float) -> void:
 	_place_can(row, x)
 
+## ---- Gulls: obstacles that drift sideways ------------------------------------------------------------
+const GULL_HEIGHT := 0.55      # a gull is a flatter block than a cube (same footprint, so the hit box matches)
+const WING_CLEARANCE := 1.1    # the plane's half wingspan
+
+## Turn some of this row's obstacles into gulls. A gull may drift sideways by gull_drift of a column, but never
+## toward the row's safe-path column unless that column is far away, so the safe gap never shrinks.
+func _make_gulls(row: Row, width: float) -> void:
+	if _gull_share <= 0.0 or DebugFlags.off("hazards"):
+		return
+	var colw := Tuning.column_width()
+	var amp := Tuning.gull_drift * colw
+	var need := width * 0.5 + Tuning.outline_thickness + WING_CLEARANCE + 0.15
+	var keep_x := Tuning.column_center(row.safe_col)
+	for k in row.obs.size():
+		if randf() >= _gull_share:
+			continue
+		var x0: float = row.xs[k]
+		var lo := x0 - amp
+		var hi := x0 + amp
+		if keep_x > x0 and (keep_x - x0) - amp < need:
+			hi = x0
+		elif keep_x < x0 and (x0 - keep_x) - amp < need:
+			lo = x0
+		var mi: MeshInstance3D = row.obs[k]
+		mi.material_override = _gull_mat
+		mi.scale = Vector3(width, width * GULL_HEIGHT, Tuning.obstacle_depth)
+		row.gull_k.append(k)
+		row.gull_lo.append(lo)
+		row.gull_hi.append(hi)
+		row.gull_v.append(Tuning.gull_speed * (1.0 if randf() < 0.5 else -1.0) if hi - lo > 0.01 else 0.0)
+		row.gull_phase.append(randf() * TAU)
+
+## Per-frame hazard update (Main calls it during a run): gulls drift and flap, gusts and lightning run.
+func update_hazards(delta: float) -> void:
+	var now := Time.get_ticks_msec() / 1000.0
+	var width := Tuning.column_width() * Tuning.obstacle_scale
+	for r in _rows:
+		for gi in r.gull_k.size():
+			var k: int = r.gull_k[gi]
+			var x: float = r.xs[k] + r.gull_v[gi] * delta
+			if x > r.gull_hi[gi]:
+				x = r.gull_hi[gi]
+				r.gull_v[gi] = -absf(r.gull_v[gi])
+			elif x < r.gull_lo[gi]:
+				x = r.gull_lo[gi]
+				r.gull_v[gi] = absf(r.gull_v[gi])
+			r.xs[k] = x
+			var mi: MeshInstance3D = r.obs[k]
+			mi.position.x = x
+			mi.scale.y = width * GULL_HEIGHT * (0.85 + 0.2 * sin(now * 9.0 + r.gull_phase[gi]))
+			r.obs_ghosts[k].position.x = x
+	hazards.update(delta)
+
 ## ---- Clouds: free-floating bundles --------------------------------------------------------------
 ## Bundles appear above the top of the screen at a random sideways position, in three size classes
 ## (wisps, medium clumps, large banks), and drift sideways a little as they scroll. None before
@@ -638,7 +744,7 @@ func _spawn_clouds_for_row(z: float) -> void:
 	if DebugFlags.off("clouds") or run_time < Tuning.cloud_start_time:
 		return
 	var speed_at_start := Tuning.base_speed + Tuning.speed_ramp * Tuning.cloud_start_time
-	var rate := minf(Tuning.cloud_frequency * clampf(scroll_speed / maxf(speed_at_start, 0.1), 1.0, 3.0), 3.0)
+	var rate := minf(Tuning.cloud_frequency * _cloud_mult * clampf(scroll_speed / maxf(speed_at_start, 0.1), 1.0, 3.0), 3.0)
 	var n := int(rate) + int(randf() < rate - floorf(rate))
 	for i in n:
 		_spawn_cloud(z + randf_range(-6.0, 4.0))
@@ -756,7 +862,7 @@ func _update_cloud_alpha(cl: Cloud) -> void:
 		var ahead := plane_z - (cl.position.z + cl.oz[k])   # > 0: the puff is above the plane (not reached yet)
 		var t := clampf(1.0 - ahead / maxf(Tuning.cloud_reveal_distance, 0.1), 0.0, 1.0)
 		t = t * t * (3.0 - 2.0 * t)   # smoothstep: eases in and out
-		cl.mats[k].albedo_color = Color(Tuning.cloud_color, lerpf(Tuning.cloud_max_opacity, Tuning.cloud_min_opacity, t))
+		cl.mats[k].albedo_color = Color(_cloud_color, lerpf(Tuning.cloud_max_opacity, Tuning.cloud_min_opacity, t))
 
 ## The shared puff: a flat, low-poly dome (about 45 triangles) with its facets tinted a touch
 ## differently, so it reads as a soft, puffy, flat-shaded shape. Built once.
@@ -827,7 +933,7 @@ func _generate_open_columns(prev: Array[bool]) -> Array[bool]:
 				reachable.append(i)
 				break
 	var guaranteed: int = reachable.pick_random()
-	var blocked := clampi(randi_range(Tuning.blocked_columns_min, Tuning.blocked_columns_max), 0, n - 1)
+	var blocked := clampi(randi_range(Tuning.blocked_columns_min, Tuning.blocked_columns_max) + _blocked_add, 0, n - 1)
 	var others: Array[int] = []
 	for i in n:
 		if i != guaranteed:

@@ -9,7 +9,8 @@ signal changed
 ## Bump when the file layout changes, and teach _migrate() how to read the old one.
 ##   1: high_score, coins (ints), levels {fuel_tank, efficiency, refill, magnet, bonus_cap}
 ##   2: coins and high_score are floats (score IS coins), upgrade tabs, gear slots + loadout, stats
-const VERSION := 2
+##   3: maps: unlocked flags, the selected map, and per map the best distance, best score and medals
+const VERSION := 3
 
 var path := "user://save.json"      # (tests point this somewhere else)
 var high_score := 0.0               # most coins earned in one run
@@ -18,6 +19,9 @@ var levels := {}                    # upgrade id -> level
 var slots := 1                      # gear slots unlocked (1..3)
 var loadout: Array = ["", "", ""]   # gear id equipped in each slot ("" = empty)
 var stats := {}                     # lifetime counters (cans, close calls ...)
+var maps_unlocked: Array = [true, false, false, false]
+var selected_map := 0
+var map_stats := {}                 # map id -> {"best_distance": meters, "best_score": coins, "medals": 0..3 earned}
 
 func _ready() -> void:
 	load_game()
@@ -31,6 +35,11 @@ func _defaults() -> void:
 	slots = 1
 	loadout = ["", "", ""]
 	stats = {}
+	maps_unlocked = [true, false, false, false]
+	selected_map = 0
+	map_stats = {}
+	for m in Tuning.maps:
+		map_stats[m["id"]] = {"best_distance": 0.0, "best_score": 0.0, "medals": 0}
 
 ## Read the save file; a missing, unreadable or corrupt file just means a fresh start.
 func load_game() -> void:
@@ -61,6 +70,12 @@ func _migrate(d: Dictionary) -> Dictionary:
 		d["slots"] = 1
 		d["loadout"] = ["magnet" if gear_level > 0 else "", "", ""]
 		d["version"] = 2
+	if v < 3:
+		# v2 -> v3: maps. The old single high score becomes the Countryside best score.
+		d["maps_unlocked"] = [true, false, false, false]
+		d["selected_map"] = 0
+		d["map_stats"] = {"countryside": {"best_distance": 0.0, "best_score": float(d.get("high_score", 0.0)), "medals": 0}}
+		d["version"] = 3
 	return d
 
 func _apply(d: Dictionary) -> void:
@@ -81,13 +96,28 @@ func _apply(d: Dictionary) -> void:
 	var st: Variant = d.get("stats", {})
 	if st is Dictionary:
 		stats = st.duplicate()
+	var mu: Variant = d.get("maps_unlocked", [])
+	if mu is Array:
+		for i in 4:
+			maps_unlocked[i] = (i == 0) or (i < mu.size() and bool(mu[i]))
+	selected_map = clampi(int(d.get("selected_map", 0)), 0, 3)
+	if not maps_unlocked[selected_map]:
+		selected_map = 0
+	var ms: Variant = d.get("map_stats", {})
+	if ms is Dictionary:
+		for m in Tuning.maps:
+			var e: Variant = ms.get(m["id"], {})
+			if e is Dictionary:
+				map_stats[m["id"]] = {"best_distance": maxf(float(e.get("best_distance", 0.0)), 0.0),
+						"best_score": maxf(float(e.get("best_score", 0.0)), 0.0), "medals": clampi(int(e.get("medals", 0)), 0, 3)}
 
 func _is_gear(id: String) -> bool:
 	return not Tuning.upgrade_def(id).is_empty() and Tuning.upgrade_def(id)["tab"] == "gear"
 
 func to_dict() -> Dictionary:
 	return {"version": VERSION, "high_score": high_score, "coins": coins, "levels": levels.duplicate(),
-			"slots": slots, "loadout": loadout.duplicate(), "stats": stats.duplicate()}
+			"slots": slots, "loadout": loadout.duplicate(), "stats": stats.duplicate(),
+			"maps_unlocked": maps_unlocked.duplicate(), "selected_map": selected_map, "map_stats": map_stats.duplicate(true)}
 
 func save_game() -> void:
 	var f := FileAccess.open(path, FileAccess.WRITE)
@@ -172,6 +202,50 @@ func record_run(earned: float) -> bool:
 	coins += earned
 	save_game()
 	return best
+
+func map_unlocked(i: int) -> bool:
+	return bool(maps_unlocked[clampi(i, 0, 3)])
+
+func map_stat(i: int) -> Dictionary:
+	return map_stats[Tuning.map_def(i)["id"]]
+
+func select_map(i: int) -> bool:
+	if i < 0 or i > 3 or not map_unlocked(i):
+		return false
+	selected_map = i
+	save_game()
+	return true
+
+func unlock_all_maps() -> void:
+	maps_unlocked = [true, true, true, true]
+	save_game()
+
+## A finished run on map `i`: update that map's bests, award medals (their coin rewards are paid at
+## once) and unlock the next map when its distance goal is met. Returns what happened, for the game-over screen:
+## {"new_best_distance": bool, "medals": [index, ...] newly earned, "reward": coins, "unlocked": [map index, ...]}.
+func record_map_run(i: int, meters_run: float, score_run: float) -> Dictionary:
+	var m := Tuning.map_def(i)
+	var e: Dictionary = map_stat(i)
+	var out := {"new_best_distance": false, "medals": [], "reward": 0.0, "unlocked": []}
+	if meters_run > e["best_distance"]:
+		e["best_distance"] = floorf(meters_run)
+		out["new_best_distance"] = true
+	if score_run > e["best_score"]:
+		e["best_score"] = floorf(score_run)
+	var goals: Array = m["medals"]
+	for k in goals.size():
+		if k >= int(e["medals"]) and meters_run >= goals[k][0]:
+			e["medals"] = k + 1
+			out["medals"].append(k)
+			out["reward"] += goals[k][1]
+	coins += out["reward"]
+	for j in range(1, Tuning.maps.size()):
+		var mj := Tuning.map_def(j)
+		if not map_unlocked(j) and mj["unlock_from"] == i and meters_run >= mj["unlock_meters"]:
+			maps_unlocked[j] = true
+			out["unlocked"].append(j)
+	save_game()
+	return out
 
 func add_coins(n: float) -> void:
 	coins = maxf(coins + n, 0.0)

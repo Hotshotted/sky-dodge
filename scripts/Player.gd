@@ -217,6 +217,12 @@ func reset() -> void:
 func crash() -> void:
 	active = false
 
+## A push from the wind (a gust): move sideways by dx, kept inside the flyable width.
+func nudge_x(dx: float) -> void:
+	var x_limit := Tuning.ortho_size * 0.5 - Tuning.plane_edge_margin
+	position.x = clampf(position.x + dx, -x_limit, x_limit)
+	_visual_xz.x = position.x
+
 ## Nine Lives: the plane flickers while it is invulnerable.
 func set_flicker(off: bool) -> void:
 	_model.visible = not off

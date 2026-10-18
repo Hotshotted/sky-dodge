@@ -2,15 +2,17 @@ class_name DebugFlags
 extends RefCounted
 ## Debug switches, read from the page URL on web (or "--flag=value" user args elsewhere), so a
 ## suspected cause of a hitch can be switched off from a phone without a new build:
-##   ?nofx=sparks,streaks,flash,popup,trail,haptic,punch,pickup,clouds   turn those effects off
+##   ?nofx=sparks,streaks,flash,popup,trail,haptic,punch,pickup,clouds,hazards   turn those effects off
 ##   ?nofx=all                                             turn all of them off
 ##   ?noprewarm                                            skip the start-up pre-warm and splash
 ##   ?perf                                                 show a worst-frame-time readout
 ##   ?tune                                                 show the on-screen tuning panel (TUNE button, top-right)
+##   ?map=N                                                play map N (0-3) whatever is unlocked / selected
+##   ?god                                                  nothing can hurt the plane (to look at hazards)
 ## Combine with "&", e.g.  ?nofx=sparks&noprewarm&perf
 ## The active flags are printed under the build stamp.
 
-const EFFECTS := ["sparks", "streaks", "flash", "popup", "trail", "haptic", "punch", "pickup", "clouds"]
+const EFFECTS := ["sparks", "streaks", "flash", "popup", "trail", "haptic", "punch", "pickup", "clouds", "hazards"]
 
 static var _loaded := false
 static var _off := {}                  # effect name -> true
@@ -18,6 +20,8 @@ static var _bad: Array[String] = []    # unknown names (typos), shown in the sum
 static var noprewarm := false
 static var perf := false
 static var tune := false
+static var start_map := -1
+static var god := false
 
 ## True if the named near-miss effect has been switched off.
 static func off(effect: String) -> bool:
@@ -52,6 +56,10 @@ static func summary() -> String:
 		parts.append("perf")
 	if tune:
 		parts.append("tune")
+	if start_map >= 0:
+		parts.append("map=%d" % start_map)
+	if god:
+		parts.append("god")
 	for b in _bad:
 		parts.append("?" + b)
 	return " ".join(parts)
@@ -77,6 +85,8 @@ static func parse(args: Array[String]) -> void:
 	noprewarm = false
 	perf = false
 	tune = false
+	start_map = -1
+	god = false
 	for a in args:
 		var kv := a.split("=", true, 1)
 		var key := kv[0].uri_decode().to_lower()
@@ -97,6 +107,10 @@ static func parse(args: Array[String]) -> void:
 				perf = true
 			"tune":
 				tune = true
+			"map":
+				start_map = clampi(int(val), 0, 3)
+			"god":
+				god = true
 			"v":
 				pass  # cache-busting parameter added by the page, not a flag
 			_:

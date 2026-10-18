@@ -17,10 +17,17 @@ const HEADER_CRASH := "CRASHED"
 const REASON_OBSTACLE := "Hit an obstacle"
 const HEADER_FUEL := "OUT OF FUEL"
 const REASON_FUEL := "The tank ran dry"
+const HEADER_STRUCK := "STRUCK"
+const REASON_STRUCK := "Hit by lightning"
 
 ## Which screen is up. A run is only on while screen == SCREEN_PLAY and alive.
 enum { SCREEN_MENU, SCREEN_HANGAR, SCREEN_PLAY, SCREEN_OVER }
 var screen := SCREEN_MENU
+const MEDAL_NAMES := ["Bronze", "Silver", "Gold"]
+var map := 0            # the map this run is on (Tuning.maps)
+var run_distance := 0.0 # world units flown this run (Tuning.meters() turns it into meters)
+var last_result := {}   # what the last run did to the map records (medals, unlocks)
+var _env: Environment
 var run_cans := 0       # fuel cans collected this run
 var last_earned := 0.0  # coins the last run earned (its score)
 var coin_mult := 1.0    # everything earned this run is multiplied by this (map multiplier x Coin Value)
@@ -72,6 +79,8 @@ func _ready() -> void:
 		if DebugFlags.prewarm_enabled():
 			_prewarm()
 	hud.play_pressed.connect(restart)
+	hud.map_pressed.connect(func(i: int): Save.select_map(i))
+	spawner.hazards.lightning_struck.connect(hud.flash)
 	hud.hangar_pressed.connect(_open_hangar)
 	hud.back_pressed.connect(_show_menu)
 	hud.upgrade_pressed.connect(_buy)
@@ -152,9 +161,14 @@ func _prewarm() -> void:
 ## material and UI node stays alive (and warm) across runs; only the game state is reset.
 func restart() -> void:
 	screen = SCREEN_PLAY
+	map = DebugFlags.start_map if DebugFlags.start_map >= 0 else Save.selected_map
+	spawner.apply_map(map)
+	_apply_palette()
+	run_distance = 0.0
+	hud.set_distance(0.0)
 	run_cans = 0
 	score = 0.0
-	coin_mult = Tuning.map_coin_mult[0] * Tuning.coin_value_mult()
+	coin_mult = Tuning.map_coin_mult[map] * Tuning.coin_value_mult()
 	lives = int(Tuning.gear_value("nine_lives"))
 	reserve_left = int(Tuning.gear_value("reserve_tank"))
 	_invuln = 0.0
@@ -188,14 +202,21 @@ func _process(delta: float) -> void:
 
 	elapsed += delta
 	player.step(delta)   # 1:1 finger movement this frame (the path from prev_xz to here is swept below)
-	var speed := minf(Tuning.base_speed + Tuning.speed_ramp * elapsed, Tuning.max_speed)
+	var speed := Tuning.map_speed(map, elapsed)
 	var step := speed * delta
 	score += step * Tuning.coins_per_unit * (bonus if Tuning.score_uses_bonus else 1.0) * coin_mult
 	spawner.plane_z = player.position.z   # clouds fade as they near the plane,
 	spawner.run_time = elapsed            # start late in the run,
 	spawner.scroll_speed = speed          # and come more often the faster it goes
+	spawner.plane_x = player.position.x
 	spawner.advance(step)
+	spawner.update_hazards(delta)
+	run_distance += step
+	hud.set_distance(Tuning.meters(run_distance))
 	hud.set_score(score, bonus)
+	var push: float = spawner.hazards.push_at(player.position.x, player.position.z)   # wind gusts
+	if push != 0.0:
+		player.nudge_x(push * delta)
 	var plane := Vector2(player.position.x, player.position.z)
 	trail.advance(step, Vector2(plane.x, plane.y + 0.9), 1 if DebugFlags.off("trail") else bonus, delta)
 	_decay_bonus(delta)
@@ -212,11 +233,17 @@ func _process(delta: float) -> void:
 	if _invuln > 0.0:
 		_invuln = maxf(_invuln - delta, 0.0)
 		player.set_flicker(_invuln > 0.0 and int(_invuln * 14.0) % 2 == 0)   # the plane sputters
+	if _invuln <= 0.0 and not DebugFlags.god and spawner.hazards.hit(player.position.x):   # lightning
+		if lives > 0:
+			_absorb_hit(plane, caps)
+		else:
+			_end_run(HEADER_STRUCK, REASON_STRUCK)
+			return
 	var from: Vector2 = player.prev_xz
 	var steps := clampi(ceili(from.distance_to(plane) / SWEEP_STEP), 1, MAX_SWEEP_STEPS)
 	for i in range(1, steps + 1):
 		var p: Vector2 = from.lerp(plane, float(i) / steps)
-		if _invuln <= 0.0 and spawner.hits(p, caps):
+		if _invuln <= 0.0 and not DebugFlags.god and spawner.hits(p, caps):
 			if lives > 0:   # Nine Lives: the plane takes the hit and keeps flying
 				_absorb_hit(p, caps)
 				continue
@@ -279,8 +306,29 @@ func _end_run(header: String, reason: String) -> void:
 	screen = SCREEN_OVER
 	last_earned = floorf(score)   # the score IS the coins: a crash keeps every one of them
 	Save.add_stat("cans", run_cans)
-	last_was_best = Save.record_run(score)
-	hud.show_game_over(header, reason, last_earned, last_was_best, Save.high_score)
+	var meters_run := Tuning.meters(run_distance)
+	last_was_best = last_earned > float(Save.map_stat(map)["best_score"])
+	Save.record_run(score)
+	last_result = Save.record_map_run(map, meters_run, score)
+	hud.show_game_over(header, reason, last_earned, last_was_best, float(Save.map_stat(map)["best_score"]), _result_text(meters_run))
+
+## The extra game-over lines: distance, medals, unlocks.
+func _result_text(meters_run: float) -> String:
+	var lines: Array[String] = []
+	var best: float = Save.map_stat(map)["best_distance"]
+	lines.append("%s%s" % [Tuning.fmt_m(meters_run), "  NEW BEST!" if last_result.get("new_best_distance", false) else "  (best %s)" % Tuning.fmt_m(best)])
+	for k in last_result.get("medals", []):
+		lines.append("%s medal!  +%s coins" % [MEDAL_NAMES[k], Tuning.fmt(Tuning.map_def(map)["medals"][k][1])])
+	for j in last_result.get("unlocked", []):
+		lines.append("%s unlocked!" % Tuning.map_def(j)["name"])
+	return "\n".join(lines)
+
+## The map's colours: sky behind everything and the ambient light (the ground, obstacles and clouds
+## are the Spawner's).
+func _apply_palette() -> void:
+	var m := Tuning.map_def(map)
+	_env.background_color = m["sky"]
+	_env.ambient_light_color = m["ambient"]
 
 ## A fuel can was collected at `pos`: refill (never past a full tank) and pop.
 func _on_pickup(pos: Vector3) -> void:
@@ -403,7 +451,8 @@ func _half_height() -> float:
 ## the top edge instead (rows never pop in).
 func _first_row_z(half_h: float) -> float:
 	var t := Tuning.opening_seconds
-	var travel := Tuning.base_speed * t + 0.5 * Tuning.speed_ramp * t * t
+	var m := Tuning.map_def(map)
+	var travel: float = Tuning.base_speed * m["speed_mult"] * t + 0.5 * Tuning.speed_ramp * m["ramp_mult"] * t * t
 	return minf(player.position.z - travel, -(half_h + 1.0))
 
 ## The plane may use the bottom `plane_zone_fraction` of the screen. The visible height
@@ -447,6 +496,7 @@ func _buy(id: String) -> void:
 
 func _setup_environment() -> void:
 	var env := Environment.new()
+	_env = env
 	env.background_mode = Environment.BG_COLOR
 	env.background_color = Color(0.2, 0.26, 0.34)
 	env.ambient_light_source = Environment.AMBIENT_SOURCE_COLOR
