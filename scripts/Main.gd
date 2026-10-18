@@ -7,6 +7,7 @@ extends Node3D
 @onready var camera: Camera3D = $Camera3D
 @onready var sun: DirectionalLight3D = $Sun
 @onready var hud: CanvasLayer = $Hud
+var ground := GroundWorld.new()   # the countryside far below (parallax), the plane's shadow, Rusty's airstrip
 var goals := Goals.new()        # gates for your best, the next medal and the next map unlock
 var crash_fx := CrashFx.new()   # the crash sequence's smoke, debris and Whiskers
 var sfx := Sfx.new()   # all sound (see Sfx.gd)
@@ -51,6 +52,12 @@ var _warming := false
 static var _haptic_warmed := false  # first-touch haptic warm-up done (once per app session)
 static var _warmed := false  # pre-warm only once per app session
 var prof := {}               # profiling (DebugFlags.profile only): part name -> [total us, worst us, calls] this frame run
+var _takeoff_t := 99.0         # seconds since the run began (the plane lifts off from the airstrip over takeoff_seconds)
+var tod_override := -1.0      # ?tune: hold the time of day at this value (0..1); -1 = follow the run
+var _tod_applied := -1.0
+var _base_sky := Color(0.2, 0.26, 0.34)
+var _base_ambient := Color(0.75, 0.78, 0.9)
+var _mood_until_ms := 0
 var _crash_t := -1.0          # seconds since the crash (-1 = no crash sequence running)
 var _crash_speed := 0.0       # the world's speed when it happened (it rolls to a stop)
 var _cam_ease := 0.0          # 0..1: how far the camera has eased toward the falling plane
@@ -91,6 +98,7 @@ func _ready() -> void:
 	for list in [Tuning.perks, Tuning.upgrades, Tuning.boosts]:   # (the callout clock has a key for everything up front)
 		for d in list:
 			_callout_ms[d["id"]] = -100000
+	add_child(ground)
 	add_child(crash_fx)
 	add_child(goals)
 	goals.reached.connect(_on_goal_reached)
@@ -161,6 +169,7 @@ func _prewarm() -> void:
 	var spot := Vector3(0.0, 1.2, 1.0)
 	hud.begin_prewarm(not DebugFlags.off("popup"))
 	goals.prewarm_show(1.0)
+	ground.prewarm_show()
 	player.prewarm_items(true)   # every perk and gear mark on the plane
 	sfx.prewarm_start()   # every sound decoded once, silently
 	crash_fx.prewarm_show(Vector3(0.0, 1.2, 1.0))   # smoke, debris, Whiskers and his parachute
@@ -211,6 +220,7 @@ func _prewarm() -> void:
 			break
 	fx.clear()
 	goals.hide_all()
+	ground.prewarm_hide()
 	player.prewarm_items(false)
 	_refresh_plane_items()
 	sfx.prewarm_end()
@@ -232,7 +242,10 @@ func restart() -> void:
 	screen = SCREEN_PLAY
 	_crash_t = -1.0
 	_cam_ease = 0.0
+	_takeoff_t = 0.0
+	_tod_applied = -1.0
 	crash_fx.stop()
+	ground.stop_airstrip()
 	sfx.set_phase(0)
 	sfx.start_music()
 	sim_time = 0.0
@@ -392,6 +405,8 @@ func _process(raw_delta: float) -> void:
 	hud.graph_push(raw_delta * 1000.0)
 	_update_camera()
 	_update_plane_zone()
+	ground.update_shadow(player.position, not _warming and (screen == SCREEN_PLAY or screen == SCREEN_OVER))
+	_apply_time_of_day(_current_tod())
 	if not _warming and not alive and _crash_t >= 0.0 and screen == SCREEN_OVER:
 		_update_crash(_frame_delta(raw_delta))
 	if _warming or not alive:
@@ -405,6 +420,14 @@ func _process(raw_delta: float) -> void:
 	sim_time += delta
 	elapsed += delta
 	player.step(delta)   # 1:1 finger movement this frame (the path from prev_xz to here is swept below)
+	if _takeoff_t < Tuning.takeoff_seconds + delta:   # takeoff: the plane lifts off Rusty's airstrip
+		if _takeoff_t == 0.0:
+			ground.start_airstrip(player.position.z)
+		_takeoff_t += delta
+		var tk := clampf(_takeoff_t / Tuning.takeoff_seconds, 0.0, 1.0)
+		tk = tk * tk * (3.0 - 2.0 * tk)
+		player.position.y = lerpf(-1.55, player.PLANE_Y, tk)
+		player._model.scale = Vector3.ONE * lerpf(0.85, 1.0, tk)
 	picks.update(delta)
 	var tail := 1.0 + Tuning.tailwind_speed_pct[picks.level("tailwind")] * 0.01   # Tailwind: a little more speed (its coins are in earn_mult)
 	var speed := Tuning.map_speed(map, elapsed) * tail
@@ -424,11 +447,15 @@ func _process(raw_delta: float) -> void:
 	spawner.plane_x = player.position.x
 	var t_pf := Time.get_ticks_usec()
 	_speed_cues(speed / tail, delta)
-	sfx.set_flight(true, (speed - Tuning.base_speed) / maxf(Tuning.max_speed - Tuning.base_speed, 1.0))
+	var want_mood: int = player.Mood.STARTLED if Time.get_ticks_msec() < _mood_until_ms else (player.Mood.GRIN if bonus >= 2.0 else player.Mood.NEUTRAL)
+	if want_mood != player.mood:
+		player.set_mood(want_mood)
+	sfx.set_flight(true, (speed - Tuning.base_speed) / maxf(Tuning.max_speed - Tuning.base_speed, 1.0) * lerpf(0.3, 1.0, clampf(_takeoff_t / Tuning.takeoff_seconds, 0.0, 1.0)))
 	sfx.set_phase(spawner.wave_phase if spawner.kit_on else int(elapsed / 30.0) % 3)
 	_pf("speed cues + wind", t_pf)
 	t_pf = Time.get_ticks_usec()
 	spawner.advance(step)
+	ground.scroll(step)
 	_pf("spawner.advance (rows, clouds)", t_pf)
 	t_pf = Time.get_ticks_usec()
 	spawner.update_hazards(delta)
@@ -796,6 +823,7 @@ func _end_run(header: String, reason: String) -> void:
 	player.crash()
 	player.set_flicker(false)
 	_crash_t = 0.0
+	player.set_cockpit(false)   # Whiskers has ejected
 	if not DebugFlags.off("sparks"):
 		crash_fx.start(player.global_position, -1.0 if player.position.x > 0.0 else 1.0)
 	var cause := reason
@@ -885,6 +913,7 @@ func _update_crash(delta: float) -> void:
 	var slow := maxf(1.0 - _crash_t / 1.2, 0.0)
 	if slow > 0.0:
 		spawner.advance(_crash_speed * slow * delta)
+		ground.scroll(_crash_speed * slow * delta)
 		spawner.update_hazards(delta)
 	fx.wind_update(delta, player.position, false)
 	if _crash_t >= CRASH_TIME and not hud.results_visible() and not _results.is_empty():
@@ -916,12 +945,47 @@ func _result_text(meters_run: float) -> String:
 		lines.append("Perk unlocked: %s!" % Tuning.perk_def(m["perk"])["name"])
 	return "\n".join(lines)
 
+## How far through the day the run is: 0 = morning, 1 = dusk (?tune can hold it).
+func _current_tod() -> float:
+	if tod_override >= 0.0:
+		return tod_override
+	return clampf(elapsed / Tuning.tod_seconds, 0.0, 1.0) if screen == SCREEN_PLAY or screen == SCREEN_OVER else 0.35
+
+## Sky, ambient light and sun for time of day `t` (0..1): morning, the map's own look, sunset, dusk.
+func _apply_time_of_day(t: float) -> void:
+	if absf(t - _tod_applied) < 0.002:
+		return
+	_tod_applied = t
+	var stops := Tuning.tod_stops
+	var i := 0
+	while i < stops.size() - 2 and t > stops[i + 1]:
+		i += 1
+	var k := clampf((t - stops[i]) / maxf(stops[i + 1] - stops[i], 0.001), 0.0, 1.0)
+	var tint: Color = Tuning.tod_tint[i].lerp(Tuning.tod_tint[i + 1], k)
+	var mix: float = lerpf(Tuning.tod_mix[i], Tuning.tod_mix[i + 1], k)
+	_env.background_color = _base_sky.lerp(tint, mix)
+	_env.ambient_light_color = _base_ambient.lerp(tint, mix * 0.6)
+	_env.ambient_light_energy = lerpf(Tuning.tod_ambient_energy[i], Tuning.tod_ambient_energy[i + 1], k)
+	sun.light_color = Tuning.tod_sun[i].lerp(Tuning.tod_sun[i + 1], k)
+	sun.light_energy = lerpf(Tuning.tod_sun_energy[i], Tuning.tod_sun_energy[i + 1], k)
+	spawner.set_sky_tint(tint, mix)
+
+## ?tune: jump the time of day (morning, day, sunset, dusk, then back to following the run).
+func debug_cycle_tod() -> void:
+	var order := [0.0, 0.35, 0.7, 1.0, -1.0]
+	var i := order.find(tod_override)
+	tod_override = order[(i + 1) % order.size()]
+	_apply_time_of_day(_current_tod())
+
 ## The map's colours: sky behind everything and the ambient light (the ground, obstacles and clouds
 ## are the Spawner's).
 func _apply_palette() -> void:
 	var m := Tuning.map_def(map)
-	_env.background_color = m["sky"]
-	_env.ambient_light_color = m["ambient"]
+	_base_sky = m["sky"]
+	_base_ambient = m["ambient"]
+	ground.apply_palette(map, m["ground"])
+	_tod_applied = -1.0
+	_apply_time_of_day(_current_tod())
 
 ## A fuel can was collected at `pos`: refill (never past a full tank) and pop.
 func _on_pickup(pos: Vector3, golden: bool = false) -> void:
@@ -963,6 +1027,7 @@ func _on_near_miss(ev: Dictionary) -> void:
 		whisker = true
 		if picks.level("cloud_diver") >= 3:
 			_callout("cloud_diver", "Cloud Diver: Whisker!")
+	_mood_until_ms = Time.get_ticks_msec() + 650   # Whiskers is startled
 	sfx.play("barnstormer" if ev.get("special", "") == "barnstormer" else ("whoosh_big" if whisker else "whoosh"), 1.0, 1.0 + 0.04 * minf(bonus, 6.0))
 	_add_step(whisker)
 	hud.pulse_perk("tailwind")

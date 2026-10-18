@@ -53,11 +53,19 @@ const ITEM_PARTS := {
 	"head_start": [[Vector3(0.1, 0.08, 0.3), Vector3(-0.16, 0.05, 1.02)], [Vector3(0.1, 0.08, 0.3), Vector3(0.16, 0.05, 1.02)]],
 }
 var _items := {}   # item id -> {root, mats}
+## Whiskers in the cockpit: a cat's head seen from above with a face that follows the mood.
+enum Mood { NEUTRAL, STARTLED, GRIN }
+var _cat: Node3D
+var _cat_eyes: Array[MeshInstance3D] = []
+var _cat_pupils: Array[MeshInstance3D] = []
+var _cat_mouth: MeshInstance3D
+var mood := Mood.NEUTRAL
 
 func _ready() -> void:
 	position = Vector3(0, PLANE_Y, 0)
 	_build_model()
 	_build_items()
+	_build_cat()
 
 ## Main calls this every frame: the lower part of the screen the plane may use.
 func set_zone(top: float, bottom: float) -> void:
@@ -239,6 +247,8 @@ func reset() -> void:
 	_model.rotation = Vector3.ZERO
 	_model.scale = Vector3.ONE
 	_model.visible = true
+	set_cockpit(true)
+	set_mood(Mood.NEUTRAL)
 
 func crash() -> void:
 	active = false
@@ -262,6 +272,62 @@ func _nearest_column_x(x: float) -> float:
 	return Tuning.column_center(clampi(i, 0, Tuning.column_count - 1))
 
 ## Greybox plane from primitives; nose points toward -Z (screen up).
+func _cat_box(parent: Node3D, size: Vector3, pos: Vector3, color: Color) -> MeshInstance3D:
+	var mi := MeshInstance3D.new()
+	var bm := BoxMesh.new()
+	bm.size = size
+	mi.mesh = bm
+	var mat := StandardMaterial3D.new()
+	mat.albedo_color = color
+	mat.roughness = 1.0
+	mi.material_override = mat
+	mi.position = pos
+	mi.cast_shadow = GeometryInstance3D.SHADOW_CASTING_SETTING_OFF
+	parent.add_child(mi)
+	return mi
+
+func _build_cat() -> void:
+	_cat = Node3D.new()
+	_cat.position = Vector3(0.0, 0.14, -0.28)
+	_model.add_child(_cat)
+	_cat_box(_cat, Vector3(0.3, 0.16, 0.28), Vector3(0, 0.08, 0), Color(0.98, 0.6, 0.18))   # the head
+	_cat_box(_cat, Vector3(0.08, 0.1, 0.07), Vector3(-0.1, 0.2, 0.0), Color(0.92, 0.5, 0.12))   # ears
+	_cat_box(_cat, Vector3(0.08, 0.1, 0.07), Vector3(0.1, 0.2, 0.0), Color(0.92, 0.5, 0.12))
+	_cat_box(_cat, Vector3(0.34, 0.03, 0.06), Vector3(0, 0.12, -0.04), Color(0.2, 0.3, 0.65))   # the pilot's goggle strap
+	for sgn in [-1.0, 1.0]:
+		_cat_eyes.append(_cat_box(_cat, Vector3(0.07, 0.012, 0.07), Vector3(sgn * 0.075, 0.165, -0.04), Color.WHITE))
+		_cat_pupils.append(_cat_box(_cat, Vector3(0.035, 0.014, 0.035), Vector3(sgn * 0.075, 0.172, -0.045), Color(0.05, 0.05, 0.1)))
+	_cat_mouth = _cat_box(_cat, Vector3(0.08, 0.012, 0.02), Vector3(0, 0.168, 0.07), Color(0.25, 0.05, 0.08))
+	set_mood(Mood.NEUTRAL)
+
+## Whiskers' face: neutral, startled (a close call: wide eyes, an "o") or grinning (a streak going: squint and a wide smile).
+func set_mood(m: int) -> void:
+	mood = m
+	for i in 2:
+		match m:
+			Mood.STARTLED:
+				_cat_eyes[i].scale = Vector3(1.5, 1.0, 1.5)
+				_cat_pupils[i].scale = Vector3(0.6, 1.0, 0.6)
+			Mood.GRIN:
+				_cat_eyes[i].scale = Vector3(1.1, 1.0, 0.35)
+				_cat_pupils[i].scale = Vector3(1.0, 1.0, 0.35)
+			_:
+				_cat_eyes[i].scale = Vector3.ONE
+				_cat_pupils[i].scale = Vector3.ONE
+	match m:
+		Mood.STARTLED:
+			_cat_mouth.scale = Vector3(0.7, 1.0, 3.5)
+			_cat.scale = Vector3.ONE * 1.18
+		Mood.GRIN:
+			_cat_mouth.scale = Vector3(2.0, 1.0, 1.4)
+			_cat.scale = Vector3.ONE
+		_:
+			_cat_mouth.scale = Vector3.ONE
+			_cat.scale = Vector3.ONE
+
+func set_cockpit(shown: bool) -> void:
+	_cat.visible = shown
+
 func _build_items() -> void:
 	for id in ITEM_PARTS:
 		var root := Node3D.new()

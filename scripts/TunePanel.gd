@@ -223,6 +223,12 @@ func build() -> void:
 	results_btn.set_meta("debug", "preview_results")
 	crash_row.add_child(crash_btn)
 	crash_row.add_child(results_btn)
+	var tod_btn := _make_button("Time of day", 30)
+	tod_btn.pressed.connect(func():
+		get_parent().debug_cycle_tod()
+		_out.text = "Time of day: %s" % ["morning", "day", "sunset", "dusk", "follows the run"][[0.0, 0.35, 0.7, 1.0, -1.0].find(get_parent().tod_override)])
+	tod_btn.set_meta("debug", "time_of_day")
+	crash_row.add_child(tod_btn)
 	column.add_child(crash_row)
 	add_coins.set_meta("debug", "add_coins")
 	reset_save.set_meta("debug", "reset_save")

@@ -102,7 +102,7 @@ func snapshot(main: Node) -> Dictionary:
 	var mats := {}
 	_walk(main, nodes, mats)
 	# (materials built at start-up that only show up in this walk while something uses them: gulls, golden cans, crates)
-	for pm in [main.spawner._gull_mat, main.spawner._golden_can_mat, main.spawner._crate_mat] + main.spawner._crate_glow_mats + main.spawner.kit.glow_mats + [main.spawner.kit.arrow_mat]:
+	for pm in [main.spawner._gull_mat, main.spawner._golden_can_mat, main.spawner._crate_mat] + main.spawner._crate_glow_mats + main.spawner.kit.glow_mats + [main.spawner.kit.arrow_mat] + main.ground._field_mats:
 		mats.erase(pm.get_instance_id())
 	return {
 		"nodes": nodes, "mats": mats,
@@ -1412,8 +1412,8 @@ func _initialize() -> void:
 	check(tsave.selected_map == 1, "tapping a card selects that map")
 	main.hud.play_pressed.emit()
 	main.set_process(false)
-	check(main.map == 1 and main.coin_mult == 2.0 * tuning.coin_value_mult() and sp.map == 1 and sp._obs_color.is_equal_approx(mm[1]["obstacle"]) and main._env.background_color.is_equal_approx(mm[1]["sky"]),
-			"PLAY starts on the selected map: x2 coins, the Coast palette, the Coast sky")
+	check(main.map == 1 and main.coin_mult == 2.0 * tuning.coin_value_mult() and sp.map == 1 and sp._obs_color.is_equal_approx(mm[1]["obstacle"]) and main._base_sky.is_equal_approx(mm[1]["sky"]) and main._env.background_color.is_equal_approx(main._base_sky.lerp(tuning.tod_tint[0], tuning.tod_mix[0])),
+			"PLAY starts on the selected map: x2 coins, the Coast palette, the Coast sky (at morning)")
 	check(sp._ground_mat.albedo_color.is_equal_approx(mm[1]["ground"]) and sp._cloud_color.is_equal_approx(mm[1]["cloud"]), "...ground and clouds recoloured too")
 	# (d) distance on the HUD and the result screen
 	sp.reset(-500.0)
@@ -3034,7 +3034,7 @@ func _initialize() -> void:
 	pz_gsp.kit_enabled = true
 	pz_gsp.apply_map(0)
 	pz_gsp.reset(-14.0)
-	pz_gsp.run_time = 10.0
+	pz_gsp.run_time = 60.0
 	pz_gsp.scroll_speed = 10.0
 	pz_gsp.kit.dropped = 0
 	var pz_seen_names := {}
@@ -3089,8 +3089,8 @@ func _initialize() -> void:
 		for ph in 4:
 			pz_gsp.wave_cycle = cyc
 			pz_gsp.wave_phase = ph
-			pz_gsp.run_time = 0.0
-			pz_gsp._wave_start = 0.0
+			pz_gsp.run_time = 100.0   # (past the gentle first minute)
+			pz_gsp._wave_start = 100.0
 			var tot := 0.0
 			var calm_n := 0
 			for i in 300:
@@ -3322,7 +3322,7 @@ func _initialize() -> void:
 	# windmill patterns are never chosen while a speed step is under way (their blade timing must not span one)
 	hs.kit_enabled = true
 	hs.apply_map(0)
-	hs.run_time = 40.0
+	hs.run_time = 100.0
 	var wm_picked := 0
 	var wm_picked_calm := 0
 	hs.base_speed_now = 7.0
@@ -3782,6 +3782,143 @@ func _initialize() -> void:
 	main.restart()
 	main.set_process(false)
 	check(main.goals.count == 2, "with no best yet there is no BEST flag (medal and unlock only)")
+
+	print("15. world and pacing: ground, shadow, takeoff, time of day, a gentle first minute, Whiskers' mood")
+	var wd_save = root.get_node("Save")
+	wd_save.reset_all()
+	main.spawner.kit_enabled = false
+	main.restart()
+	main.set_process(false)
+	var wd_gw = main.ground
+	check(wd_gw._chunks.size() == wd_gw.CHUNKS and wd_gw._chunks[0].fields.size() == wd_gw.FIELD_COLS * wd_gw.FIELD_ROWS, "the ground world has %d recycled chunks of fields, roads, river, houses, cows and fences" % wd_gw.CHUNKS)
+	var wd_no_outline := true
+	for c in wd_gw._chunks:
+		for f in c.fields:
+			wd_no_outline = wd_no_outline and f.material_overlay == null
+		for seg in c.river:
+			wd_no_outline = wd_no_outline and seg.material_overlay == null
+	check(wd_no_outline, "scenery has no outlines")
+	var wd_natural_green := Color(0.36, 0.6, 0.28)
+	check(wd_gw._field_mats[0].albedo_color.s < wd_natural_green.s - 0.05, "...and is faded toward the haze (saturation %.2f < %.2f)" % [wd_gw._field_mats[0].albedo_color.s, wd_natural_green.s])
+	var wd_z_before: float = wd_gw._chunks[0].position.z
+	wd_gw.scroll(10.0)
+	check(absf((wd_gw._chunks[0].position.z - wd_z_before) - 10.0 * wd_gw.parallax) < 0.001 and wd_gw.parallax < 1.0, "the ground scrolls slower than the obstacles: parallax x%.2f" % wd_gw.parallax)
+	var wd_base := snapshot(main)
+	for i in 400:
+		wd_gw.scroll(2.0)
+	var wd_span_ok := true
+	for c in wd_gw._chunks:
+		wd_span_ok = wd_span_ok and c.position.z > -wd_gw.LEN * wd_gw.CHUNKS and c.position.z < 14.0 + wd_gw.LEN
+	check(wd_span_ok and same_world(wd_base, snapshot(main)), "chunks are recycled as they scroll off, creating nothing new  [%s]" % describe(snapshot(main)))
+	# the plane's shadow
+	main.player.position = Vector3(1.5, 1.2, 4.0)
+	wd_gw.update_shadow(main.player.position, true)
+	var shadow_high_scale: float = wd_gw.shadow.scale.x
+	main.player.position = Vector3(1.5, -1.5, 4.0)
+	wd_gw.update_shadow(main.player.position, true)
+	check(wd_gw.shadow.visible and absf(wd_gw.shadow.position.x - 1.5) < 0.001 and absf(wd_gw.shadow.position.z - 4.0) < 0.001 and wd_gw.shadow.scale.x < shadow_high_scale, "the plane casts a soft shadow that follows it and tightens when it is low")
+	main.player.position = Vector3(0, 1.2, 4.0)
+	# takeoff
+	DebugFlags.god = true   # (nothing in the way matters here)
+	main.restart()
+	main.set_process(true)
+	await real_wait(0.2)
+	main.set_process(false)
+	check(main.player.position.y < 0.6 and wd_gw.airstrip_active and wd_gw.airstrip.visible and main._takeoff_t > 0.0, "a run starts with a takeoff from Rusty's airstrip (plane at height %.2f)" % main.player.position.y)
+	for i in 50:
+		main._process(0.05)
+	check(absf(main.player.position.y - main.player.PLANE_Y) < 0.001 and main._takeoff_t >= tuning.takeoff_seconds and tuning.opening_seconds >= tuning.takeoff_seconds, "...and is flying by %.1f s, before the first obstacles" % tuning.takeoff_seconds)
+	for i in 200:
+		main._process(0.05)
+	check(not wd_gw.airstrip_active and not wd_gw.airstrip.visible, "the airstrip scrolls away")
+	DebugFlags.god = false
+	# time of day
+	main.tod_override = 0.0
+	main._apply_time_of_day(0.0)
+	var wd_sky_morning: Color = main._env.background_color
+	var wd_sun_morning: float = main.sun.light_energy
+	main._apply_time_of_day(0.7)
+	var wd_sky_sunset: Color = main._env.background_color
+	main._apply_time_of_day(1.0)
+	var wd_sky_dusk: Color = main._env.background_color
+	check(wd_sky_sunset.r > wd_sky_sunset.b and wd_sky_dusk.get_luminance() < wd_sky_morning.get_luminance() and main.sun.light_energy < wd_sun_morning and not wd_sky_morning.is_equal_approx(wd_sky_sunset), "the sky shifts from morning through a warm sunset to a dark dusk")
+	main.tod_override = -1.0
+	main.debug_cycle_tod()
+	var wd_tod1: float = main.tod_override
+	main.debug_cycle_tod()
+	main.debug_cycle_tod()
+	main.debug_cycle_tod()
+	var wd_tod4: float = main.tod_override
+	main.debug_cycle_tod()
+	check(wd_tod1 == 0.0 and wd_tod4 == 1.0 and main.tod_override == -1.0, "?tune: the time-of-day button jumps morning, day, sunset, dusk, then follows the run again")
+	main.elapsed = 0.0
+	var wd_tod_a: float = main._current_tod()
+	main.elapsed = tuning.tod_seconds * 0.7
+	var wd_tod_b: float = main._current_tod()
+	check(wd_tod_a < 0.01 and absf(wd_tod_b - 0.7) < 0.01, "following the run, the day passes over %.0f s" % tuning.tod_seconds)
+	# a gentle first minute
+	var wd_gs = main.spawner
+	wd_gs.kit_enabled = true
+	wd_gs.apply_map(0)
+	wd_gs.reset(-14.0)
+	wd_gs.run_time = 10.0
+	wd_gs.scroll_speed = 7.0
+	var gentle_hard := 0
+	var gentle_calm := 0
+	for i in 300:
+		wd_gs._pat = {}
+		var gp: Dictionary = wd_gs._choose_pattern()
+		gentle_hard += int(float(gp["diff"]) > 1.0)
+		gentle_calm += int(P.has_tag(gp, "calm"))
+		wd_gs._pat_last = gp["name"]
+	check(gentle_hard == 0 and gentle_calm > 100, "the first %.0f s offers only the easiest patterns, with empty stretches between (%d above difficulty 1, %d of 300 calm)" % [tuning.gentle_seconds, gentle_hard, gentle_calm])
+	wd_gs.run_time = 100.0
+	wd_gs._wave_start = 100.0
+	wd_gs.wave_phase = 2
+	var later_hard := 0
+	for i in 300:
+		wd_gs._pat = {}
+		wd_gs._pat_last = ""
+		later_hard += int(float(wd_gs._choose_pattern()["diff"]) > tuning.gentle_max_diff)
+	check(later_hard > 100, "after that the waves bring harder ones (%d of 300)" % later_hard)
+	var wd_steps_ok := true
+	for i in range(1, 7):
+		wd_steps_ok = wd_steps_ok and wd_gs.stepped_speed(i) > wd_gs.stepped_speed(i - 1)
+	check(is_equal_approx(wd_gs.stepped_speed(1) - wd_gs.stepped_speed(0), 2.0) and is_equal_approx(wd_gs.stepped_speed(2) - wd_gs.stepped_speed(1), 2.5) and wd_steps_ok and wd_gs.stepped_speed(6) == tuning.max_speed, "speed steps start small and grow: +2, +2.5, +3 ... to the top in 6 steps (%.1f, %.1f, %.1f)" % [wd_gs.stepped_speed(1), wd_gs.stepped_speed(2), wd_gs.stepped_speed(3)])
+	wd_gs.reset()
+	wd_gs.kit_enabled = false
+	wd_gs.apply_map(0)
+	# Whiskers in the cockpit
+	main.restart()
+	main.set_process(false)
+	var pl15 = main.player
+	check(pl15._cat.visible and pl15.mood == pl15.Mood.NEUTRAL, "Whiskers sits in the cockpit")
+	var wd_eye_neutral: float = pl15._cat_eyes[0].scale.x
+	var wd_wm_row = main.spawner._rows_make_for_test(-5.0, [1.0])
+	main._on_near_miss({"side": 1, "node": wd_wm_row.obs[0], "outline": wd_wm_row.outlines[0], "whisker": false, "row": null})
+	main._process(0.016)
+	check(pl15.mood == pl15.Mood.STARTLED and pl15._cat_eyes[0].scale.x > wd_eye_neutral * 1.3, "a close call startles him (wide eyes, an \"o\")")
+	await real_wait(0.75)
+	main._steps.clear()
+	for v in [0.5, 0.5]:
+		main._steps.append(v)
+	main._refresh_bonus()
+	main._process(0.016)
+	check(pl15.mood == pl15.Mood.GRIN and pl15._cat_eyes[0].scale.z < 0.5, "on a streak he grins (squinting)")
+	main.spawner._release_row(wd_wm_row)
+	main._end_run(main.HEADER_CRASH, main.REASON_OBSTACLE)
+	check(not pl15._cat.visible, "on a crash he leaves the cockpit (he ejects)")
+	main.restart()
+	main.set_process(false)
+	check(pl15._cat.visible and pl15.mood == pl15.Mood.NEUTRAL, "...and is back in the next run")
+	wd_save.reset_all()
+	var parents_ok := true
+	for key in main.hud._res_nodes:
+		var rn: Node = main.hud._res_nodes[key]
+		parents_ok = parents_ok and (rn.get_parent() == main.hud._res)
+	for cn in main.hud._call_nodes:
+		parents_ok = parents_ok and cn["glyph"].get_parent() == cn["holder"] and cn["text"].get_parent() == cn["holder"]
+	check(parents_ok and not main.hud._res.visible, "the results screen and the callouts hold their own parts (hiding them hides everything)")
 
 	DirAccess.remove_absolute(ProjectSettings.globalize_path("user://smoke_test_save.json"))
 	print("")

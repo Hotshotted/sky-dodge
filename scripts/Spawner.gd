@@ -140,6 +140,8 @@ var _ground_mat := StandardMaterial3D.new()
 var _stripe_mat := StandardMaterial3D.new()
 var _obs_color := Color(1.0, 0.3, 0.12)
 var _cloud_color := Color.WHITE
+var _cloud_tint := Color.WHITE
+var _cloud_tint_mix := 0.0
 var _blocked_add := 0
 var _gull_share := 0.0
 var _cloud_mult := 1.0
@@ -208,6 +210,11 @@ func _ready() -> void:
 		_make_cloud_node()
 	reset()
 
+## Time of day tints the clouds a little (they are lit by their own colour).
+func set_sky_tint(tint: Color, mix: float) -> void:
+	_cloud_tint = tint
+	_cloud_tint_mix = mix
+
 ## Choose the map for the next run: palette, how many columns get blocked, the gull share, how many clouds, and
 ## the hazards (gusts, lightning). Call before reset().
 func apply_map(index: int) -> void:
@@ -241,6 +248,7 @@ func reset(first_row_z: float = -12.0) -> void:
 	_pat_next = {}
 	_pat_row = 0
 	pattern_name = ""
+	_gentle_gap = false
 	wave_phase = 0
 	wave_cycle = 0
 	speed_steps = 0
@@ -622,6 +630,7 @@ var _w_buf: Array[float] = []
 var _pat_mirror := false
 var _pat_last := ""
 var _cycle_i := -1
+var _gentle_gap := false             # the first minute: every easy pattern is followed by an empty stretch
 var pattern_name := ""              # the pattern being played (the ?tune panel shows it)
 var _carriers: Array = [null, null, null, null, null, null, null, null]   # the current pattern's rows (reused)
 var _hay_fill: Array[bool] = []
@@ -703,7 +712,10 @@ var _wave_start := 0.0              # run_time when the current phase began
 
 ## The Countryside's scroll speed after `steps` steps.
 func stepped_speed(steps: int) -> float:
-	return minf(Tuning.base_speed + steps * Tuning.speed_step, Tuning.max_speed)
+	var v := Tuning.base_speed
+	for i in steps:
+		v += Tuning.speed_step_table[mini(i, Tuning.speed_step_table.size() - 1)]
+	return minf(v, Tuning.max_speed)
 
 func wave_name() -> String:
 	return "%s #%d" % [WAVE_NAMES[wave_phase], wave_cycle + 1]
@@ -783,6 +795,12 @@ func _choose_pattern() -> Dictionary:
 		if not forced.is_empty():
 			return forced
 	var rng := wave_range()
+	if kit_on and run_time < Tuning.gentle_seconds:   # the first minute is gentle: easy patterns with an empty stretch between
+		rng = Vector2(1.0, lerpf(1.0, Tuning.gentle_max_diff, run_time / Tuning.gentle_seconds))   # (easiest at first, a touch more by the end of the minute)
+		if _gentle_gap and _pat_last != "open_sky" and _pat_last != "hay_field":
+			_gentle_gap = false
+			return Patterns.find("open_sky" if randf() < 0.6 else "hay_field")
+		_gentle_gap = true
 	var windmills_wait := kit_on and base_speed_now >= 0.0 and (speed_steps_planned != speed_steps or absf(base_speed_now - stepped_speed(speed_steps_planned)) > 0.05)
 	var spd := maxf(scroll_speed, stepped_speed(speed_steps_planned)) if kit_on else scroll_speed
 	var slack := 0.5
@@ -1347,7 +1365,7 @@ func _update_cloud_alpha(cl: Cloud) -> void:
 		var ahead := plane_z - (cl.position.z + cl.oz[k])   # > 0: the puff is above the plane (not reached yet)
 		var t := clampf(1.0 - ahead / maxf(Tuning.cloud_reveal_distance, 0.1), 0.0, 1.0)
 		t = t * t * (3.0 - 2.0 * t)   # smoothstep: eases in and out
-		cl.mats[k].albedo_color = Color(_cloud_color, lerpf(Tuning.cloud_max_opacity, Tuning.cloud_min_opacity, t))
+		cl.mats[k].albedo_color = Color(_cloud_color.lerp(_cloud_tint, _cloud_tint_mix * 0.6), lerpf(Tuning.cloud_max_opacity, Tuning.cloud_min_opacity, t))
 
 ## The shared puff: a flat, low-poly dome (about 45 triangles) with its facets tinted a touch
 ## differently, so it reads as a soft, puffy, flat-shaded shape. Built once.

@@ -1023,13 +1023,13 @@ func _build_callouts() -> void:
 		icon.mouse_filter = Control.MOUSE_FILTER_IGNORE
 		icon.pivot_offset = Vector2(40, 40)
 		holder.add_child(icon)
-		var glyph := _make_label(52)
+		var glyph := _loose_label(52)
 		glyph.size = Vector2(80, 80)
 		glyph.position = Vector2(-380, -40)
 		glyph.vertical_alignment = VERTICAL_ALIGNMENT_CENTER
 		glyph.mouse_filter = Control.MOUSE_FILTER_IGNORE
 		holder.add_child(glyph)
-		var text := _make_label(50)
+		var text := _loose_label(50)
 		text.size = Vector2(800, 80)
 		text.position = Vector2(-280, -40)
 		text.horizontal_alignment = HORIZONTAL_ALIGNMENT_LEFT
@@ -1080,8 +1080,15 @@ func prewarm_callouts() -> void:
 
 # ---------- The results screen ----------
 
+## A label from _make_label (which already hangs it on the HUD), taken off again so it can go into a panel.
+func _loose_label(font_size: int) -> Label:
+	var l := _make_label(font_size)
+	if l.get_parent() != null:
+		l.get_parent().remove_child(l)
+	return l
+
 func _res_label(key: String, size: int, y: float, h: float, color: Color = Color.WHITE, x: float = 0.0, w: float = 1080.0) -> Label:
-	var l := _make_label(size)
+	var l := _loose_label(size)
 	l.position = Vector2(x, y)
 	l.size = Vector2(w, h)
 	l.vertical_alignment = VERTICAL_ALIGNMENT_CENTER

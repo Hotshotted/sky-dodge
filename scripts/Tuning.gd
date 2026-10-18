@@ -41,6 +41,8 @@ var max_speed := 26.0
 ## Countryside: speed does not ramp. It steps up by speed_step once per wave cycle, while a BREATHER passes the plane
 ## (eased in at speed_step_rate units/s per second), toward max_speed: (26 - 7) / 3.2 = 6 steps, about 4.5 minutes.
 var speed_step := 3.2
+## The Countryside's steps are small at first and grow: step n adds speed_step_table[n-1] (then the last entry), up to max_speed.
+var speed_step_table: Array[float] = [2.0, 2.5, 3.0, 3.5, 4.0, 4.5]
 var speed_step_rate := 2.0
 
 # ---------- Obstacle spawning ----------
@@ -56,7 +58,7 @@ var spawn_distance := 24.0
 ## The opening: the first row of a run reaches the plane after about this many seconds, at the
 ## start speed and ramp. (It never starts on screen: on a very tall phone it begins just above the
 ## top edge instead, so it can take a little longer there.)
-var opening_seconds := 2.0
+var opening_seconds := 3.0
 
 # ---------- Obstacle look ----------
 ## Obstacle colour (single colour; outlines separate overlapping shapes).
@@ -161,6 +163,24 @@ var wave_diff_hi: Array[float] = [2.0, 3.0, 4.0, 1.0]
 var wave_rise := 0.5
 var wave_can: Array[float] = [1.8, 1.0, 0.6, 2.5]
 var wave_hay: Array[float] = [1.8, 1.0, 0.5, 2.5]
+
+# ---------- World and pacing ----------
+## Takeoff from Rusty's airstrip: the plane lifts off over this many seconds at the start of a run.
+var takeoff_seconds := 2.2
+## The first gentle_seconds of a Countryside run: only the easiest patterns (difficulty up to gentle_max_diff), with an empty
+## stretch between them.
+var gentle_seconds := 45.0
+var gentle_max_diff := 1.6
+## Time of day: morning at the start of a run, midday-ish (the map's own look), sunset, then dusk, over tod_seconds.
+var tod_seconds := 300.0
+## Per keyframe (morning, day, sunset, dusk): the colour the sky and ambient light are pulled toward, how far, the sun's
+## colour and strength, and the ambient strength.
+var tod_stops: Array[float] = [0.0, 0.35, 0.7, 1.0]
+var tod_tint: Array[Color] = [Color(1.0, 0.82, 0.62), Color(1.0, 1.0, 1.0), Color(0.95, 0.4, 0.22), Color(0.16, 0.12, 0.3)]
+var tod_mix: Array[float] = [0.22, 0.0, 0.5, 0.7]
+var tod_sun: Array[Color] = [Color(1.0, 0.9, 0.75), Color(1.0, 1.0, 1.0), Color(1.0, 0.6, 0.35), Color(0.55, 0.55, 0.95)]
+var tod_sun_energy: Array[float] = [0.9, 1.0, 0.85, 0.45]
+var tod_ambient_energy: Array[float] = [0.45, 0.45, 0.4, 0.3]
 
 # ---------- Speed cues ----------
 ## Every source of a speed change shows itself on screen. The audit (see the smoke test): Tailwind (perk), the BREATHER
