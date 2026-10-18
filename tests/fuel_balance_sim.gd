@@ -76,6 +76,8 @@ func simulate(kind: String, seed_value: int) -> Dictionary:
 	var t := 0.0
 	var fuel_min := 1000.0   # lowest fuel after the first 20 s (how close the run came to empty)
 	var pickups := 0
+	var close_calls := 0
+	var calls_counter: float = root.get_node("Save").stat("close_calls")
 	var last_fuel: float = main.fuel
 	var target_x := 0.0
 	while main.alive and t < MAX_SECONDS:
@@ -121,10 +123,12 @@ func simulate(kind: String, seed_value: int) -> Dictionary:
 			if absf(r.position.z - pl2.position.z) < 6.0:
 				near.append("row z=%.1f blocked=%s can=%s@%.0f passed=%s" % [r.position.z - pl2.position.z, str(r.xs), str(r.has_can), r.can_x, str(r.passed)])
 		print("  [%s seed %d] died t=%.1fs plane x=%.2f target x=%.2f | %s" % [kind, seed_value, t, pl2.position.x, target_x, " || ".join(near)])
+	close_calls = int(root.get_node("Save").stat("close_calls") - calls_counter)
+	var dist: float = main.score
 	var reason: String = "survived" if main.alive else main.hud._over.text.split("\n")[1]
 	main.queue_free()
 	await process_frame
-	return {"t": t, "pickups": pickups, "reason": reason, "fuel_min": fuel_min if fuel_min < 999.0 else -1.0}
+	return {"t": t, "pickups": pickups, "close_calls": close_calls, "score": dist, "reason": reason, "fuel_min": fuel_min if fuel_min < 999.0 else -1.0}
 
 func _initialize() -> void:
 	DebugFlags.parse(["noprewarm"])
@@ -138,6 +142,8 @@ func _initialize() -> void:
 	for kind in (["CHASER"] if OS.get_environment("SIM_DEBUG") != "" else ["SAFE", "CHASER", "RANDOM"]):
 		var times: Array[float] = []
 		var picks := 0
+		var calls := 0
+		var coins_sum := 0.0
 		var low := 0.0
 		var low_n := 0
 		var reasons := {}
@@ -145,12 +151,14 @@ func _initialize() -> void:
 			var r: Dictionary = await simulate(kind, 1000 + i)
 			times.append(r["t"])
 			picks += r["pickups"]
+			calls += r["close_calls"]
+			coins_sum += r["score"]
 			if r["fuel_min"] >= 0.0:
 				low += r["fuel_min"]
 				low_n += 1
 			reasons[r["reason"]] = reasons.get(r["reason"], 0) + 1
 		times.sort()
-		print("%-6s survival s: min %.0f  median %.0f  max %.0f | cans/run %.1f | lowest fuel after 20 s (avg) %s | ended by %s" % [
-				kind, times[0], times[times.size() / 2], times[-1], float(picks) / RUNS,
+		print("%-6s survival s: min %.0f  median %.0f  max %.0f | cans/run %.1f | close calls/run %.1f | coins/run %.0f | lowest fuel after 20 s (avg) %s | ended by %s" % [
+				kind, times[0], times[times.size() / 2], times[-1], float(picks) / RUNS, float(calls) / RUNS, coins_sum / RUNS,
 				("%.0f" % (low / low_n)) if low_n > 0 else "-", str(reasons)])
 	quit()

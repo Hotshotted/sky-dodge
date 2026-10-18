@@ -1,0 +1,21 @@
+Godot Engine v4.5.stable.official.876b29033 - https://godotengine.org
+
+minutes | runs | run length | coins/run | coins/min | balance | levels (coin/bounty/ccpay/cap | tank/eff/refill) | gear | slots | best-distance chance
+      5 |    9 |    17 s |       458 |       937 |     544 | 3/0/0/0 | 4/3/1 | [] | 1 | 0%
+     15 |   25 |    32 s |      1.8K |      2.4K |     452 | 9/0/5/0 | 5/5/3 | ["nine_lives"] | 1 | 0%
+     30 |   40 |    37 s |      5.5K |      6.7K |    1.6K | 19/9/14/0 | 6/6/5 | ["nine_lives"] | 1 | 70%
+     45 |   54 |    39 s |       19K |       22K |     182 | 30/15/22/0 | 7/7/6 | ["nine_lives"] | 1 | 97%
+     60 |   66 |    56 s |       79K |       70K |    3.7K | 39/26/33/0 | 7/8/7 | ["nine_lives", "magnet"] | 2 | 100%
+     91 |   88 |    58 s |      673K |      579K |     56K | 58/46/51/0 | 7/8/7 | ["nine_lives", "magnet"] | 2 | 100%
+    120 |  109 |    60 s |      1.3M |      1.1M |    454K | 72/61/65/0 | 7/8/7 | ["nine_lives", "magnet"] | 2 | 100%
+
+  0.5 min  first purchase after run 1: fuel_tank
+ 13.3 min  gear: nine_lives
+ 26.2 min  gear: magnet
+ 34.5 min  gear: head_start
+ 39.7 min  gear: reserve_tank
+ 40.8 min  gear: steady_nerves
+ 42.0 min  gear: cloud_eye
+ 56.7 min  2nd gear slot
+3,000 m goal (Coast unlock): 50% chance reached by 27 min, 90% by 38 min (a run needs 600 units = 3000 m)
+runs in 2 hours: 109, purchases: 232

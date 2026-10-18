@@ -12,7 +12,7 @@ var _bonus_anim_ms := -10000         # when the bonus label's animation started
 var _bonus_fading_out := false       # the bonus is back to x1: shrink the old label away, then clear it
 var _bonus_shown := 1.0                # the bonus the label currently shows
 var _score_bonus := 1.0                # drives the score label's tint, size and ticking
-var _last_points := 0
+var _last_points := 0.0
 var _score_tick_ms := -10000         # when the score number last ticked up while a bonus was active
 ## Menu buttons, wired up by Main.
 signal play_pressed
@@ -24,8 +24,23 @@ var _menu_best: Label
 var _menu_coins: Label
 var _hangar: Control                 # upgrade screen
 var _hangar_coins: Label
-var _hangar_rows: Array[Dictionary] = []   # per upgrade: {id, title, effect, buy}
 var _over_hangar: Button             # small "Hangar" button on the game-over screen
+signal equip_pressed(id: String, slot: int)
+signal buy_slot_pressed
+const TABS := ["earnings", "plane", "gear"]
+const TAB_NAMES := ["EARNINGS", "PLANE", "GEAR"]
+var _tab := "earnings"
+var _sel_slot := 0                   # the gear slot the EQUIP buttons fill
+var _tab_buttons := {}
+var _slot_buttons: Array[Button] = []
+var _upg_rows: Array[Dictionary] = []     # per upgrade: id, tab, title, line, buy, equip, nodes
+const LIVES_POOL := 8
+var _lives_pips: Array[ColorRect] = []
+const COIN_POP_POOL := 4
+var _coin_pops: Array[Label] = []
+var _coin_born := PackedInt64Array()
+var _coin_base_y := PackedFloat32Array()
+var _next_coin_pop := 0
 const POPUP_POOL := 4            # labels reused for "Close!" popups
 var _pop_labels: Array[Label] = []
 var _pop_born := PackedInt64Array()   # real ms when started; 0 = idle
@@ -54,6 +69,7 @@ const PUNCH_TIME := 0.28
 const SHRINK_TIME := 0.6
 const TICK_TIME := 0.12
 const POPUP_TIME := 0.9
+const COIN_POP_TIME := 0.8
 
 func _ready() -> void:
 	_score = _make_label(72)
@@ -70,6 +86,24 @@ func _ready() -> void:
 		_pop_labels.append(l)
 	_pop_born.resize(POPUP_POOL)
 	_pop_base_y.resize(POPUP_POOL)
+	for i in COIN_POP_POOL:
+		var cl := _make_label(46)
+		cl.add_theme_color_override("font_color", Color(1.0, 0.85, 0.25))
+		cl.visible = false
+		_coin_pops.append(cl)
+	_coin_born.resize(COIN_POP_POOL)
+	_coin_base_y.resize(COIN_POP_POOL)
+	for i in LIVES_POOL:
+		var pip := ColorRect.new()
+		pip.color = Color(1.0, 0.3, 0.3)
+		pip.mouse_filter = Control.MOUSE_FILTER_IGNORE
+		pip.anchor_left = 0.5
+		pip.anchor_right = 0.5
+		pip.offset_top = FUEL_BAR_TOP + 46.0
+		pip.offset_bottom = FUEL_BAR_TOP + 72.0
+		pip.visible = false
+		add_child(pip)
+		_lives_pips.append(pip)
 	_build_stamp()
 	_over = _make_label(80)
 	_over.set_anchors_and_offsets_preset(Control.PRESET_FULL_RECT)
@@ -141,30 +175,78 @@ func _build_menus() -> void:
 	_menu.add_child(hangar)
 
 	_hangar = _screen_root()
-	_screen_label(_hangar, "HANGAR", 100, 0, 70, W, 130, HORIZONTAL_ALIGNMENT_CENTER)
-	_hangar_coins = _screen_label(_hangar, "", 56, 0, 200, W, 90, HORIZONTAL_ALIGNMENT_CENTER)
-	for i in Tuning.upgrades.size():
-		var id: String = Tuning.upgrades[i]["id"]
-		var y := 320.0 + 250.0 * i
+	_screen_label(_hangar, "HANGAR", 100, 0, 60, W, 120, HORIZONTAL_ALIGNMENT_CENTER)
+	_hangar_coins = _screen_label(_hangar, "", 56, 0, 175, W, 80, HORIZONTAL_ALIGNMENT_CENTER)
+	# Tabs.
+	for i in TABS.size():
+		var tab: String = TABS[i]
+		var tb := _make_button(TAB_NAMES[i], 40, Vector2(330, 90))
+		_place(tb, 30.0 + 350.0 * i, 270, 330, 90)
+		tb.pressed.connect(func(): _select_tab(tab))
+		_hangar.add_child(tb)
+		_tab_buttons[tab] = tb
+	# Gear slots (only on the GEAR tab).
+	for i in 3:
+		var sb := _make_button("", 36, Vector2(330, 90))
+		_place(sb, 30.0 + 350.0 * i, 380, 330, 90)
+		sb.pressed.connect(func(): _on_slot_button(i))
+		_hangar.add_child(sb)
+		_slot_buttons.append(sb)
+	# One row per upgrade (all created now; the tab decides which show).
+	var counts := {}
+	for u in Tuning.upgrades:
+		var id: String = u["id"]
+		var tab: String = u["tab"]
+		var n: int = counts.get(tab, 0)
+		counts[tab] = n + 1
+		var y: float = (390.0 + 200.0 * n) if tab != "gear" else (490.0 + 175.0 * n)
+		var row := {"id": id, "tab": tab, "nodes": []}
 		var panel := ColorRect.new()
 		panel.color = Color(1, 1, 1, 0.07)
-		_place(panel, 40, y, W - 80.0, 230)
+		_place(panel, 30, y, W - 60.0, 160 if tab == "gear" else 185)
 		panel.mouse_filter = Control.MOUSE_FILTER_IGNORE
 		_hangar.add_child(panel)
-		var title := _screen_label(_hangar, "", 50, 70, y + 12, 600, 80, HORIZONTAL_ALIGNMENT_LEFT)
-		var effect := _screen_label(_hangar, "", 42, 70, y + 100, 620, 110, HORIZONTAL_ALIGNMENT_LEFT)
-		effect.add_theme_color_override("font_color", Color(0.8, 0.9, 1.0))
-		var buy := _make_button("", 50, Vector2(290, 150))
-		_place(buy, W - 40.0 - 310.0, y + 40, 290, 150)
+		row["nodes"].append(panel)
+		var icon := Panel.new()
+		var sbox := StyleBoxFlat.new()
+		sbox.bg_color = u["color"]
+		sbox.set_corner_radius_all(48)
+		icon.add_theme_stylebox_override("panel", sbox)
+		_place(icon, 50, y + 20, 96, 96)
+		icon.mouse_filter = Control.MOUSE_FILTER_IGNORE
+		_hangar.add_child(icon)
+		row["nodes"].append(icon)
+		var glyph := _screen_label(_hangar, u["glyph"], 56, 50, y + 20, 96, 96, HORIZONTAL_ALIGNMENT_CENTER)
+		row["nodes"].append(glyph)
+		var title := _screen_label(_hangar, "", 40, 170, y + 8, 480, 56, HORIZONTAL_ALIGNMENT_LEFT)
+		row["title"] = title
+		row["nodes"].append(title)
+		var line := _screen_label(_hangar, "", 28, 170, y + 62, 490, 96, HORIZONTAL_ALIGNMENT_LEFT)
+		line.autowrap_mode = TextServer.AUTOWRAP_WORD_SMART
+		line.add_theme_color_override("font_color", Color(0.8, 0.9, 1.0))
+		line.add_theme_constant_override("outline_size", 6)
+		row["line"] = line
+		row["nodes"].append(line)
+		var buy := _make_button("", 40, Vector2(220, 120))
+		_place(buy, W - 30.0 - 235.0, y + 20, 220, 120)
 		buy.pressed.connect(func(): upgrade_pressed.emit(id))
 		_hangar.add_child(buy)
-		_hangar_rows.append({"id": id, "title": title, "effect": effect, "buy": buy})
-	var back := _make_button("BACK", 56, Vector2(380, 120))
-	_place(back, 70, 1720, 380, 120)
+		row["buy"] = buy
+		row["nodes"].append(buy)
+		if tab == "gear":
+			var eq := _make_button("", 30, Vector2(170, 120))
+			_place(eq, W - 30.0 - 235.0 - 185.0, y + 20, 170, 120)
+			eq.pressed.connect(func(): equip_pressed.emit(id, _sel_slot))
+			_hangar.add_child(eq)
+			row["equip"] = eq
+			row["nodes"].append(eq)
+		_upg_rows.append(row)
+	var back := _make_button("BACK", 56, Vector2(380, 110))
+	_place(back, 70, 1730, 380, 110)
 	back.pressed.connect(func(): back_pressed.emit())
 	_hangar.add_child(back)
-	var go := _make_button("PLAY", 56, Vector2(380, 120))
-	_place(go, W - 70.0 - 380.0, 1720, 380, 120)
+	var go := _make_button("PLAY", 56, Vector2(380, 110))
+	_place(go, W - 70.0 - 380.0, 1730, 380, 110)
 	go.pressed.connect(func(): play_pressed.emit())
 	_hangar.add_child(go)
 
@@ -178,22 +260,60 @@ func _build_menus() -> void:
 	_over_hangar.pressed.connect(func(): hangar_pressed.emit())
 	add_child(_over_hangar)
 
+func _select_tab(tab: String) -> void:
+	_tab = tab
+	refresh_menus()
+
+func _on_slot_button(i: int) -> void:
+	if i < Save.slots:
+		_sel_slot = i
+		refresh_menus()
+	elif i == Save.slots:
+		buy_slot_pressed.emit()   # the next locked slot is a purchase
+
 ## Re-read the save into the start screen and the Hangar (called whenever the save changes).
-func refresh_menus() -> void:
+## `all_tabs` shows every row at once (the pre-warm draws them all).
+func refresh_menus(all_tabs: bool = false) -> void:
 	if _menu == null:
 		return
-	_menu_best.text = "Best: %d" % Save.high_score
-	_menu_coins.text = "Coins: %d" % Save.coins
-	_hangar_coins.text = "Coins: %d" % Save.coins
-	for row in _hangar_rows:
+	_menu_best.text = "Best: %s" % Tuning.fmt(Save.high_score)
+	_menu_coins.text = "Coins: %s" % Tuning.fmt(Save.coins)
+	_hangar_coins.text = "Coins: %s" % Tuning.fmt(Save.coins)
+	for t in TABS:
+		(_tab_buttons[t] as Button).modulate = Color(1.35, 1.35, 0.8) if t == _tab else Color(0.7, 0.75, 0.9)
+	for i in 3:
+		var sb := _slot_buttons[i]
+		sb.visible = _tab == "gear" or all_tabs
+		if i < Save.slots:
+			var g: String = Save.loadout[i]
+			sb.text = "%d: %s" % [i + 1, Tuning.upgrade_def(g)["name"] if g != "" else "empty"]
+			sb.disabled = false
+			sb.modulate = Color(1.4, 1.4, 0.7) if i == _sel_slot else Color(0.85, 0.9, 1.0)
+		elif i == Save.slots:
+			sb.text = "Unlock %s" % Tuning.fmt(Tuning.gear_slot_costs[i])
+			sb.disabled = Save.coins < Tuning.gear_slot_costs[i]
+			sb.modulate = Color.WHITE
+		else:
+			sb.text = "Locked"
+			sb.disabled = true
+			sb.modulate = Color.WHITE
+	for row in _upg_rows:
 		var id: String = row["id"]
+		var show: bool = all_tabs or row["tab"] == _tab
+		for n in row["nodes"]:
+			(n as CanvasItem).visible = show
 		var lv := Save.level(id)
-		var u := Tuning.upgrade_def(id)
-		(row["title"] as Label).text = "%s   Lv %d/%d" % [u["name"], lv, u["max_level"]]
-		(row["effect"] as Label).text = Tuning.upgrade_text(id, lv)
+		var m := Tuning.max_level(id)
+		(row["title"] as Label).text = "%s   Lv %d%s" % [Tuning.upgrade_def(id)["name"], lv, ("/%d" % m) if m >= 0 else ""]
+		(row["line"] as Label).text = Tuning.upgrade_line(id, lv)
 		var b := row["buy"] as Button
-		b.text = "MAX" if Save.is_maxed(id) else "%d coins" % Save.cost_of_next(id)
+		b.text = "MAX" if Save.is_maxed(id) else Tuning.fmt(Save.cost_of_next(id))
 		b.disabled = not Save.can_buy(id)
+		if row.has("equip"):
+			var eq := row["equip"] as Button
+			eq.visible = show and lv > 0
+			eq.text = "REMOVE" if (_sel_slot < 3 and Save.loadout[_sel_slot] == id) else ("IN SLOT\n%d" % (Save.loadout.find(id) + 1) if Save.is_equipped(id) else "EQUIP")
+			eq.disabled = false
 
 func show_menu() -> void:
 	refresh_menus()
@@ -217,6 +337,30 @@ func hide_menus() -> void:
 ## Is a touch at `pos` on the game-over "Hangar" button? (Main uses it so that tap doesn't restart.)
 func over_hangar_hit(pos: Vector2) -> bool:
 	return _over_hangar.visible and _over_hangar.get_global_rect().has_point(pos)
+
+## Lives (Nine Lives, Patch): small red pips under the fuel gauge.
+func set_lives(n: int) -> void:
+	for i in LIVES_POOL:
+		var pip := _lives_pips[i]
+		pip.visible = i < n
+		pip.offset_left = -13.0 + 40.0 * (i - (n - 1) * 0.5)
+		pip.offset_right = pip.offset_left + 26.0
+
+## A floating "+coins" next to something (a can, a close call).
+func coin_pop(text: String, pos: Vector2) -> void:
+	var i := _next_coin_pop
+	_next_coin_pop = (_next_coin_pop + 1) % COIN_POP_POOL
+	var l := _coin_pops[i]
+	l.text = text
+	l.reset_size()
+	l.pivot_offset = l.size * 0.5
+	var vp_w := get_viewport().get_visible_rect().size.x
+	pos.x = clampf(pos.x, l.size.x * 0.5 + 16.0, vp_w - l.size.x * 0.5 - 16.0)
+	l.position = pos - l.size * 0.5
+	l.modulate.a = 1.0
+	l.visible = true
+	_coin_base_y[i] = l.position.y
+	_coin_born[i] = Time.get_ticks_msec()
 
 ## The play-time readouts (score, bonus, fuel gauge) only show while a run is on screen.
 
@@ -277,7 +421,7 @@ func _update_fuel_look(now: int) -> void:
 ## The score. While a points bonus is active it takes the bonus colour (gold at the cap), swells with
 ## the bonus (clamped), and gives a little pulse every time the number ticks up, so the faster scoring
 ## is easy to see.
-func set_score(points: int, bonus: float = 1.0) -> void:
+func set_score(points: float, bonus: float = 1.0) -> void:
 	var active := Tuning.bonus_active(bonus)
 	if active and points != _last_points:
 		_score_tick_ms = Time.get_ticks_msec()
@@ -286,7 +430,7 @@ func set_score(points: int, bonus: float = 1.0) -> void:
 	if q != _score_bonus:
 		_score_bonus = q
 		_score.add_theme_color_override("font_color", Tuning.bonus_color(q) if active else Color.WHITE)
-	_score.text = "%d" % points
+	_score.text = Tuning.fmt(points)
 
 ## The points bonus under the score: just the number ("x2.4") in the bonus colour, glowing gold at the
 ## cap (no word), empty at x1. `anim` says how it changed: BONUS_PUNCH = went up (pops bigger), BONUS_SHRINK = it started to
@@ -394,16 +538,30 @@ func _process(delta: float) -> void:
 		l.position.y = _pop_base_y[i] - 150.0 * (1.0 - pow(1.0 - t, 2.0))  # rise, easing out
 		l.modulate.a = 1.0 if t < 0.5 else 1.0 - (t - 0.5) / 0.5
 
+	# Coin pops: rise a little and fade.
+	for i in COIN_POP_POOL:
+		if _coin_born[i] == 0:
+			continue
+		var cl := _coin_pops[i]
+		var ct := (now - _coin_born[i]) / 1000.0 / COIN_POP_TIME
+		if ct >= 1.0:
+			cl.visible = false
+			_coin_born[i] = 0
+			continue
+		cl.position.y = _coin_base_y[i] - 90.0 * (1.0 - pow(1.0 - ct, 2.0))
+		cl.modulate.a = 1.0 if ct < 0.5 else 1.0 - (ct - 0.5) / 0.5
+
 ## End-of-run screen: a header ("CRASHED" / "OUT OF FUEL"), what ended the run, the final score and
 ## the restart hint.
-func show_game_over(points: int, header: String, reason: String, earned: int = 0, new_best: bool = false, best: int = 0) -> void:
-	_over.text = _game_over_text(points, header, reason, earned, new_best, best)
+func show_game_over(header: String, reason: String, earned: float, new_best: bool, best: float) -> void:
+	_over.text = _game_over_text(header, reason, earned, new_best, best)
 	_over.visible = true
 	_over_hangar.visible = true
 
-func _game_over_text(points: int, header: String, reason: String, earned: int = 0, new_best: bool = false, best: int = 0) -> String:
-	var best_line := "NEW BEST!" if new_best else "Best: %d" % best
-	return "%s\n%s\n\nScore: %d\n%s\n+%d coins\n\nTap to restart" % [header, reason, points, best_line, earned]
+## The score IS the coins earned this run.
+func _game_over_text(header: String, reason: String, earned: float, new_best: bool, best: float) -> String:
+	var best_line := "NEW BEST!" if new_best else "Best: %s" % Tuning.fmt(best)
+	return "%s\n%s\n\n+%s coins\n%s\n\nTap to restart" % [header, reason, Tuning.fmt(earned), best_line]
 
 func _make_label(font_size: int) -> Label:
 	var l := Label.new()
@@ -480,10 +638,10 @@ func begin_prewarm(with_popups: bool) -> void:
 			l.position = Vector2(20.0, 120.0 + 90.0 * t)
 			l.set_meta("prewarm", true)
 	# Both end screens' glyphs, so neither is first drawn when a run ends.
-	_over.text = _game_over_text(1234567890, Main.HEADER_CRASH, Main.REASON_OBSTACLE, 1234567890, true, 1234567890) + "\n" \
-			+ _game_over_text(1234567890, Main.HEADER_FUEL, Main.REASON_FUEL, 1234567890, false, 1234567890)
+	_over.text = _game_over_text(Main.HEADER_CRASH, Main.REASON_OBSTACLE, 1234567890, true, 1234567890) + "\n" \
+			+ _game_over_text(Main.HEADER_FUEL, Main.REASON_FUEL, 2400000000, false, 1234567890)
 	_over.visible = true
-	refresh_menus()
+	refresh_menus(true)
 	_menu.visible = true      # the start screen, Hangar and Hangar button are drawn too (under the splash)
 	_hangar.visible = true
 	_over_hangar.visible = true
@@ -516,6 +674,8 @@ func prewarm_popups() -> void:
 			popup(Tuning.whisker_text + "\n" + Tuning.popup_text(2.0 + t), Tuning.whisker_size, Tuning.whisker_color, at)
 		else:
 			popup(Tuning.popup_text(2.0 + t), Tuning.near_miss_sizes[t], Tuning.near_miss_colors[mini(t, Tuning.near_miss_colors.size() - 1)], at)
+	for i in COIN_POP_POOL:   # the "+coins" pops, with every unit suffix
+		coin_pop("+" + ["1.2K", "45K", "3.1M", "2.4B"][i], Vector2(vp.x * (0.25 + 0.15 * i), vp.y * 0.6))
 
 ## Back to a fresh run (restart in place): hide the crash screen and popups, zero the score.
 ## Every label stays alive; nothing is created or freed.
@@ -525,6 +685,10 @@ func reset_for_run() -> void:
 	for i in POPUP_POOL:
 		_pop_labels[i].visible = false
 		_pop_born[i] = 0
+	for i in COIN_POP_POOL:
+		_coin_pops[i].visible = false
+		_coin_born[i] = 0
+	set_lives(0)
 	_nm_frames_left = 0
 	_fuel_pulse_ms = -10000
 	set_fuel(1.0)
@@ -537,6 +701,10 @@ func end_prewarm() -> void:
 	for i in POPUP_POOL:
 		_pop_labels[i].visible = false
 		_pop_born[i] = 0
+	for i in COIN_POP_POOL:
+		_coin_pops[i].visible = false
+		_coin_born[i] = 0
+	set_lives(0)
 	for c in get_children():
 		if c.has_meta("prewarm"):
 			c.queue_free()

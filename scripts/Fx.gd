@@ -22,6 +22,9 @@ var _next_streak := 0
 const WHISKER_EMITTERS := 2
 var _whisker_emitters: Array[CPUParticles3D] = []   # the gold burst of a Whisker close (pooled like the rest)
 var _next_whisker := 0
+const COIN_EMITTERS := 2
+var _coin_emitters: Array[CPUParticles3D] = []      # the gold burst of a Close Call Pay
+var _next_coin := 0
 
 func _ready() -> void:
 	# Spark emitters: configured once, restarted for each burst.
@@ -86,6 +89,38 @@ func _ready() -> void:
 		p.visible = false
 		add_child(p)
 		_whisker_emitters.append(p)
+	# Close Call Pay: a small gold burst of coins.
+	var c_quad := QuadMesh.new()
+	c_quad.size = Vector2(0.3, 0.3)
+	var c_mat := StandardMaterial3D.new()
+	c_mat.shading_mode = BaseMaterial3D.SHADING_MODE_UNSHADED
+	c_mat.billboard_mode = BaseMaterial3D.BILLBOARD_ENABLED
+	c_mat.vertex_color_use_as_albedo = true
+	c_mat.transparency = BaseMaterial3D.TRANSPARENCY_ALPHA
+	c_quad.material = c_mat
+	var c_ramp := Gradient.new()
+	c_ramp.colors = PackedColorArray([Color(1, 0.95, 0.5, 1), Color(1, 0.8, 0.15, 1), Color(1, 0.7, 0.1, 0)])
+	c_ramp.offsets = PackedFloat32Array([0.0, 0.5, 1.0])
+	for i in COIN_EMITTERS:
+		var p := CPUParticles3D.new()
+		p.mesh = c_quad
+		p.color_ramp = c_ramp
+		p.amount = 10
+		p.lifetime = 0.5
+		p.one_shot = true
+		p.explosiveness = 1.0
+		p.local_coords = false
+		p.direction = Vector3(0, 1, -0.4)
+		p.spread = 70.0
+		p.initial_velocity_min = 4.0
+		p.initial_velocity_max = 9.0
+		p.gravity = Vector3.ZERO
+		p.scale_amount_min = 0.6
+		p.scale_amount_max = 1.2
+		p.emitting = false
+		p.visible = false
+		add_child(p)
+		_coin_emitters.append(p)
 	# Fuel pickup bursts: green puffs rising from the can, same kind of emitter as the sparks.
 	var pop_quad := QuadMesh.new()
 	pop_quad.size = Vector2(0.34, 0.34)
@@ -160,6 +195,15 @@ func whisker(pos: Vector3) -> void:
 	p.restart()
 	p.emitting = true
 
+## A small gold burst of coins (Close Call Pay).
+func coins(pos: Vector3) -> void:
+	var p := _coin_emitters[_next_coin]
+	_next_coin = (_next_coin + 1) % COIN_EMITTERS
+	p.global_position = pos
+	p.visible = true
+	p.restart()
+	p.emitting = true
+
 ## Green burst where a fuel can was picked up (pooled emitters; nothing is allocated).
 func pickup(pos: Vector3) -> void:
 	var p := _pickup_emitters[_next_pickup]
@@ -220,6 +264,11 @@ func clear() -> void:
 		p.emitting = false
 		p.visible = false
 	for p in _whisker_emitters:
+		p.emitting = false
+		p.restart()
+		p.emitting = false
+		p.visible = false
+	for p in _coin_emitters:
 		p.emitting = false
 		p.restart()
 		p.emitting = false

@@ -258,7 +258,7 @@ func _initialize() -> void:
 		check(main.hud._over.visible, "game-over UI is visible")
 		var shown: String = main.hud._over.text
 		var other_header: String = main.HEADER_FUEL if run != 2 else main.HEADER_CRASH
-		check(shown.begins_with(header + "\n") and shown.contains(reason) and shown.contains("Score: 1234") and not shown.contains(other_header),
+		check(shown.begins_with(header + "\n") and shown.contains(reason) and shown.contains("+1.2K coins") and not shown.contains(other_header),
 				"game-over header is \"%s\" with \"%s\" and the score, not \"%s\"  (\"%s\")" % [header, reason, other_header, shown.replace("\n", " | ")])
 		check(run != 2 or main.fuel <= 0.0, "out-of-fuel run ended with an empty tank")
 		await real_wait(0.6)   # Main ignores taps for 0.5 s after a crash
@@ -1003,143 +1003,278 @@ func _initialize() -> void:
 	tuning.bonus_cap = wsaved["cap"]
 	tuning.whisker_close_distance = wsaved["whisker"]
 
-	print("2j. progression: save file, coins, Hangar upgrades")
+	print("2j. economy: score is coins, big numbers, upgrades, gear")
 	var tsave := root.get_node("Save")
 	tsave.reset_all()
-	# (a) save/load round trip, versioned, tolerant of damage
-	tsave.high_score = 777
-	tsave.coins = 55
+	# (a) save/load round trip, versioned, tolerant of damage, v1 migration
+	tsave.high_score = 777.0
+	tsave.coins = 55.0
 	tsave.levels["fuel_tank"] = 3
-	tsave.levels["magnet"] = 2
+	tsave.levels["nine_lives"] = 2
+	tsave.slots = 2
+	tsave.loadout = ["nine_lives", "", ""]
 	tsave.save_game()
 	var raw = JSON.parse_string(FileAccess.get_file_as_string(tsave.path))
-	check(raw is Dictionary and int(raw["version"]) == tsave.VERSION and int(raw["high_score"]) == 777, "the save file is JSON and carries a format version (%d)" % tsave.VERSION)
-	tsave.high_score = 0
-	tsave.coins = 0
+	check(raw is Dictionary and int(raw["version"]) == tsave.VERSION and tsave.VERSION >= 2 and int(raw["high_score"]) == 777, "the save file is JSON and carries a format version (%d)" % tsave.VERSION)
+	tsave.high_score = 0.0
+	tsave.coins = 0.0
 	tsave.levels = {}
+	tsave.slots = 1
+	tsave.loadout = ["", "", ""]
 	tsave.load_game()
-	check(tsave.high_score == 777 and tsave.coins == 55 and tsave.level("fuel_tank") == 3 and tsave.level("magnet") == 2 and tsave.level("refill") == 0,
-			"save/load round trip keeps high score, coins and upgrade levels")
+	check(tsave.high_score == 777.0 and tsave.coins == 55.0 and tsave.level("fuel_tank") == 3 and tsave.level("nine_lives") == 2 and tsave.slots == 2 and tsave.loadout[0] == "nine_lives",
+			"save/load round trip keeps high score, coins, levels, slots and loadout")
 	var bad := FileAccess.open(tsave.path, FileAccess.WRITE)
 	bad.store_string("{ not json")
 	bad.close()
 	tsave.load_game()
-	check(tsave.high_score == 0 and tsave.coins == 0 and tsave.level("fuel_tank") == 0, "a corrupt save file starts fresh instead of crashing")
+	check(tsave.high_score == 0.0 and tsave.coins == 0.0 and tsave.level("fuel_tank") == 0, "a corrupt save file starts fresh instead of crashing")
 	var old := FileAccess.open(tsave.path, FileAccess.WRITE)
-	old.store_string(JSON.stringify({"high_score": 42, "coins": 9, "levels": {"fuel_tank": 99}, "future_field": true}))
+	old.store_string(JSON.stringify({"version": 1, "high_score": 42, "coins": 9, "levels": {"fuel_tank": 99, "magnet": 5, "bonus_cap": 3}, "future_field": true}))
 	old.close()
 	tsave.load_game()
-	check(tsave.high_score == 42 and tsave.coins == 9 and tsave.level("fuel_tank") == 10, "an old (unversioned) file migrates; unknown fields are ignored; levels are clamped to max")
+	check(tsave.high_score == 42.0 and tsave.coins == 9.0 and tsave.level("fuel_tank") == 12 and tsave.level("bonus_cap") == 3 and tsave.level("magnet") == 2 and tsave.loadout[0] == "magnet" and tsave.slots == 1,
+			"a v1 save migrates: levels clamped, the old plane Can Magnet becomes equipped gear")
 	tsave.reset_all()
-	# (b) coin award at the end of a run + game-over text
+	# (b) big-number formatting
+	var fm := [[0, "0"], [999, "999"], [1000, "1K"], [1234, "1.2K"], [45000, "45K"], [999499, "999K"], [999999, "1M"], [3100000, "3.1M"], [2400000000, "2.4B"], [1.1e12, "1.1T"], [12345678, "12M"]]
+	var fm_ok := true
+	var fm_bad := ""
+	for pair in fm:
+		if tuning.fmt(float(pair[0])) != pair[1]:
+			fm_ok = false
+			fm_bad = "%s -> %s" % [pair[0], tuning.fmt(float(pair[0]))]
+	check(fm_ok, "big numbers: 999, 1.2K, 45K, 3.1M, 2.4B, 1.1T %s" % fm_bad)
+	# (c) score IS coins: distance x bonus x multipliers; a crash keeps every coin
 	main.restart()
 	main.set_process(false)
-	main.score = 1000.0
-	main.run_cans = 2
-	var expect_coins: int = int(1000.0 * tuning.coins_per_score) + 2 * tuning.coins_per_can
+	sp.reset(-500.0)   # nothing near the plane
+	main.score = 0.0
+	main.elapsed = 0.0
+	main.coin_mult = 1.0
+	main._process(0.05)
+	var spd: float = tuning.base_speed + tuning.speed_ramp * 0.05
+	check(absf(main.score - spd * 0.05 * tuning.coins_per_unit) < 0.001, "the run total grows by distance x bonus x multiplier (%.3f for %.3f units)" % [main.score, spd * 0.05])
+	main._steps.append(0.5)
+	main._refresh_bonus()
+	main.coin_mult = 3.0
+	var s0: float = main.score
+	main._process(0.05)
+	spd = tuning.base_speed + tuning.speed_ramp * 0.10
+	check(absf((main.score - s0) - spd * 0.05 * 1.5 * 3.0) < 0.001, "...times the close-call bonus (x1.5) and the multiplier (x3)")
+	main.score = 1234.6
 	main._end_run(main.HEADER_CRASH, main.REASON_OBSTACLE)
-	check(main.last_earned == expect_coins and tsave.coins == expect_coins, "a run pays score x rate + coins per can (%d coins)" % main.last_earned)
-	check(main.last_was_best and tsave.high_score == 1000 and main.hud._over.text.contains("+%d coins" % expect_coins) and main.hud._over.text.contains("NEW BEST!"),
-			"game over shows +%d coins and NEW BEST!" % expect_coins)
-	check(main.hud._over_hangar.visible and main.screen == main.SCREEN_OVER, "game over has the Hangar button")
+	check(tsave.coins == 1234.0 and tsave.high_score == 1234.0 and main.last_was_best and main.hud._over.text.contains("+1.2K coins") and main.hud._over.text.contains("NEW BEST!"),
+			"a crash keeps every coin earned (+1.2K), shows NEW BEST!, and the score is the coins (no separate conversion)")
 	main.restart()
 	main.set_process(false)
-	main.score = 400.0
-	main.run_cans = 0
+	main.score = 300.0
 	main._end_run(main.HEADER_FUEL, main.REASON_FUEL)
-	check(not main.last_was_best and tsave.high_score == 1000 and main.hud._over.text.contains("Best: 1000") and not main.hud._over.text.contains("NEW BEST"),
-			"a lower score is not a new best (shows Best: 1000)")
-	check(tsave.coins == expect_coins + int(400.0 * tuning.coins_per_score), "coins add up across runs (%d)" % tsave.coins)
-	# the Hangar button on the game-over screen, and a tap on it doesn't restart
-	main._death_time -= 2.0
-	var hb: Button = main.hud._over_hangar
-	var hpos: Vector2 = hb.get_global_rect().get_center()
-	check(main.hud.over_hangar_hit(hpos), "the Hangar button's rectangle is known to Main")
-	var tev := InputEventScreenTouch.new()
-	tev.pressed = true
-	tev.position = hpos
-	main._input(tev)
-	check(main.screen == main.SCREEN_OVER and not main.alive, "tapping the Hangar button does not restart the run")
-	hb.pressed.emit()
-	check(main.screen == main.SCREEN_HANGAR and main.hud._hangar.visible and not main.hud._over_hangar.visible, "Hangar button opens the Hangar")
-	# (c) the Hangar lists five upgrades with level, effect and cost
-	check(main.hud._hangar_rows.size() == 5 and tuning.upgrades.size() == 5, "five upgrades in the Hangar")
-	var tank_row: Dictionary = main.hud._hangar_rows[0]
-	check((tank_row["effect"] as Label).text == "Tank 100 -> 115" and (tank_row["title"] as Label).text.contains("Lv 0/10") and (tank_row["buy"] as Button).text == "30 coins",
-			"Fuel Tank row says \"%s\", %s, %s" % [(tank_row["effect"] as Label).text, (tank_row["title"] as Label).text, (tank_row["buy"] as Button).text])
-	var costs_ok := true
-	for u in tuning.upgrades:
-		for l in int(u["max_level"]) - 1:
-			costs_ok = costs_ok and tuning.upgrade_cost(u["id"], l + 1) > tuning.upgrade_cost(u["id"], l)
-		costs_ok = costs_ok and tuning.upgrade_cost(u["id"], 0) <= 45
-	check(costs_ok, "costs rise every level and the first level of each costs <= 45 coins (about two typical runs of ~21 coins)")
-	# (d) purchases apply their effect
+	check(not main.last_was_best and tsave.coins == 1534.0 and main.hud._over.text.contains("Best: 1.2K") and not main.hud._over.text.contains("NEW BEST"), "a lower run is not a new best (shows Best: 1.2K); coins add up")
+	check(not tuning.get("coins_per_score") and not tuning.get("coins_per_can"), "the old coin conversion is gone")
+	# (d) the upgrade table: three tabs, costs, doubling, caps
+	check(tuning.upgrades_in_tab("earnings").size() == 4 and tuning.upgrades_in_tab("plane").size() == 3 and tuning.upgrades_in_tab("gear").size() == 6, "EARNINGS (4), PLANE (3) and GEAR (6) upgrades")
+	var cost_ok := true
+	for u in tuning.upgrades_in_tab("earnings"):
+		cost_ok = cost_ok and tuning.max_level(u["id"]) == -1 and absf(tuning.upgrade_cost(u["id"], 10) / tuning.upgrade_cost(u["id"], 9) - 1.12) < 0.01
+	for u in tuning.upgrades_in_tab("plane"):
+		cost_ok = cost_ok and tuning.max_level(u["id"]) >= 10 and tuning.max_level(u["id"]) <= 15 and absf(tuning.upgrade_cost(u["id"], 5) / tuning.upgrade_cost(u["id"], 4) - 1.5) < 0.01
+	for u in tuning.upgrades_in_tab("gear"):
+		var cs: Array = u["costs"]
+		cost_ok = cost_ok and cs.size() == tuning.max_level(u["id"]) and tuning.max_level(u["id"]) <= 3
+		for i in range(1, cs.size()):
+			cost_ok = cost_ok and cs[i] / cs[i - 1] >= 20.0 and cs[i] / cs[i - 1] <= 50.0
+	check(cost_ok, "EARNINGS endless at x1.12 per level; PLANE 10-15 levels at x1.5; GEAR 1-3 levels, each 20-50x the last")
+	check(is_equal_approx(tuning.upgrade_value("coin_value", 1), 1.1) and is_equal_approx(tuning.upgrade_value("coin_value", 24), 1.0 + 0.1 * 24)
+			and is_equal_approx(tuning.upgrade_value("coin_value", 25), 1.0 + 0.1 * 25 * 2.0) and is_equal_approx(tuning.upgrade_value("coin_value", 50), 1.0 + 0.1 * 50 * 4.0),
+			"Coin Value: +10%% per level; the effect doubles at level 25 and again at 50 (x%.1f at 24, x%.1f at 25)" % [tuning.upgrade_value("coin_value", 24), tuning.upgrade_value("coin_value", 25)])
+	check(is_equal_approx(tuning.upgrade_value("bonus_cap", 2), tuning.bonus_cap + 1.0) and is_equal_approx(tuning.upgrade_value("bonus_cap", 25), tuning.bonus_cap + 25.0), "Bonus Cap: +0.5 per level, endless, doubling too")
+	var dim_ok := true
+	for id in ["fuel_tank", "efficiency", "refill"]:
+		var g1: float = absf(tuning.upgrade_value(id, 2) - tuning.upgrade_value(id, 1))
+		var g9: float = absf(tuning.upgrade_value(id, 10) - tuning.upgrade_value(id, 9))
+		dim_ok = dim_ok and g9 < g1
+	check(dim_ok, "PLANE gains diminish with level")
+	check(tuning.upgrade_line("fuel_tank", 0) == "Hold 15 more fuel (100 -> 115)", "plain-language line: \"%s\"" % tuning.upgrade_line("fuel_tank", 0))
+	# (e) the Hangar: tabs, rows, buying
+	main.hud.hangar_pressed.emit()
+	check(main.screen == main.SCREEN_HANGAR and main.hud._hangar.visible, "the Hangar opens")
+	var tab_ok := true
+	for t in ["earnings", "plane", "gear"]:
+		main.hud._select_tab(t)
+		var vis := 0
+		for row in main.hud._upg_rows:
+			if (row["title"] as Label).visible:
+				vis += 1
+				tab_ok = tab_ok and row["tab"] == t and (row["line"] as Label).text.contains("->") or (row["line"] as Label).text.contains("MAX")
+		tab_ok = tab_ok and vis == tuning.upgrades_in_tab(t).size()
+	check(tab_ok, "three tabs, each showing only its own upgrades, each with a current -> next line")
 	tsave.reset_all()
-	check(not tsave.buy("fuel_tank") and tsave.level("fuel_tank") == 0, "can't buy without enough coins")
-	check((main.hud._hangar_rows[0]["buy"] as Button).disabled, "...and the button is greyed out")
-	tsave.add_coins(5000)
-	check(not (main.hud._hangar_rows[0]["buy"] as Button).disabled and main.hud._hangar_coins.text == "Coins: 5000", "buy buttons enable and the coin balance updates")
-	(main.hud._hangar_rows[0]["buy"] as Button).pressed.emit()
-	check(tsave.level("fuel_tank") == 1 and tsave.coins == 5000 - 30 and tuning.fuel_max() == 115.0 and (main.hud._hangar_rows[0]["effect"] as Label).text == "Tank 115 -> 130",
-			"Fuel Tank 1 costs 30 and raises max fuel 100 -> 115")
-	tsave.buy("efficiency")
-	check(is_equal_approx(tuning.drain_rate(), tuning.fuel_drain * 0.95), "Efficiency 1: fuel drain x0.95 (%.2f/s)" % tuning.drain_rate())
-	tsave.buy("refill")
-	check(is_equal_approx(tuning.refill_amount(), tuning.fuel_refill + 4.0), "Refill 1: +4 fuel per can (%.0f)" % tuning.refill_amount())
-	tsave.buy("bonus_cap")
-	check(is_equal_approx(tuning.bonus_cap_now(), tuning.bonus_cap + 0.5) and is_equal_approx(tuning.streak_bonus(1000), 3.5), "Bonus Cap 1: the cap rises 3.0 -> 3.5")
+	tsave.add_coins(50.0)
+	main.hud._select_tab("earnings")
+	var cv_row: Dictionary = main.hud._upg_rows[0]
+	check((cv_row["buy"] as Button).disabled and (cv_row["buy"] as Button).text == "400", "Coin Value costs 400 and is greyed out with 50 coins")
+	tsave.add_coins(1000000.0)
+	check(main.hud._hangar_coins.text == "Coins: 1M" and not (cv_row["buy"] as Button).disabled, "balance shows with suffixes (Coins: 1M)")
+	(cv_row["buy"] as Button).pressed.emit()
+	check(tsave.level("coin_value") == 1 and is_equal_approx(tuning.coin_value_mult(), 1.1) and tsave.coins == 1000050.0 - 400.0 and (cv_row["title"] as Label).text.contains("Lv 1"), "buying Coin Value: level 1, coins x1.1, cost deducted")
+	for id in ["can_bounty", "close_call_pay", "bonus_cap", "fuel_tank", "efficiency", "refill"]:
+		tsave.buy(id)
+	check(is_equal_approx(tuning.can_bounty_pay(), 8.0) and is_equal_approx(tuning.close_call_pay(), 4.0) and is_equal_approx(tuning.bonus_cap_now(), 3.5)
+			and is_equal_approx(tuning.fuel_max(), 115.0) and is_equal_approx(tuning.drain_rate(), 6.5 * 0.94) and is_equal_approx(tuning.refill_amount(), 24.0), "each upgrade applies its effect at level 1")
+	tsave.levels["fuel_tank"] = 11
+	tsave.add_coins(1e9)
+	check(tsave.buy("fuel_tank") and tsave.is_maxed("fuel_tank") and not tsave.buy("fuel_tank") and (main.hud._upg_rows[4]["buy"] as Button).text == "MAX", "a PLANE upgrade stops at its last level and shows MAX")
+	tsave.levels["coin_value"] = 300
+	check(not tsave.is_maxed("coin_value") and tsave.can_buy("coin_value") == (tsave.coins >= tsave.cost_of_next("coin_value")), "an EARNINGS upgrade never maxes out (level 300 is still buyable in principle)")
+	tsave.levels["coin_value"] = 1
+	# (f) gear: slots, loadout, effects
+	tsave.reset_all()
+	tsave.add_coins(1e9)
+	tsave.buy("nine_lives")
+	check(tsave.is_equipped("nine_lives") and tsave.loadout[0] == "nine_lives" and tsave.gear_level("nine_lives") == 1, "the first gear bought goes into the free slot")
+	tsave.buy("magnet")
+	check(not tsave.is_equipped("magnet") and tsave.gear_level("magnet") == 0 and tuning.pickup_reach() == 0.0, "with one slot a second piece of gear is owned but not equipped (no effect)")
+	main.hud._select_tab("gear")
+	main.hud._sel_slot = 0
+	tsave.equip("magnet", 0)
+	check(tsave.loadout[0] == "magnet" and tsave.gear_level("nine_lives") == 0 and tuning.pickup_reach() == 1.5, "owned gear swaps freely (Can Magnet level 1: 1.5 units)")
+	check(tsave.slots == 1 and not tsave.equip("nine_lives", 1), "slot 2 is locked at the start")
+	var slot_cost: float = tsave.next_slot_cost()
+	check(slot_cost == tuning.gear_slot_costs[1] and tsave.buy_slot() and tsave.slots == 2 and tsave.equip("nine_lives", 1) and tsave.loadout == ["magnet", "nine_lives", ""], "the 2nd slot is a purchase; then both are equipped")
+	tsave.equip("nine_lives", 0)
+	check(tsave.loadout == ["nine_lives", "magnet", ""], "equipping into an occupied slot swaps places")
+	main.hud.hide_menus()
+	# Nine Lives
 	main.restart()
 	main.set_process(false)
-	check(main.fuel == 115.0, "the next run starts with the bigger tank (%.0f)" % main.fuel)
-	# Can Magnet: a can ahead out of normal reach is collected once the magnet is upgraded
-	var mrow = main.spawner._rows_make_for_test(main.player.position.z - 2.6, [])
-	main.spawner._place_can_for_test(mrow, main.player.position.x)
-	var mcaps: PackedFloat32Array = main.player.hit_capsules()
-	var mp := Vector2(main.player.position.x, main.player.position.z)
-	var got_before: int = main.spawner.collect_cans(mp, mcaps).size()
-	tsave.buy("magnet")
-	tsave.buy("magnet")
-	tsave.buy("magnet")
-	var got_after: int = main.spawner.collect_cans(mp, mcaps).size()
-	check(got_before == 0 and got_after == 1 and is_equal_approx(tuning.pickup_reach(), 0.75), "Can Magnet widens the pickup radius (a can 2.6 ahead: before %d, after 3 levels %d)" % [got_before, got_after])
-	main.spawner._release_row(mrow)
-	# max level stops further buying
-	tsave.add_coins(10000000)
-	while tsave.buy("bonus_cap"):
-		pass
-	check(tsave.is_maxed("bonus_cap") and not tsave.buy("bonus_cap") and (main.hud._hangar_rows[4]["buy"] as Button).text == "MAX", "a maxed upgrade shows MAX and can't be bought")
-	# (e) it all persists
-	var lv_before: int = tsave.level("fuel_tank")
-	var coins_before: int = tsave.coins
-	tsave.coins = 0
-	tsave.levels = {}
-	tsave.load_game()
-	check(tsave.level("fuel_tank") == lv_before and tsave.coins == coins_before and tsave.is_maxed("bonus_cap"), "purchases and coins survive a reload")
-	# (f) start screen texts, BACK, PLAY from the Hangar
-	main.hud.back_pressed.emit()
-	check(main.screen == main.SCREEN_MENU and main.hud._menu.visible and main.hud._menu_best.text == "Best: %d" % tsave.high_score and main.hud._menu_coins.text == "Coins: %d" % tsave.coins,
-			"start screen shows the high score and the coin balance")
-	main.hud.hangar_pressed.emit()
-	check(main.screen == main.SCREEN_HANGAR, "HANGAR button on the start screen opens the Hangar")
+	check(main.lives == 1 and main.hud._lives_pips[0].visible and not main.hud._lives_pips[1].visible, "Nine Lives: the run starts with 1 life (shown as a pip)")
+	sp.reset(-500.0)
+	var lrow = sp._rows_make_for_test(main.player.position.z, [main.player.position.x])
+	main._process(0.02)
+	check(main.alive and main.lives == 0 and main._invuln > 0.0 and lrow.passed, "a hit with a life left: the plane sputters on (no crash), the obstacle gives no close-call credit")
+	main._process(0.02)
+	check(main.alive, "...and is invulnerable for a moment")
+	main._invuln = 0.0
+	main._process(0.02)
+	check(not main.alive, "the next hit with no life left crashes")
+	# Reserve Tank
+	tsave.levels["reserve_tank"] = 2
+	tsave.loadout = ["reserve_tank", "", ""]
+	main.restart()
+	main.set_process(false)
+	sp.reset(-500.0)
+	main.fuel = 0.01
+	main._process(0.05)
+	check(main.alive and main.reserve_left == 1 and main.fuel > tuning.fuel_max() * 0.5, "Reserve Tank: the empty tank refills itself (%.0f)" % main.fuel)
+	main.fuel = 0.01
+	main._process(0.05)
+	main.fuel = 0.01
+	main._process(0.05)
+	check(not main.alive and main.reserve_left == 0, "...twice at level 2, then the run ends on fuel")
+	# Can Magnet pulls a can the plane could not reach
+	tsave.levels["magnet"] = 3
+	tsave.loadout = ["magnet", "", ""]
+	main.restart()
+	main.set_process(false)
+	sp.reset(-500.0)
+	var mrow2 = sp._rows_make_for_test(main.player.position.z - 2.0, [])
+	sp._place_can_for_test(mrow2, main.player.position.x + 3.3)
+	for i in 14:
+		main._process(0.03)
+	check(main.run_cans == 1, "Can Magnet (3.5 units) pulled in a can 3.3 units to the side (cans %d)" % main.run_cans)
+	tsave.loadout = ["", "", ""]
+	main.restart()
+	main.set_process(false)
+	sp.reset(-500.0)
+	var mrow3 = sp._rows_make_for_test(main.player.position.z - 2.0, [])
+	sp._place_can_for_test(mrow3, main.player.position.x + 3.3)
+	for i in 14:
+		main._process(0.03)
+	check(main.run_cans == 0, "...but not without the gear equipped")
+	# Cloud Eye: a frame over an obstacle under a cloud
+	tsave.levels["cloud_eye"] = 1
+	tsave.loadout = ["cloud_eye", "", ""]
+	main.restart()
+	main.set_process(false)
+	sp.reset(-500.0)
+	var erow = sp._rows_make_for_test(-5.0, [0.0])
+	sp.run_time = 100.0
+	sp._spawn_cloud(-5.0)
+	var ecl = sp._clouds[-1]
+	ecl.position = Vector3(0.0, 0.0, -5.0)
+	ecl.ox[0] = 0.0
+	ecl.oz[0] = 0.0
+	ecl.rad[0] = 2.0
+	ecl.on[0] = true
+	sp._update_cloud_eye()
+	check(erow.obs_ghosts[0].visible, "Cloud Eye: an obstacle under a cloud gets a faint outline frame")
+	ecl.position.x = 9.0
+	sp._update_cloud_eye()
+	check(not erow.obs_ghosts[0].visible, "...and not once the cloud has moved off it")
+	ecl.position.x = 0.0
+	tsave.loadout = ["", "", ""]
+	sp._update_cloud_eye()
+	check(not erow.obs_ghosts[0].visible, "...nor when the gear is not equipped")
+	# Steady Nerves + Head Start
+	tsave.levels["steady_nerves"] = 1
+	tsave.levels["head_start"] = 2
+	tsave.slots = 3
+	tsave.loadout = ["steady_nerves", "head_start", ""]
+	main.restart()
+	main.set_process(false)
+	check(is_equal_approx(main.bonus, 2.0) and main.hud._bonus_label.text == "x2.0", "Head Start level 2: the run begins at x2.0")
+	main._reset_bonus()
+	for i in 4:
+		main._steps.append(0.2)
+	main._refresh_bonus()
+	main._absorb_hit(Vector2.ZERO, main.player.hit_capsules())
+	check(main.streak == 2, "Steady Nerves level 1: a hit keeps half of the close-call streak (4 -> %d)" % main.streak)
+	tsave.levels["steady_nerves"] = 2
+	main.lives = 2
+	main._absorb_hit(Vector2.ZERO, main.player.hit_capsules())
+	check(main.streak == 2, "...level 2 keeps all of it")
+	# Close Call Pay and Can Bounty pay coins (times the multiplier)
+	tsave.loadout = ["", "", ""]
+	tsave.levels["close_call_pay"] = 2
+	tsave.levels["can_bounty"] = 1
+	main.restart()
+	main.set_process(false)
+	main.coin_mult = 2.0
+	main.score = 0.0
+	var prow = sp._rows_make_for_test(-5.0, [1.0])
+	DebugFlags.parse([])
+	main._on_near_miss({"side": 1, "node": prow.obs[0], "outline": prow.outlines[0], "whisker": false})
+	check(is_equal_approx(main.score, 8.0 * 2.0), "Close Call Pay level 2 pays 8 coins x the multiplier (%.0f)" % main.score)
+	var coin_pop_text := ""
+	for cl_ in main.hud._coin_pops:
+		if cl_.visible:
+			coin_pop_text = cl_.text
+	check(coin_pop_text == "+16", "...with a coin pop (\"%s\")" % coin_pop_text)
+	main.score = 0.0
+	main._on_pickup(Vector3(0, 0.4, -3))
+	check(is_equal_approx(main.score, 8.0 * 2.0), "Can Bounty level 1 pays 8 coins x the multiplier per can")
+	sp._release_row(prow)
 	# (g) ?tune debug buttons
 	var add_btn: Button = null
 	var reset_btn: Button = null
-	for b in main.tune_panel.find_children("*", "Button", true, false):
-		if b.get_meta("debug", "") == "add_coins":
-			add_btn = b
-		elif b.get_meta("debug", "") == "reset_save":
-			reset_btn = b
-	check(add_btn != null and reset_btn != null, "?tune has \"Add 1000 coins\" and \"Reset save\" buttons")
-	var c0: int = tsave.coins
+	for bt in main.tune_panel.find_children("*", "Button", true, false):
+		if bt.get_meta("debug", "") == "add_coins":
+			add_btn = bt
+		elif bt.get_meta("debug", "") == "reset_save":
+			reset_btn = bt
+	check(add_btn != null and reset_btn != null, "?tune has \"Add 1M coins\" and \"Reset save\" buttons")
+	tsave.coins = 0.0
 	add_btn.pressed.emit()
-	check(tsave.coins == c0 + 1000, "Add 1000 coins adds 1000")
+	check(tsave.coins == 1000000.0, "Add 1M coins adds 1,000,000")
 	reset_btn.pressed.emit()
-	check(tsave.coins == 0 and tsave.high_score == 0 and tsave.level("fuel_tank") == 0 and tuning.fuel_max() == 100.0, "Reset save wipes coins, high score and upgrades")
+	check(tsave.coins == 0.0 and tsave.level("nine_lives") == 0 and tsave.slots == 1 and tuning.fuel_max() == 100.0, "Reset save wipes coins, levels and slots")
 	# (h) none of this created anything
 	main.hud.play_pressed.emit()
 	main.set_process(false)
+	main.fx.clear()
 	var snap_prog := snapshot(main)
-	check(same_world(base, snap_prog), "buying, saving and the menus created nothing new  [%s]" % describe(snap_prog))
+	check(same_world(base, snap_prog), "buying, saving, the Hangar and gear created nothing new  [%s]" % describe(snap_prog))
 
 	print("3. debug flags")
 	DebugFlags.parse(["nofx=sparks,bogus", "noprewarm", "perf", "v=abc1234"])

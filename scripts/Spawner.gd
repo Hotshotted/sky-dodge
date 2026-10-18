@@ -12,6 +12,7 @@ const POOL_ROWS := 12     # rows created once at startup and reused forever (abo
 ## Clouds: puffs lie in a thin slab ABOVE the obstacles and fuel cans (tops at 0.67 / 0.77) and BELOW
 ## the plane (its lowest point is 1.02), so plain depth testing hides what is under them and keeps
 ## the plane drawn on top and fully visible.
+const GHOST_Y := 1.012              # Cloud Eye frames sit just above the cloud slab (below the plane at 1.025)
 const CLOUD_Y := 0.78
 const CLOUD_HEIGHT := 0.2           # puff top = 0.98
 const CLOUD_POOL := 12              # cloud bundles created once at startup (about 6 are alive at a time)
@@ -29,9 +30,12 @@ class Row extends Node3D:
 	var can_outline: ShaderMaterial
 	var has_can := false
 	var can_x := 0.0
+	var can_dz := 0.0                     # how far the Can Magnet has pulled the can along z (relative to the row)
 	var open: Array[bool] = []            # per column: open (no cube); the fairness check reads this
 	var cloud_cov: Array[bool] = []       # per column: cloud will cover that column's centre line (for can placement)
 	var xs: Array[float] = []             # x of each blocked column this time round
+	var ghosts: Array[MeshInstance3D] = []        # one Cloud Eye outline frame per column (hidden unless needed)
+	var obs_ghosts: Array[MeshInstance3D] = []    # the frames of the cubes in use (same order as obs)
 	var obs: Array[MeshInstance3D] = []   # the cubes in use (same order as xs)
 	var outlines: Array[ShaderMaterial] = []  # their outline materials (same order)
 	var entered := false                  # plane has been near this row
@@ -44,8 +48,10 @@ class Row extends Node3D:
 		open.clear()
 		for i in cloud_cov.size():
 			cloud_cov[i] = false
+		can_dz = 0.0
 		xs.clear()
 		obs.clear()
+		obs_ghosts.clear()
 		outlines.clear()
 		entered = false
 		passed = false
@@ -77,6 +83,9 @@ var _picked: Array[Vector3] = []   # cans collected by the last collect_cans() c
 var plane_z := 0.0                 # set by Main each frame: where the plane is (clouds fade as they near it)
 var run_time := 0.0                # set by Main each frame: seconds into the run (clouds start late)
 var scroll_speed := 0.0            # set by Main each frame: world speed (cloud frequency grows with it)
+var _ghost_mesh := ArrayMesh.new()   # Cloud Eye: a flat frame the size of a cube
+var _ghost_mat := StandardMaterial3D.new()
+var _eye_shown := false            # Cloud Eye frames may be visible (so they get hidden again when it is unequipped)
 var _cloud_mesh := ArrayMesh.new() # the shared low-poly puff
 var _clouds: Array[Cloud] = []       # bundles in play
 var _all_clouds: Array[Cloud] = []   # every bundle ever created (the pool)
@@ -99,6 +108,12 @@ func _ready() -> void:
 	_can_mat.roughness = 1.0
 	_can_mat.metallic_specular = 0.0
 	_build_puff_mesh()
+	_build_ghost_mesh()
+	_ghost_mat.shading_mode = BaseMaterial3D.SHADING_MODE_UNSHADED
+	_ghost_mat.albedo_color = Color(0.05, 0.05, 0.12, 0.62)
+	_ghost_mat.transparency = BaseMaterial3D.TRANSPARENCY_ALPHA
+	_ghost_mat.cull_mode = BaseMaterial3D.CULL_DISABLED
+	_ghost_mat.render_priority = 2   # after the cloud puffs
 	_update_look()
 	# Ground far below the obstacles; the stripes on each row give a sense of scrolling speed.
 	var ground := MeshInstance3D.new()
@@ -223,6 +238,30 @@ func _process(_delta: float) -> void:
 			r.can.position.y = 0.25 + 0.12 * sin(t * 4.0 + r.can_x)
 	for c in _clouds:
 		_update_cloud_alpha(c)
+	_update_cloud_eye()
+
+## Cloud Eye gear: obstacles with cloud over them get a faint dark frame drawn above the cloud.
+func _update_cloud_eye() -> void:
+	var eye := Tuning.gear_value("cloud_eye") > 0.0
+	if not eye and not _eye_shown:
+		return
+	_eye_shown = eye
+	for r in _rows:
+		for k in r.obs.size():
+			r.obs_ghosts[k].visible = eye and _cloud_over(r.xs[k], r.position.z)
+
+## Is any visible puff right over the point (x, z) right now?
+func _cloud_over(x: float, z: float) -> bool:
+	for cl in _clouds:
+		for k in cl.puffs.size():
+			if not cl.on[k]:
+				continue
+			var dx: float = cl.position.x + cl.ox[k] - x
+			var dz: float = cl.position.z + cl.oz[k] - z
+			var r: float = cl.rad[k] * PUFF_EDGE + 0.3
+			if dx * dx + dz * dz < r * r:
+				return true
+	return false
 
 func _update_flashes() -> void:
 	var now := Time.get_ticks_msec()
@@ -252,6 +291,10 @@ func prewarm_show(with_flash: bool, with_clouds: bool = true) -> void:
 			mi.position = Vector3(Tuning.column_center(i), 0.0, 0.0)
 			mi.scale = Vector3.ONE
 			row.cube_outlines[i].set_shader_parameter("outline_color", Color.WHITE if (with_flash and idx % 2 == 1) else Color.BLACK)
+		for g in row.ghosts:   # ...and every Cloud Eye frame
+			g.visible = true
+			g.position = Vector3(Tuning.column_center(row.ghosts.find(g)), GHOST_Y, 0.0)
+			g.scale = Vector3(1.0, 1.0, 1.0)
 		row.can.visible = true   # every pooled fuel can is drawn too
 		row.can.position = Vector3(Tuning.column_center(idx % Tuning.column_count), 0.4, 0.5)
 		row.can.scale = Vector3.ONE * Tuning.fuel_can_size
@@ -281,6 +324,7 @@ func _rows_make_for_test(z: float, xs: Array) -> Row:
 	for k in xs.size():
 		row.xs.append(xs[k])
 		row.obs.append(row.cubes[k])
+		row.obs_ghosts.append(row.ghosts[k])
 		row.outlines.append(row.cube_outlines[k])
 	_rows.append(row)
 	return row
@@ -308,6 +352,14 @@ func _make_row() -> Row:
 		row.add_child(mi)
 		row.cubes.append(mi)
 		row.cube_outlines.append(outline)
+	for i in Tuning.column_count:
+		var g := MeshInstance3D.new()
+		g.mesh = _ghost_mesh
+		g.material_override = _ghost_mat
+		g.cast_shadow = GeometryInstance3D.SHADOW_CASTING_SETTING_OFF
+		g.visible = false
+		row.add_child(g)
+		row.ghosts.append(g)
 	row.can = MeshInstance3D.new()
 	row.can.mesh = _can_mesh
 	row.can.material_override = _can_mat
@@ -345,6 +397,8 @@ func _hide_row(row: Row) -> void:
 	row.visible = false
 	row.can.visible = false
 	row.has_can = false
+	for g in row.ghosts:
+		g.visible = false
 	for i in row.cubes.size():
 		row.cubes[i].visible = false
 		row.cube_outlines[i].set_shader_parameter("outline_color", Color.BLACK)
@@ -369,8 +423,12 @@ func _spawn_row(z: float) -> void:
 		mi.position = Vector3(x, 0, 0)
 		mi.scale = Vector3(width, width, Tuning.obstacle_depth)  # mesh is a unit cube
 		mi.visible = true
+		var g := row.ghosts[i]
+		g.position = Vector3(x, GHOST_Y, 0.0)
+		g.scale = Vector3(width + 0.3, 1.0, Tuning.obstacle_depth + 0.3)
 		row.xs.append(x)
 		row.obs.append(mi)
+		row.obs_ghosts.append(g)
 		row.outlines.append(row.cube_outlines[i])
 	row.stripe.scale = Vector3(Tuning.ortho_size * 2.0, 0.1, 0.4)
 	for c in open.size():
@@ -388,6 +446,7 @@ func _spawn_row(z: float) -> void:
 func _place_can(row: Row, x: float) -> void:
 	row.has_can = true
 	row.can_x = x
+	row.can_dz = 0.0
 	row.can.position = Vector3(x, 0.25, 0.0)
 	row.can.scale = Vector3.ONE * Tuning.fuel_can_size
 	row.can_outline.set_shader_parameter("outline_color", Color.BLACK)
@@ -458,20 +517,49 @@ func _choose_can_column(open: Array[bool], next_open: Array[bool], safe: int, co
 ## (the same array object every call: nothing is allocated).
 func collect_cans(p: Vector2, caps: PackedFloat32Array) -> Array[Vector3]:
 	_picked.clear()
-	var reach := Tuning.pickup_reach()   # the Can Magnet upgrade
 	for r in _rows:
-		if not r.has_can or absf(r.position.z - p.y) > NEAR_RANGE:
+		var cz := r.position.z + r.can_dz
+		if not r.has_can or absf(cz - p.y) > NEAR_RANGE:
 			continue
-		var centre := Vector2(r.can_x, r.position.z)
+		var centre := Vector2(r.can_x, cz)
 		for o in range(0, caps.size(), 5):
 			var a := Vector2(p.x + caps[o], p.y + caps[o + 1])
 			var b := Vector2(p.x + caps[o + 2], p.y + caps[o + 3])
-			if Collision.point_segment(centre, a, b) - caps[o + 4] < Tuning.fuel_pickup_radius + reach:
+			if Collision.point_segment(centre, a, b) - caps[o + 4] < Tuning.fuel_pickup_radius:
 				r.has_can = false
 				r.can.visible = false
-				_picked.append(Vector3(r.can_x, 0.4, r.position.z))
+				_picked.append(Vector3(r.can_x, 0.4, cz))
 				break
 	return _picked
+
+## Can Magnet: every can within `radius` of the plane at p (x, z) moves toward it by up to `move` units.
+func pull_cans(p: Vector2, radius: float, move: float) -> void:
+	for r in _rows:
+		if not r.has_can:
+			continue
+		var pos := Vector2(r.can_x, r.position.z + r.can_dz)
+		var d := pos.distance_to(p)
+		if d >= radius or d < 0.001:
+			continue
+		var np := pos.move_toward(p, move)
+		r.can_x = np.x
+		r.can_dz = np.y - r.position.z
+		r.can.position.x = np.x
+		r.can.position.z = r.can_dz
+
+## A hit the plane survived (Nine Lives): the rows whose obstacles it overlaps are done (no close-call credit).
+func mark_hit_rows(p: Vector2, caps: PackedFloat32Array) -> void:
+	var half := _obstacle_half()
+	for r in _rows:
+		if absf(r.position.z - p.y) > NEAR_RANGE:
+			continue
+		for ox in r.xs:
+			if absf(ox - p.x) > FAR_X:
+				continue
+			for o in range(0, caps.size(), 5):
+				if _gap(p, caps, o, ox, r.position.z, half) < 0.0:
+					r.passed = true
+					r.min_clear = INF
 
 ## Apply the current obstacle_scale / can size to rows already in play (used by the tuning panel,
 ## so a slider change shows up at once instead of only on newly spawned rows).
@@ -696,6 +784,23 @@ func _build_puff_mesh() -> void:
 			_puff_tri(st, ring_pts[r][i], ring_pts[r][j], ring_pts[r + 1][i], c)
 			_puff_tri(st, ring_pts[r][j], ring_pts[r + 1][j], ring_pts[r + 1][i], c)
 	st.commit(_cloud_mesh)
+
+## Cloud Eye frame: a flat square ring (outer 1.0 wide, inner 0.76), built once, scaled per obstacle.
+func _build_ghost_mesh() -> void:
+	var st := SurfaceTool.new()
+	st.begin(Mesh.PRIMITIVE_TRIANGLES)
+	var o := 0.5
+	var i := 0.38
+	var quads := [[-o, -o, o, -i], [-o, i, o, o], [-o, -i, -i, i], [i, -i, o, i]]   # x0, z0, x1, z1 of the four bars
+	for q in quads:
+		var a := Vector3(q[0], 0.0, q[1])
+		var b := Vector3(q[2], 0.0, q[1])
+		var c := Vector3(q[2], 0.0, q[3])
+		var d := Vector3(q[0], 0.0, q[3])
+		for v in [a, b, c, a, c, d]:
+			st.set_normal(Vector3.UP)
+			st.add_vertex(v)
+	st.commit(_ghost_mesh)
 
 ## One flat-shaded triangle (its own normal, one colour), wound so it faces up/out.
 func _puff_tri(st: SurfaceTool, a: Vector3, b: Vector3, c: Vector3, color: Color) -> void:

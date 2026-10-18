@@ -212,9 +212,14 @@ func reset() -> void:
 	_zone_set = false          # set_zone() will put the plane back at its start spot
 	position = Vector3(0.0, PLANE_Y, position.z)
 	_model.rotation = Vector3.ZERO
+	_model.visible = true
 
 func crash() -> void:
 	active = false
+
+## Nine Lives: the plane flickers while it is invulnerable.
+func set_flicker(off: bool) -> void:
+	_model.visible = not off
 
 func _nearest_column_x(x: float) -> float:
 	var i := roundi(x / Tuning.column_width() + (Tuning.column_count - 1) * 0.5)

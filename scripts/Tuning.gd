@@ -101,25 +101,63 @@ var cloud_max_drift := 0.12
 var fuel_can_under_cloud_chance := 0.45
 var cloud_color := Color(1.0, 1.0, 1.0)
 
-# ---------- Progression: coins and upgrades ----------
-## Coins earned at the end of a run: this many per point of score, plus a fixed amount per fuel can.
-## (A typical early run of ~15 s scores about 150-250 and picks up 1-3 cans: roughly 20-30 coins.)
-var coins_per_score := 0.1
-var coins_per_can := 3
-## The upgrade table: ONE place for every upgrade's values. Level L (0..max_level) gives
-## `per_level` * L on top of the matching base value (the tuning value of the same name); the next
-## level costs round(cost_base * cost_growth ^ L). The text shown is "<label> <now> -> <next>".
+# ---------- Economy: score is coins ----------
+## Coins per world unit flown, before the close-call bonus, the map multiplier and Coin Value. The run
+## total on screen IS the coins you earn (a crash keeps them all).
+var coins_per_unit := 1.0
+## Multiplier on everything earned, per map (Countryside, Coast, Mountains, Stormfront).
+var map_coin_mult: Array[float] = [1.0, 2.0, 4.0, 8.0]
+
+## Distance shown to the player in meters = world units x this (maps unlock at 3,000 m / 4,000 m / 5,000 m).
+var meters_per_unit := 5.0
+
+## EARNINGS upgrades have no cap and double their effect at every Nth level (25, 50, 75 ...).
+var double_every := 25
+## Costs: EARNINGS cost base * earn_cost_growth^level, PLANE upgrades base * plane_cost_growth^level.
+var earn_cost_growth := 1.12
+var plane_cost_growth := 1.5
+## Gear slots: the first is free; buying the others is a milestone. Cost of slot 2 and slot 3.
+var gear_slot_costs: Array[float] = [0.0, 40000.0, 2500000.0]
+## Reserve Tank refills the tank to this fraction of its size.
+var reserve_refill_fraction := 0.6
+## Nine Lives: after a survived hit the plane is invulnerable (sputtering) for this many seconds.
+var hit_invulnerable_time := 1.6
+## Magnet: cans inside the radius fly toward the plane at this speed (units/second).
+var magnet_pull_speed := 16.0
+
+## THE UPGRADE TABLE: one place for every upgrade. Fields:
+##   id, tab (earnings / plane / gear), name, glyph + color (the placeholder icon), line (the one-line
+##   description; {a} = now, {b} = next level, {d} = the difference), fmt (how numbers show),
+##   max (levels; -1 = endless), cost_base (earnings and plane), costs (gear: the price of each level),
+##   per / falloff (the effect per level; plane upgrades shrink by `falloff` each level),
+##   steps (gear: the value at level 0, 1, 2 ...).
 var upgrades: Array[Dictionary] = [
-	{"id": "fuel_tank", "name": "Fuel Tank", "label": "Tank", "prefix": "", "unit": "", "decimals": 0,
-			"max_level": 10, "per_level": 15.0, "cost_base": 30.0, "cost_growth": 1.5},      # +15 max fuel per level
-	{"id": "efficiency", "name": "Efficiency", "label": "Fuel use", "prefix": "", "unit": "/s", "decimals": 1,
-			"max_level": 10, "per_level": -0.05, "cost_base": 30.0, "cost_growth": 1.5},     # drain x(1 - 5% per level)
-	{"id": "refill", "name": "Refill", "label": "Per can", "prefix": "+", "unit": "", "decimals": 0,
-			"max_level": 10, "per_level": 4.0, "cost_base": 30.0, "cost_growth": 1.5},       # +4 fuel per can per level
-	{"id": "magnet", "name": "Can Magnet", "label": "Reach", "prefix": "+", "unit": "", "decimals": 2,
-			"max_level": 8, "per_level": 0.25, "cost_base": 35.0, "cost_growth": 1.55},      # +0.25 pickup radius per level
-	{"id": "bonus_cap", "name": "Bonus Cap", "label": "Cap", "prefix": "x", "unit": "", "decimals": 1,
-			"max_level": 8, "per_level": 0.5, "cost_base": 40.0, "cost_growth": 1.6},        # +0.5 bonus cap per level
+	{"id": "coin_value", "tab": "earnings", "name": "Coin Value", "glyph": "$", "color": Color(1.0, 0.8, 0.2),
+			"line": "Every coin worth more: {a} -> {b}", "fmt": "x", "max": -1, "cost_base": 400.0, "per": 0.10},
+	{"id": "can_bounty", "tab": "earnings", "name": "Can Bounty", "glyph": "C", "color": Color(0.35, 0.85, 0.45),
+			"line": "Each fuel can pays {a} -> {b} coins", "fmt": "big", "max": -1, "cost_base": 600.0, "per": 8.0},
+	{"id": "close_call_pay", "tab": "earnings", "name": "Close Call Pay", "glyph": "!", "color": Color(1.0, 0.55, 0.2),
+			"line": "Each close call pays {a} -> {b} coins", "fmt": "big", "max": -1, "cost_base": 800.0, "per": 4.0},
+	{"id": "bonus_cap", "tab": "earnings", "name": "Bonus Cap", "glyph": "^", "color": Color(1.0, 0.4, 0.6),
+			"line": "Close-call bonus can reach {a} -> {b}", "fmt": "x1", "max": -1, "cost_base": 1200.0, "per": 0.5},
+	{"id": "fuel_tank", "tab": "plane", "name": "Fuel Tank", "glyph": "F", "color": Color(0.3, 0.7, 1.0),
+			"line": "Hold {d} more fuel ({a} -> {b})", "fmt": "int", "max": 12, "cost_base": 80.0, "per": 15.0, "falloff": 0.92},
+	{"id": "efficiency", "tab": "plane", "name": "Efficiency", "glyph": "E", "color": Color(0.4, 0.9, 0.8),
+			"line": "Burn fuel slower: {a}/s -> {b}/s", "fmt": "dec1", "max": 10, "cost_base": 100.0, "per": 0.06, "falloff": 0.9},
+	{"id": "refill", "tab": "plane", "name": "Refill", "glyph": "R", "color": Color(0.6, 0.8, 0.3),
+			"line": "Each can gives {d} more fuel ({a} -> {b})", "fmt": "dec1", "max": 12, "cost_base": 120.0, "per": 4.0, "falloff": 0.92},
+	{"id": "nine_lives", "tab": "gear", "name": "Nine Lives", "glyph": "9", "color": Color(1.0, 0.35, 0.35),
+			"line": "Survive hits per run: {a} -> {b}", "fmt": "int", "max": 3, "costs": [2000.0, 60000.0, 2400000.0], "steps": [0, 1, 2, 3]},
+	{"id": "reserve_tank", "tab": "gear", "name": "Reserve Tank", "glyph": "T", "color": Color(0.5, 0.6, 1.0),
+			"line": "Refill the tank when empty: {a} -> {b} times", "fmt": "int", "max": 2, "costs": [3000.0, 120000.0], "steps": [0, 1, 2]},
+	{"id": "magnet", "name": "Can Magnet", "tab": "gear", "glyph": "M", "color": Color(0.8, 0.5, 1.0),
+			"line": "Pull cans from {a} -> {b} units away", "fmt": "dec1", "max": 3, "costs": [1500.0, 45000.0, 1800000.0], "steps": [0.0, 1.5, 2.5, 3.5]},
+	{"id": "cloud_eye", "tab": "gear", "name": "Cloud Eye", "glyph": "O", "color": Color(0.8, 0.9, 1.0),
+			"line": "Outlines show obstacles under clouds: {a} -> {b}", "fmt": "onoff", "max": 1, "costs": [5000.0], "steps": [0, 1]},
+	{"id": "steady_nerves", "tab": "gear", "name": "Steady Nerves", "glyph": "S", "color": Color(0.95, 0.75, 0.5),
+			"line": "A hit keeps {a} -> {b} of your close-call bonus", "fmt": "pct", "max": 2, "costs": [4000.0, 120000.0], "steps": [0.0, 0.5, 1.0]},
+	{"id": "head_start", "tab": "gear", "name": "Head Start", "glyph": "H", "color": Color(1.0, 0.9, 0.3),
+			"line": "Begin each run at bonus {a} -> {b}", "fmt": "x1", "max": 2, "costs": [2500.0, 75000.0], "steps": [1.0, 1.5, 2.0]},
 ]
 
 func upgrade_def(id: String) -> Dictionary:
@@ -128,37 +166,114 @@ func upgrade_def(id: String) -> Dictionary:
 			return u
 	return {}
 
-## The stat an upgrade controls, at the given level (what the game actually uses, and what the
-## Hangar shows: "Tank 100 -> 115").
+func upgrades_in_tab(tab: String) -> Array[Dictionary]:
+	var out: Array[Dictionary] = []
+	for u in upgrades:
+		if u["tab"] == tab:
+			out.append(u)
+	return out
+
+## Levels an upgrade has (-1 = no end).
+func max_level(id: String) -> int:
+	return int(upgrade_def(id)["max"])
+
+## EARNINGS effects double at every `double_every`th level: 2 ^ (level / 25).
+func doubling(level: int) -> float:
+	return pow(2.0, floor(float(level) / double_every))
+
+## Sum of per * falloff^i for i < level (each level of a PLANE upgrade gives a bit less).
+func _diminishing(per: float, falloff: float, level: int) -> float:
+	var total := 0.0
+	var step := per
+	for i in level:
+		total += step
+		step *= falloff
+	return total
+
+## The stat an upgrade controls at a level (what the game uses, and what the Hangar shows).
 func upgrade_value(id: String, level: int) -> float:
 	var u := upgrade_def(id)
-	var l := clampi(level, 0, int(u["max_level"]))
+	var m := int(u["max"])
+	var l := level if m < 0 else clampi(level, 0, m)
 	match id:
-		"fuel_tank":
-			return fuel_start + u["per_level"] * l
-		"efficiency":
-			return fuel_drain * (1.0 + u["per_level"] * l)
-		"refill":
-			return fuel_refill + u["per_level"] * l
-		"magnet":
-			return u["per_level"] * l
+		"coin_value":
+			return 1.0 + u["per"] * l * doubling(l)
+		"can_bounty", "close_call_pay":
+			return u["per"] * l * doubling(l)
 		"bonus_cap":
-			return bonus_cap + u["per_level"] * l
-	return 0.0
+			return bonus_cap + u["per"] * l * doubling(l)
+		"fuel_tank":
+			return fuel_start + _diminishing(u["per"], u["falloff"], l)
+		"efficiency":
+			return fuel_drain * (1.0 - _diminishing(u["per"], u["falloff"], l))
+		"refill":
+			return fuel_refill + _diminishing(u["per"], u["falloff"], l)
+	return float(u["steps"][l])   # gear
 
-func upgrade_cost(id: String, level: int) -> int:
+## The price of the next level (going from `level` to level + 1).
+func upgrade_cost(id: String, level: int) -> float:
 	var u := upgrade_def(id)
-	return int(round(float(u["cost_base"]) * pow(float(u["cost_growth"]), level)))
+	match u["tab"]:
+		"earnings":
+			return ceil(float(u["cost_base"]) * pow(earn_cost_growth, level))
+		"plane":
+			return ceil(float(u["cost_base"]) * pow(plane_cost_growth, level))
+	return float(u["costs"][mini(level, u["costs"].size() - 1)])
 
-func _fmt_stat(u: Dictionary, v: float) -> String:
-	return "%s%s%s" % [u["prefix"], String.num(v, int(u["decimals"])), u["unit"]]
+## Big numbers everywhere: 999, 1.2K, 45K, 3.1M, 2.4B, 1.1T ...
+func fmt(n: float) -> String:
+	const UNITS := ["", "K", "M", "B", "T", "Qa", "Qi", "Sx", "Sp", "Oc", "No", "Dc"]
+	var neg := n < 0.0
+	var v := floorf(absf(n) + 0.0000001)
+	var i := 0
+	while v >= 1000.0 and i < UNITS.size() - 1:
+		v /= 1000.0
+		i += 1
+	var out := ""
+	if i == 0:
+		out = "%d" % int(v)
+	else:
+		out = ("%.1f" % v) if v < 10.0 else ("%d" % int(round(v)))
+		if out == "1000" and i < UNITS.size() - 1:   # 999.96K rounds up to a whole next unit
+			out = "1"
+			i += 1
+		if out.ends_with(".0"):
+			out = out.substr(0, out.length() - 2)
+		out += UNITS[i]
+	return ("-" if neg else "") + out
 
-## "Tank 100 -> 115" for the next level, "Tank 250 (max)" when there is none.
-func upgrade_text(id: String, level: int) -> String:
+func _fmt_val(kind: String, v: float) -> String:
+	match kind:
+		"int":
+			return "%d" % int(round(v))
+		"dec1":
+			return "%.1f" % v
+		"big":
+			return fmt(v)
+		"x":
+			return "x%.2f" % v
+		"x1":
+			return "x%.1f" % v
+		"pct":
+			return "%d%%" % int(round(v * 100.0))
+		"onoff":
+			return "on" if v > 0.5 else "off"
+	return str(v)
+
+## The one plain-language line for an upgrade at `level`: current -> next ("Hold 15 more fuel (100 -> 115)").
+func upgrade_line(id: String, level: int) -> String:
 	var u := upgrade_def(id)
-	if level >= int(u["max_level"]):
-		return "%s %s (max)" % [u["label"], _fmt_stat(u, upgrade_value(id, level))]
-	return "%s %s -> %s" % [u["label"], _fmt_stat(u, upgrade_value(id, level)), _fmt_stat(u, upgrade_value(id, level + 1))]
+	var m := int(u["max"])
+	var maxed := m >= 0 and level >= m
+	var a := upgrade_value(id, level)
+	var b := a if maxed else upgrade_value(id, level + 1)
+	var out: String = u["line"]
+	out = out.replace("{a}", _fmt_val(u["fmt"], a)).replace("{b}", _fmt_val(u["fmt"], b)).replace("{d}", _fmt_val(u["fmt"], absf(b - a)))
+	if maxed:
+		out += "  (MAX)"
+	elif u["tab"] == "earnings" and (level + 1) % int(double_every) == 0:
+		out += "  Milestone: doubles!"
+	return out
 
 ## What the game uses, upgrades included (the plain tuning values are the level-0 numbers).
 func fuel_max() -> float:
@@ -170,11 +285,24 @@ func drain_rate() -> float:
 func refill_amount() -> float:
 	return upgrade_value("refill", Save.level("refill"))
 
-func pickup_reach() -> float:
-	return upgrade_value("magnet", Save.level("magnet"))
-
 func bonus_cap_now() -> float:
 	return upgrade_value("bonus_cap", Save.level("bonus_cap"))
+
+func coin_value_mult() -> float:
+	return upgrade_value("coin_value", Save.level("coin_value"))
+
+func can_bounty_pay() -> float:
+	return upgrade_value("can_bounty", Save.level("can_bounty"))
+
+func close_call_pay() -> float:
+	return upgrade_value("close_call_pay", Save.level("close_call_pay"))
+
+## Gear only counts while it is equipped in an unlocked slot.
+func gear_value(id: String) -> float:
+	return upgrade_value(id, Save.gear_level(id))
+
+func pickup_reach() -> float:
+	return gear_value("magnet")
 
 # ---------- Near miss & bonus ----------
 ## A row counts as a near miss if the plane passed it with less than this gap (units) between the

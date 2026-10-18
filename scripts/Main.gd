@@ -21,10 +21,14 @@ const REASON_FUEL := "The tank ran dry"
 ## Which screen is up. A run is only on while screen == SCREEN_PLAY and alive.
 enum { SCREEN_MENU, SCREEN_HANGAR, SCREEN_PLAY, SCREEN_OVER }
 var screen := SCREEN_MENU
-var run_cans := 0       # fuel cans collected this run (they pay coins at the end)
-var last_earned := 0    # coins the last run paid
+var run_cans := 0       # fuel cans collected this run
+var last_earned := 0.0  # coins the last run earned (its score)
+var coin_mult := 1.0    # everything earned this run is multiplied by this (map multiplier x Coin Value)
+var lives := 0          # hits the plane can still survive this run (Nine Lives)
+var reserve_left := 0   # Reserve Tank refills still available this run
+var _invuln := 0.0      # seconds of invulnerability left after a survived hit
 var last_was_best := false
-var score := 0.0        # accumulates distance flown x bonus
+var score := 0.0        # THE COINS EARNED this run: distance x close-call bonus x multipliers (+ can and close-call pay)
 var _steps := PackedFloat64Array()   # the bonus each close call of the streak earned (doubled for a Whisker close), oldest first
 var streak := 0     # close calls in the current streak (steps come off one at a time after the hold time)
 var bonus := 1.0    # points bonus from the streak, 1.0 = none
@@ -71,6 +75,8 @@ func _ready() -> void:
 	hud.hangar_pressed.connect(_open_hangar)
 	hud.back_pressed.connect(_show_menu)
 	hud.upgrade_pressed.connect(_buy)
+	hud.equip_pressed.connect(func(id: String, slot: int): Save.equip(id, slot))
+	hud.buy_slot_pressed.connect(func(): Save.buy_slot())
 	if not _warming:
 		_show_menu()
 	if not _warming and tune_panel:
@@ -109,6 +115,8 @@ func _prewarm() -> void:
 				fx.sparks(spot + Vector3(1.5, 0, 0), 1)
 				fx.whisker(spot + Vector3(-0.6, 0, 1.2))   # round-robin: warms both whisker bursts
 				fx.whisker(spot + Vector3(0.6, 0, 1.2))
+				fx.coins(spot + Vector3(-0.8, 0, 2.2))   # round-robin: warms both coin bursts
+				fx.coins(spot + Vector3(0.8, 0, 2.2))
 			if not DebugFlags.off("popup"):
 				hud.prewarm_popups()
 			if not DebugFlags.off("pickup"):
@@ -146,7 +154,17 @@ func restart() -> void:
 	screen = SCREEN_PLAY
 	run_cans = 0
 	score = 0.0
+	coin_mult = Tuning.map_coin_mult[0] * Tuning.coin_value_mult()
+	lives = int(Tuning.gear_value("nine_lives"))
+	reserve_left = int(Tuning.gear_value("reserve_tank"))
+	_invuln = 0.0
 	_reset_bonus()
+	var head := Tuning.gear_value("head_start")   # Head Start: begin at x1.5 / x2 (it fades like any bonus)
+	if head > 1.0:
+		_steps.append(head - 1.0)
+		_refresh_bonus()
+		_bonus_timer = Tuning.bonus_hold_time
+		_decay_acc = 1.0
 	elapsed = 0.0
 	alive = true
 	spawner.run_time = 0.0
@@ -154,6 +172,9 @@ func restart() -> void:
 	fx.clear()
 	trail.clear()
 	hud.reset_for_run()
+	hud.set_lives(lives)
+	if bonus > 1.0:
+		hud.set_bonus(bonus)
 	player.reset()
 	_update_plane_zone()
 	spawner.reset(_first_row_z(_half_height()))   # after the plane is back: the opening is timed to reach it
@@ -169,12 +190,12 @@ func _process(delta: float) -> void:
 	player.step(delta)   # 1:1 finger movement this frame (the path from prev_xz to here is swept below)
 	var speed := minf(Tuning.base_speed + Tuning.speed_ramp * elapsed, Tuning.max_speed)
 	var step := speed * delta
-	score += step * (bonus if Tuning.score_uses_bonus else 1)
+	score += step * Tuning.coins_per_unit * (bonus if Tuning.score_uses_bonus else 1.0) * coin_mult
 	spawner.plane_z = player.position.z   # clouds fade as they near the plane,
 	spawner.run_time = elapsed            # start late in the run,
 	spawner.scroll_speed = speed          # and come more often the faster it goes
 	spawner.advance(step)
-	hud.set_score(int(score), bonus)
+	hud.set_score(score, bonus)
 	var plane := Vector2(player.position.x, player.position.z)
 	trail.advance(step, Vector2(plane.x, plane.y + 0.9), 1 if DebugFlags.off("trail") else bonus, delta)
 	_decay_bonus(delta)
@@ -185,11 +206,20 @@ func _process(delta: float) -> void:
 	# near misses and fuel cans are all checked along the way, and a crash stops the plane where it
 	# first touched.
 	var caps: PackedFloat32Array = player.hit_capsules()
+	var reach := Tuning.pickup_reach()   # Can Magnet gear: cans inside the radius fly to the plane
+	if reach > 0.0:
+		spawner.pull_cans(plane, reach, Tuning.magnet_pull_speed * delta)
+	if _invuln > 0.0:
+		_invuln = maxf(_invuln - delta, 0.0)
+		player.set_flicker(_invuln > 0.0 and int(_invuln * 14.0) % 2 == 0)   # the plane sputters
 	var from: Vector2 = player.prev_xz
 	var steps := clampi(ceili(from.distance_to(plane) / SWEEP_STEP), 1, MAX_SWEEP_STEPS)
 	for i in range(1, steps + 1):
 		var p: Vector2 = from.lerp(plane, float(i) / steps)
-		if spawner.hits(p, caps):
+		if _invuln <= 0.0 and spawner.hits(p, caps):
+			if lives > 0:   # Nine Lives: the plane takes the hit and keeps flying
+				_absorb_hit(p, caps)
+				continue
 			# Found the step that hit: narrow it down to the exact first touch, so a fast flick
 			# stops AT the obstacle instead of up to a sweep step inside it.
 			var lo: Vector2 = from.lerp(plane, float(i - 1) / steps)
@@ -209,24 +239,57 @@ func _process(delta: float) -> void:
 			_on_pickup(pos)
 	hud.set_fuel(fuel / Tuning.fuel_max())
 	if fuel <= 0.0:
-		_end_run(HEADER_FUEL, REASON_FUEL)
+		if reserve_left > 0:   # Reserve Tank: the tank refills itself
+			reserve_left -= 1
+			fuel = Tuning.fuel_max() * Tuning.reserve_refill_fraction
+			hud.fuel_pulse()
+			hud.set_fuel(fuel / Tuning.fuel_max())
+			if not DebugFlags.off("sparks"):
+				fx.pickup(player.position)
+		else:
+			_end_run(HEADER_FUEL, REASON_FUEL)
+
+## A hit the plane survives: sputter (brief invulnerability), keep going, and the close-call streak
+## drops (Steady Nerves keeps half or all of it). The obstacle it hit gives no close-call credit.
+func _absorb_hit(p: Vector2, caps: PackedFloat32Array) -> void:
+	lives -= 1
+	_invuln = Tuning.hit_invulnerable_time
+	spawner.mark_hit_rows(p, caps)
+	var keep := Tuning.gear_value("steady_nerves")
+	_steps.resize(int(round(_steps.size() * keep)))
+	_refresh_bonus()
+	if keep < 1.0:
+		_bonus_timer = Tuning.bonus_hold_time
+		hud.set_bonus(bonus, hud.BONUS_SHRINK)
+	hud.set_lives(lives)
+	if not DebugFlags.off("sparks"):
+		fx.sparks(player.position + Vector3(-1.05, 0.0, 0.1), -1)
+		fx.sparks(player.position + Vector3(1.05, 0.0, 0.1), 1)
+	if not DebugFlags.off("haptic"):
+		Input.vibrate_handheld(Tuning.haptic_ms * 3)
 
 ## End the run: freeze the plane and show the game-over screen with what ended it.
 func _end_run(header: String, reason: String) -> void:
 	alive = false
 	_death_time = Time.get_ticks_msec() / 1000.0
 	player.crash()
+	player.set_flicker(false)
 	_reset_bonus()   # a crash / the end of the run ends the streak
 	hud.clear_bonus()
 	screen = SCREEN_OVER
-	last_earned = int(score * Tuning.coins_per_score) + run_cans * Tuning.coins_per_can
-	last_was_best = Save.record_run(int(score), last_earned)
-	hud.show_game_over(int(score), header, reason, last_earned, last_was_best, Save.high_score)
+	last_earned = floorf(score)   # the score IS the coins: a crash keeps every one of them
+	Save.add_stat("cans", run_cans)
+	last_was_best = Save.record_run(score)
+	hud.show_game_over(header, reason, last_earned, last_was_best, Save.high_score)
 
 ## A fuel can was collected at `pos`: refill (never past a full tank) and pop.
 func _on_pickup(pos: Vector3) -> void:
 	run_cans += 1
 	fuel = minf(fuel + Tuning.refill_amount(), Tuning.fuel_max())
+	var bounty := Tuning.can_bounty_pay() * coin_mult   # Can Bounty
+	if bounty > 0.0:
+		score += bounty
+		hud.coin_pop("+" + Tuning.fmt(bounty), camera.unproject_position(pos))
 	if not DebugFlags.off("pickup"):
 		fx.pickup(pos)
 		hud.fuel_pulse()
@@ -240,6 +303,15 @@ func _on_near_miss(ev: Dictionary) -> void:
 	var t0 := Time.get_ticks_usec()
 	var whisker: bool = ev.get("whisker", false)
 	_add_step(whisker)
+	Save.add_stat("close_calls")
+	if whisker:
+		Save.add_stat("whiskers")
+	var pay := Tuning.close_call_pay() * coin_mult   # Close Call Pay: a coin burst
+	if pay > 0.0:
+		score += pay
+		hud.coin_pop("+" + Tuning.fmt(pay), camera.unproject_position(player.position + Vector3(ev["side"] * 1.6, 0.0, 0.9)))
+		if not DebugFlags.off("sparks"):
+			fx.coins(player.position + Vector3(ev["side"] * 1.0, 0.0, 0.2))
 	_decay_acc = 1.0   # when the hold time ends the first step comes off at once
 	_bonus_timer = Tuning.bonus_hold_time
 	hud.set_bonus(bonus, hud.BONUS_NONE if DebugFlags.off("punch") else hud.BONUS_PUNCH)
