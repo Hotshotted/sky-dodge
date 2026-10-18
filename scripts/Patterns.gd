@@ -43,19 +43,51 @@ static func mirror_item(it: Dictionary) -> Dictionary:
 		m["gaps"] = g
 	return m
 
+## Everything a pattern needs that would otherwise be built (and thrown away) every time it is placed: its mirrored items
+## and hay slots, and its can slots per row (plain and mirrored). Built once for every pattern by warm() at start-up.
+static var _cache := {}
+static var _edges: Array[float] = []
+
+static func warm() -> void:
+	for pat in PatternData.LIST:
+		_entry(pat)
+
+static func _entry(pat: Dictionary) -> Dictionary:
+	var key: String = pat["name"]
+	if _cache.has(key):
+		return _cache[key]
+	var m_items: Array = []
+	for it in pat["items"]:
+		m_items.append(mirror_item(it))
+	var m_hay: Array = []
+	for h in pat.get("hay", []):
+		m_hay.append(mirror_item(h))
+	var cans := [[], []]   # [plain, mirrored], each: per row an Array[float] of x
+	for side in 2:
+		for r in int(pat["rows"]):
+			var xs: Array[float] = []
+			for c in pat.get("cans", []):
+				if int(c["r"]) == r:
+					xs.append(-float(c["x"]) if side == 1 else float(c["x"]))
+			cans[side].append(xs)
+	var e := {"items_m": m_items, "hay_m": m_hay, "cans": cans}
+	_cache[key] = e
+	return e
+
 ## Put the items of `pat` into the kit. carriers[r] is the row object (anything with a .position.z) that pattern row r
 ## hangs on. hay_fill: which hay slots are filled (empty = all of them). only_row >= 0: just that row's items (the game
 ## places a pattern one row at a time, as the rows come). Returns the number of things placed.
 static func realize(kit, pat: Dictionary, mirror: bool, carriers: Array, hay_fill: Array = [], only_row: int = -1) -> int:
 	var placed := 0
-	for src in pat["items"]:
-		if only_row >= 0 and int(src["r"]) != only_row:
+	var entry := _entry(pat)
+	var items: Array = entry["items_m"] if mirror else pat["items"]
+	for it in items:
+		if only_row >= 0 and int(it["r"]) != only_row:
 			continue
-		var it: Dictionary = mirror_item(src) if mirror else src
 		var row = carriers[int(it["r"])]
 		var dz: float = float(it.get("dz", 0.0))
 		var x: float = float(it.get("x", 0.0))
-		match String(it["t"]):
+		match it["t"]:
 			"barn":   # "wall": a fly-through barn (a doorway between two walls of this thickness); "hx": a closed one
 				if it.get("door", true):
 					kit.spawn(Kit.BARN, row, x, dz, float(it.get("wall", 1.0)), 1.0)
@@ -75,14 +107,15 @@ static func realize(kit, pat: Dictionary, mirror: bool, carriers: Array, hay_fil
 				kit.spawn(Kit.KITE, row, x, dz, 0.0, 0.0, float(it.get("amp", _tn().kite_amp)), float(it.get("rate", _tn().kite_rate)), float(it.get("phase", 0.0)))
 				placed += 1
 			"powerline":
-				var edges: Array[float] = [-WALL]
+				_edges.clear()
+				_edges.append(-WALL)
 				for gp in it["gaps"]:
-					edges.append(float(gp[0]))
-					edges.append(float(gp[1]))
-				edges.append(WALL)
-				for i in range(0, edges.size(), 2):
-					if edges[i + 1] - edges[i] > 0.4:
-						kit.spawn(Kit.POWERLINE, row, edges[i], dz, edges[i + 1])
+					_edges.append(float(gp[0]))
+					_edges.append(float(gp[1]))
+				_edges.append(WALL)
+				for i in range(0, _edges.size(), 2):
+					if _edges[i + 1] - _edges[i] > 0.4:
+						kit.spawn(Kit.POWERLINE, row, _edges[i], dz, _edges[i + 1])
 						placed += 1
 			"crow":
 				var n := int(it.get("n", 3))
@@ -98,23 +131,19 @@ static func realize(kit, pat: Dictionary, mirror: bool, carriers: Array, hay_fil
 			"duster":
 				kit.spawn(Kit.DUSTER, row, 0.0, dz, float(it.get("arrive", 0.7)), 0.0, 0.0, 0.0, 0.0, float(it.get("dir", 1.0)), float(it.get("delay", 0.0)))
 				placed += 1
-	var slots: Array = pat.get("hay", [])
+	var slots: Array = entry["hay_m"] if mirror else pat.get("hay", [])
 	for i in slots.size():
 		if only_row >= 0 and int(slots[i]["r"]) != only_row:
 			continue
 		if hay_fill.is_empty() or (i < hay_fill.size() and hay_fill[i]):
-			var h: Dictionary = mirror_item(slots[i]) if mirror else slots[i]
+			var h: Dictionary = slots[i]
 			kit.spawn(Kit.HAY, carriers[int(h["r"])], float(h["x"]), float(h.get("dz", 0.0)), 0.0, 0.0)
 			placed += 1
 	return placed
 
-## Where cans MAY be placed for pattern row r: [[x, ...]] slots of that row.
+## Where cans MAY be placed for pattern row r: the x of each slot (a cached array: nothing is built).
 static func can_slots(pat: Dictionary, row: int, mirror: bool) -> Array[float]:
-	var out: Array[float] = []
-	for c in pat.get("cans", []):
-		if int(c["r"]) == row:
-			out.append(-float(c["x"]) if mirror else float(c["x"]))
-	return out
+	return _entry(pat)["cans"][1 if mirror else 0][row]
 
 # ---------- the passability check ----------
 

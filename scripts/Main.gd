@@ -46,6 +46,7 @@ var _decay_acc := 0.0   # fractional steps accumulated towards the next one comi
 var _warming := false
 static var _haptic_warmed := false  # first-touch haptic warm-up done (once per app session)
 static var _warmed := false  # pre-warm only once per app session
+var prof := {}               # profiling (DebugFlags.profile only): part name -> [total us, worst us, calls] this frame run
 var last_cue := ""           # the latest speed cue shown on screen (the tests read it)
 var _seen_steps := 0       # Countryside speed steps already announced
 var _ramp_tier := 0        # other maps: speed tiers already announced
@@ -329,7 +330,20 @@ func _notification(what: int) -> void:
 func run_wall_time() -> float:
 	return maxf((Time.get_ticks_msec() - _run_start_ms - _paused_total_ms) / 1000.0, 0.0)
 
+## Profiling helper: add the time since t0 to the part `part`.
+func _pf(part: String, t0: int) -> void:
+	if not DebugFlags.profile:
+		return
+	var dt := Time.get_ticks_usec() - t0
+	if not prof.has(part):
+		prof[part] = [0, 0, 0]
+	var rec: Array = prof[part]
+	rec[0] += dt
+	rec[1] = maxi(rec[1], dt)
+	rec[2] += 1
+
 func _process(raw_delta: float) -> void:
+	hud.graph_push(raw_delta * 1000.0)
 	_update_camera()
 	_update_plane_zone()
 	if _warming or not alive:
@@ -356,9 +370,16 @@ func _process(raw_delta: float) -> void:
 	spawner.run_time = elapsed            # start late in the run,
 	spawner.scroll_speed = speed          # and come more often the faster it goes
 	spawner.plane_x = player.position.x
+	var t_pf := Time.get_ticks_usec()
 	_speed_cues(speed / tail, delta)
+	_pf("speed cues + wind", t_pf)
+	t_pf = Time.get_ticks_usec()
 	spawner.advance(step)
+	_pf("spawner.advance (rows, clouds)", t_pf)
+	t_pf = Time.get_ticks_usec()
 	spawner.update_hazards(delta)
+	_pf("spawner.update_hazards (kit motion, colliders)", t_pf)
+	t_pf = Time.get_ticks_usec()
 	run_distance += step
 	hud.set_distance(Tuning.meters(run_distance))
 	hud.set_score(score, bonus)
@@ -371,6 +392,7 @@ func _process(raw_delta: float) -> void:
 	hud.refresh_effects(picks.boosts, _glide_left)
 	if not picks.has_boost("fuel_freeze"):   # Fuel Freeze: nothing burns
 		fuel = maxf(fuel - Tuning.drain_rate() * (1.0 - picks.value("fuel_miser") * 0.01) * delta, 0.0)
+	_pf("hud, trail, fuel", t_pf)
 	var cd := picks.value("cloud_diver")      # Cloud Diver: fuel back while under a cloud
 	if cd > 0.0 and spawner._cloud_over(plane.x, plane.y):
 		_add_fuel(cd * delta)
@@ -403,9 +425,14 @@ func _process(raw_delta: float) -> void:
 	var steps := clampi(ceili(from.distance_to(plane) / SWEEP_STEP), 1, MAX_SWEEP_STEPS)
 	for i in range(1, steps + 1):
 		var p: Vector2 = from.lerp(plane, float(i) / steps)
+		t_pf = Time.get_ticks_usec()
 		for b in spawner.break_crates(p, caps, battering, ram_ok, from.y):   # a crate in the way breaks if it may
 			_on_crate_break(b["kind"], b["pos"])
-		if _invuln <= 0.0 and not DebugFlags.god and spawner.hits(p, caps):
+		_pf("collision: break_crates", t_pf)
+		t_pf = Time.get_ticks_usec()
+		var was_hit: bool = _invuln <= 0.0 and not DebugFlags.god and spawner.hits(p, caps)
+		_pf("collision: hits", t_pf)
+		if was_hit:
 			if _can_absorb():   # Nine Lives / Shield / Patch: the plane takes the hit and keeps flying
 				_absorb_hit(p, caps)
 				continue
@@ -422,11 +449,15 @@ func _process(raw_delta: float) -> void:
 			player.position = Vector3(hi.x, player.position.y, hi.y)
 			_end_run(HEADER_CRASH, REASON_CRATE if spawner.last_hit_crate else REASON_OBSTACLE)
 			return
+		t_pf = Time.get_ticks_usec()
 		for ev in spawner.update_near_misses(p, caps):
 			_on_near_miss(ev)
+		_pf("collision: near misses (+ effects)", t_pf)
+		t_pf = Time.get_ticks_usec()
 		var cans: Array[Vector3] = spawner.collect_cans(p, caps)   # a can grabbed in the last moment still saves you
 		for ci in cans.size():
 			_on_pickup(cans[ci], spawner.picked_golden[ci])
+		_pf("collision: cans", t_pf)
 	hud.set_fuel(fuel / Tuning.fuel_max())
 	_check_fuel(delta)
 	if not _picking:

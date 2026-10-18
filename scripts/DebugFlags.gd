@@ -22,6 +22,7 @@ static var perf := false
 static var tune := false
 static var start_map := -1
 static var god := false
+static var profile := false           # tests/profile_run.gd: Main times its own parts (see Main.prof)
 static var pattern := ""            # ?pattern=<name>: the Countryside repeats this one pattern
 
 ## True if the named near-miss effect has been switched off.

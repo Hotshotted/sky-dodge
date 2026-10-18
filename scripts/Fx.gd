@@ -294,7 +294,9 @@ func wind_update(delta: float, plane: Vector3, held: bool) -> void:
 	_whoosh_left = maxf(_whoosh_left - delta, 0.0)
 	var count := WIND_POOL if _whoosh_left > 0.0 else (mini(Tuning.wind_streaks, WIND_POOL) if held else 0)
 	var fast := 1.7 if _whoosh_left > 0.0 else 1.0
-	_wind_mat.albedo_color.a = 0.65 if _whoosh_left > 0.0 else 0.4
+	var wind_alpha := 0.65 if _whoosh_left > 0.0 else 0.4
+	if _wind_mat.albedo_color.a != wind_alpha:
+		_wind_mat.albedo_color.a = wind_alpha
 	for i in WIND_POOL:
 		var node := _wind_nodes[i]
 		if i >= count:

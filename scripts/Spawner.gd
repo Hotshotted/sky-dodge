@@ -8,6 +8,7 @@ extends Node3D
 const GROUND_Y := -2.0
 const NEAR_RANGE := 4.0   # only rows within this many units (z) of the plane are collision-checked
 const FAR_X := 3.2        # ...and only obstacles within this sideways distance (the wing reaches ~1.1 + a cube ~1)
+const MAX_ROWS_PER_FRAME := 1   # Countryside: at most this many rows are built in one frame
 const POOL_ROWS := 12     # rows created once at startup and reused forever (about 6 are alive at a time)
 ## Clouds: puffs lie in a thin slab ABOVE the obstacles and fuel cans (tops at 0.67 / 0.77) and BELOW
 ## the plane (its lowest point is 1.02), so plain depth testing hides what is under them and keeps
@@ -196,6 +197,7 @@ func _ready() -> void:
 	_gull_mat.metallic_specular = 0.0
 	hazards.spawner = self
 	add_child(hazards)
+	Patterns.warm()   # (every pattern's mirrored copy and can slots, built now)
 	kit.ghost_mesh = _ghost_mesh
 	kit.ghost_mat = _ghost_mat
 	add_child(kit)
@@ -235,6 +237,7 @@ func reset(first_row_z: float = -12.0) -> void:
 	hazards.reset()
 	kit.release_all()
 	_pat = {}
+	_pat_next = {}
 	_pat_row = 0
 	pattern_name = ""
 	wave_phase = 0
@@ -265,7 +268,7 @@ func advance(dist: float) -> void:
 			if r.step_mark and r.position.z >= plane_z - 8.0:
 				r.step_mark = false
 				speed_steps += 1
-	while _last_row_z > -Tuning.spawn_distance:
+	while _last_row_z > -Tuning.spawn_distance and (rows_spawned < MAX_ROWS_PER_FRAME or not kit_on):   # (after a slow frame the rest follow on the next ones)
 		_last_row_z -= Tuning.spawn_spacing
 		rows_spawned += 1
 		_spawn_row(_last_row_z)
@@ -346,9 +349,13 @@ func flash_obstacle(outline: ShaderMaterial) -> void:
 	outline.set_shader_parameter("thickness", Tuning.outline_thickness * 1.8)
 	_flashes.append({"mat": outline, "end": Time.get_ticks_msec() + int(Tuning.near_miss_flash_time * 1000.0)})
 
+var _bob := 0.0                    # visual clock for the bobbing cans (advances by the frame's delta, at most 0.05)
+var _glow_clock := 0.0
+
 func _process(_delta: float) -> void:
 	_update_flashes()  # runs even when the world isn't scrolling (e.g. on the crash screen)
-	var t := Time.get_ticks_msec() / 1000.0
+	_bob += minf(_delta, 0.05)
+	var t := _bob
 	for r in _rows:   # fuel cans bob gently so they read as pickups
 		if r.has_can:
 			r.can.position.y = 0.25 + 0.12 * sin(t * 4.0 + r.can_x)
@@ -605,15 +612,20 @@ func _spawn_row(z: float) -> void:
 ## The row only carries things (cans, clouds, its kit things) and says which columns are free.
 var _pat: Dictionary = {}
 var _pat_row := 0
+var _pat_next: Dictionary = {}      # the pattern after this one, chosen a frame early (the choice is its own bit of work)
+var _pool_buf: Array[Dictionary] = []   # scratch lists for _choose_pattern (reused: nothing is built per choice)
+var _w_buf: Array[float] = []
 var _pat_mirror := false
 var _pat_last := ""
+var _cycle_i := -1
 var pattern_name := ""              # the pattern being played (the ?tune panel shows it)
 var _carriers: Array = [null, null, null, null, null, null, null, null]   # the current pattern's rows (reused)
 var _hay_fill: Array[bool] = []
 
 func _spawn_kit_row(z: float) -> void:
 	if _pat.is_empty() or _pat_row >= int(_pat["rows"]):
-		_pat = _choose_pattern()
+		_pat = _pat_next if not _pat_next.is_empty() else _choose_pattern()
+		_pat_next = {}
 		_pat_row = 0
 		_pat_mirror = randf() < 0.5
 		_pat_last = _pat["name"]
@@ -712,6 +724,7 @@ func cycle_wave() -> void:
 	_wave_step()
 	_wave_start = run_time
 	_pat = {}
+	_pat_next = {}
 
 ## The pattern difficulty range of the current phase (rises with every finished cycle, except in the BREATHER).
 func wave_range() -> Vector2:
@@ -757,6 +770,9 @@ func _kit_open_flags(row: Row, open: Array[bool]) -> void:
 ## never the same one twice in a row. ?pattern=<name> repeats one pattern (the phases still run).
 func _choose_pattern() -> Dictionary:
 	_wave_update()
+	if DebugFlags.pattern == "cycle":   # ?pattern=cycle: every pattern in turn (for profiling)
+		_cycle_i += 1
+		return Patterns.all()[_cycle_i % Patterns.all().size()]
 	if DebugFlags.pattern != "":
 		var forced := Patterns.find(DebugFlags.pattern)
 		if not forced.is_empty():
@@ -765,8 +781,10 @@ func _choose_pattern() -> Dictionary:
 	var spd := maxf(scroll_speed, stepped_speed(speed_steps_planned)) if kit_on else scroll_speed
 	var slack := 0.5
 	while slack < 6.0:
-		var pool: Array[Dictionary] = []
-		var weights: Array[float] = []
+		var pool := _pool_buf
+		var weights := _w_buf
+		pool.clear()
+		weights.clear()
 		for p in Patterns.all():
 			if p["name"] == _pat_last or float(p["diff"]) < rng.x - slack or float(p["diff"]) > rng.y + slack:
 				continue
@@ -1102,7 +1120,8 @@ func drop_can_ahead(x: float, golden: bool = false) -> bool:
 
 ## Per-frame hazard update (Main calls it during a run): gulls drift and flap, gusts and lightning run.
 func update_hazards(delta: float) -> void:
-	var now := Time.get_ticks_msec() / 1000.0
+	_glow_clock += delta
+	var now := _glow_clock
 	var pulse := 0.92 + 0.08 * sin(now * 5.0)   # the crates glow breathes
 	for k in 3:
 		_crate_glow_mats[k].albedo_color = Tuning.crate_colors[k] * pulse
@@ -1132,6 +1151,9 @@ func update_hazards(delta: float) -> void:
 		kit.plane_z = plane_z
 		kit.scroll_speed = scroll_speed
 		kit.update(delta)
+		if _pat_next.is_empty() and not _pat.is_empty() and _pat_row >= int(_pat["rows"]) - 1:   # the last row of this pattern is out: choose the next one now
+			_pat_next = _choose_pattern()
+			_pat_last = _pat_next["name"]
 
 ## ---- Clouds: free-floating bundles --------------------------------------------------------------
 ## Bundles appear above the top of the screen at a random sideways position, in three size classes

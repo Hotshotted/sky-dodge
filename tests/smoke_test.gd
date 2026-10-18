@@ -2592,6 +2592,25 @@ func _initialize() -> void:
 			"perf readout logs handler time and the worst following frame (%s)" % str(main.hud._nm_log[-1] if main.hud._nm_log.size() > 0 else ""))
 	main.hud._perf_label.queue_free()
 	main.hud._perf_label = null
+	# the rolling frame-time graph
+	var fg := FrameGraph.new()
+	for i in 200:
+		fg.push(16.0)
+	fg.push(80.0)
+	fg.push(16.0)
+	check(fg.worst == 80.0 and fg._ms.size() == FrameGraph.N, "?perf graph: keeps the last %d frames and shows the worst (%.0f ms)" % [FrameGraph.N, fg.worst])
+	for i in FrameGraph.N:
+		fg.push(10.0)
+	check(fg.worst == 10.0, "...and the spike scrolls out of it")
+	fg.free()
+	DebugFlags.parse(["perf", "tune"])
+	var perf_hud: Node = load("res://scripts/Hud.gd").new()
+	root.add_child(perf_hud)
+	await process_frame
+	check(perf_hud._graph != null, "?perf builds the graph in the HUD")
+	perf_hud.graph_push(33.0)
+	perf_hud.queue_free()
+	DebugFlags.parse(["tune"])
 
 	print("4. rounded wings: visible model and collision stay in sync")
 	var k: float = tuning.plane_hit_scale
@@ -3189,6 +3208,109 @@ func _initialize() -> void:
 			sc_fx.whoosh()
 	sc_fx.stop_wind()
 	check(same_world(wind_sig, snapshot(sc_main)), "wind, whooshes and pulses created nothing new  [%s]" % describe(snapshot(sc_main)))
+
+	print("10. hitches: pre-warm covers every new thing, work is spread over frames, motion never catches up")
+	var hk = main.spawner.kit
+	main.spawner.kit_enabled = true
+	main.spawner.apply_map(0)
+	hk.prewarm_show()
+	var hk_total := 0
+	var hk_ok := true
+	var hk_kinds := {}
+	var hk_barns := {}
+	var hk_wm := {}
+	var hk_glow := {}
+	for h_e in hk._all:
+		hk_total += 1
+		hk_ok = hk_ok and h_e.in_use and h_e.visible and absf(h_e.position.x) <= 4.6 and h_e.position.z >= -7.5 and h_e.position.z <= 6.5
+		hk_kinds[h_e.kind] = true
+		if h_e.kind == 0:
+			hk_barns["open" if h_e.b > 0.5 else "closed"] = true
+			hk_barns[str(h_e.a)] = true
+		if h_e.kind == 2:
+			hk_wm[int(h_e.a)] = true
+		if h_e.kind == 8:
+			hk_glow[h_e.crate_kind] = true
+	check(hk_total == 75 and hk_ok, "pre-warm: all %d pooled kit things are in use, visible and inside the view" % hk_total)
+	check(hk_kinds.size() == 9 and hk_barns.has("open") and hk_barns.has("closed") and hk_barns.size() >= 7, "...every kind, closed and fly-through barns in every size (%d)" % hk_barns.size())
+	check(hk_wm.size() == 3 and hk_glow.size() == 3, "...all three windmills and every hay colour")
+	var hk_warn := false
+	var hk_plume := false
+	for h_e in hk._all:
+		hk_warn = hk_warn or (h_e.kind == 6 and h_e.arrow.visible and h_e.edge_node.visible and h_e.line_node.visible)
+		hk_plume = hk_plume or (h_e.kind == 1 and h_e.arrow.visible)
+	check(hk_warn and hk_plume, "...the duster's edge warning and the tractor's dust plume")
+	hk.release_all()
+	check(not hk._all.any(func(h_e): return h_e.in_use or h_e.visible) , "...and the pre-warm puts everything back")
+	# Patterns: mirrored copies and can slots are cached, not rebuilt for every row
+	var hp = load("res://scripts/Patterns.gd")
+	hp.warm()
+	check(hp._cache.size() >= hp.all().size(), "every pattern's mirrored copy and can slots are built at start-up (%d)" % hp._cache.size())
+	check(hp.can_slots(hp.all()[0], 0, true) == hp.can_slots(hp.all()[0], 0, true) and is_same(hp.can_slots(hp.all()[0], 0, false), hp.can_slots(hp.all()[0], 0, false)), "...can slots come out of the cache (the same array each time)")
+	# spreading: after a slow frame (a big advance) only MAX_ROWS_PER_FRAME rows are h_built, the rest on the following frames
+	var hs = main.spawner
+	hs.reset(-14.0)
+	hs.plane_z = 7.6
+	hs.advance(0.0)
+	var h_built: int = hs.rows_spawned
+	hs.advance(40.0)
+	check(hs.rows_spawned <= hs.MAX_ROWS_PER_FRAME, "a big step builds at most %d row(s) in one frame (%d)" % [hs.MAX_ROWS_PER_FRAME, hs.rows_spawned])
+	var h_catch_frames := 0
+	while hs.rows_spawned > 0 and h_catch_frames < 30:
+		hs.advance(0.01)
+		h_catch_frames += 1
+	check(h_catch_frames >= 2 and h_catch_frames < 30, "...the rows that were due follow on the next frames (%d more)" % h_catch_frames)
+	# the next pattern is chosen a frame before it is needed, not in the same frame as its first row
+	hs.reset(-14.0)
+	hs.run_time = 5.0
+	hs.scroll_speed = 8.0
+	var h_split_ok := false
+	for i in 40:
+		hs._spawn_row(-30.0)
+		hs._release_row(hs._rows[-1])
+		hs.kit.release_all()
+		if hs._pat_row >= int(hs._pat["rows"]):   # that was the last row of the pattern
+			var h_had_next: bool = not hs._pat_next.is_empty()
+			hs.update_hazards(0.016)
+			h_split_ok = not h_had_next and not hs._pat_next.is_empty()
+			break
+	check(h_split_ok, "the next pattern is chosen in the frame after a pattern's last row, not with the first row of the new one")
+	hs.reset()
+	# nothing is driven by the wall clock: motion advances by the frame's own delta, so a slow frame is never caught up
+	var clk0: float = hs.hazards._clock
+	hs.hazards.update(0.016)
+	hs.hazards.update(0.05)
+	check(absf(hs.hazards._clock - clk0 - 0.066) < 0.0001, "wind stripes run on the simulation clock (%.3f s for 0.066 s of frames)" % (hs.hazards._clock - clk0))
+	var hcar := Node3D.new()
+	main.add_child(hcar)
+	hk.scroll_speed = 8.0
+	hk.plane_z = 6.0
+	hcar.position.z = -2.0
+	var h_tr = hk.spawn(1, hcar, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 1.0)
+	h_tr.state = 2
+	h_tr.solid = true
+	hk.update(0.016)
+	var h_x0: float = h_tr.px
+	hk.update(0.05)
+	check(absf((h_tr.px - h_x0) - tuning.tractor_speed * 0.05) < 0.001, "a tractor moves by exactly speed x the frame's delta (%.3f)" % (h_tr.px - h_x0))
+	hk.release_all()
+	var h_wm = hk.spawn(2, hcar, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.4, 1.0)
+	hcar.position.z = 2.0
+	hk.update(0.016)
+	var h_a0: float = h_wm.ang
+	hcar.position.z += 8.0 * 0.05
+	hk.update(0.05)
+	check(absf((h_wm.ang - h_a0) - tuning.windmill_speed[0] * 0.05) < 0.002, "windmill blades turn windmill_speed x the frame's delta (%.4f rad)" % (h_wm.ang - h_a0))
+	hk.release_all()
+	hcar.queue_free()
+	# a slow frame is clamped or dropped and never made up afterwards
+	var raw_used: Array[float] = []
+	for h_raw in [0.016, 0.2, 0.016, 0.4, 0.016, 0.016, 0.016, 0.016]:
+		raw_used.append(main._frame_delta(h_raw))
+	check(raw_used[1] == tuning.max_frame_delta and raw_used[3] == 0.0 and raw_used[4] == 0.0 and raw_used[5] == 0.0 and raw_used[6] == 0.016,
+			"slow frames are clamped (%.2f) or dropped, then the frames after a stall are skipped, never made up %s" % [tuning.max_frame_delta, str(raw_used)])
+	main.spawner.kit_enabled = false
+	main.spawner.apply_map(0)
 
 	DirAccess.remove_absolute(ProjectSettings.globalize_path("user://smoke_test_save.json"))
 	print("")

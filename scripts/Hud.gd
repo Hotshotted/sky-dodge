@@ -30,6 +30,7 @@ var _distance_label: Label
 var _next_label: Label                    # "Next: 1.5K" (the score of the next pick)
 const PERK_ICONS := 12
 var _perk_ids: Array[String] = []           # the perk id shown in each icon slot (set_perks)
+var _perk_scale := PackedFloat32Array()
 var _perk_pulse_ms := PackedInt64Array()    # per slot: when its icon last pulsed
 var _perk_icons: Array[Dictionary] = []   # pooled small icons for the perks held this run: panel, glyph, level
 const EFFECT_LABELS := 6
@@ -83,6 +84,7 @@ const FUEL_BAR_TOP := 255.0
 const FUEL_PULSE_TIME := 0.35
 var _splash: Control
 var _perf_label: Label
+var _graph: FrameGraph        # ?perf: the rolling frame-time graph
 var _perf_worst := 0.0        # worst frame time (ms) in the current 3 s window
 var _perf_window_start := 0
 var _perf_shown := 0.0
@@ -147,6 +149,7 @@ func _ready() -> void:
 		_perk_icons.append({"panel": panel, "style": sb, "glyph": gl, "level": lv})
 		_perk_ids.append("")
 		_perk_pulse_ms.append(-100000)
+		_perk_scale.append(1.0)
 		panel.pivot_offset = Vector2(26.0, 26.0)
 	for i in EFFECT_LABELS:
 		var el := _make_label(34)
@@ -885,7 +888,9 @@ func _process(delta: float) -> void:
 	for pi in PERK_ICONS:   # a pulsing perk icon: grows and settles back
 		var pt := (pulse_now - _perk_pulse_ms[pi]) / 1000.0
 		var ps := 1.0 + 0.7 * sin(PI * pt / Tuning.perk_pulse_seconds) if pt < Tuning.perk_pulse_seconds else 1.0
-		(_perk_icons[pi]["panel"] as Panel).scale = Vector2(ps, ps)
+		if ps != _perk_scale[pi]:   # (only touch the panel when the pulse changes it)
+			_perk_scale[pi] = ps
+			(_perk_icons[pi]["panel"] as Panel).scale = Vector2(ps, ps)
 	_update_perf(delta)
 	var now := Time.get_ticks_msec()
 	_update_fuel_look(now)
@@ -977,6 +982,18 @@ func _build_stamp() -> void:
 		_perf_label.offset_top = 14
 		_perf_label.modulate = Color(0.6, 1, 0.6, 0.9)
 		_perf_label.add_theme_constant_override("outline_size", 6)
+		_graph = FrameGraph.new()
+		_graph.set_anchors_and_offsets_preset(Control.PRESET_BOTTOM_LEFT)
+		_graph.offset_left = 14
+		_graph.offset_top = -150
+		_graph.offset_right = 14 + 450
+		_graph.offset_bottom = -30
+		add_child(_graph)
+
+## ?perf: one real frame time (ms) into the rolling graph.
+func graph_push(ms: float) -> void:
+	if _graph != null:
+		_graph.push(ms)
 
 ## ?perf: called by Main right after a near miss's effects fired. Starts watching the next 4 frames
 ## so the readout can say whether a hitch is in the near-miss code itself (CPU) or in the frames
@@ -1035,6 +1052,18 @@ func begin_prewarm(with_popups: bool) -> void:
 			l.text = Tuning.popup_text(2.0 + t) + "\n0123456789.x" if t < Tuning.near_miss_sizes.size() else Tuning.whisker_text + "\n" + Tuning.popup_text(2.0 + t)   # (digits too: every bonus value shows up as popup text)
 			l.position = Vector2(20.0, 120.0 + 90.0 * t)
 			l.set_meta("prewarm", true)
+	if with_popups:
+		# The speed cues and the Barnstormer popup: every glyph at the size it is drawn, so the first one mid-run costs nothing.
+		var cues := [
+			[Tuning.speed_up_text + " FASTER MAP", 104], ["+0123456789% speed", 48],
+			[Tuning.barnstormer_text + "\n" + Tuning.popup_text(3.5) + " 0123456789.x", Tuning.whisker_size],
+			["Tailwind! +10% +20% +30% speed 0123456789", 64],
+		]
+		for ci in cues.size():
+			var cl := _make_label(cues[ci][1])
+			cl.text = cues[ci][0]
+			cl.position = Vector2(20.0, 560.0 + 80.0 * ci)
+			cl.set_meta("prewarm", true)
 	# The pick HUD: "Next:", every perk icon, every boost line.
 	set_next(2400000.0)
 	var all_perks := {}

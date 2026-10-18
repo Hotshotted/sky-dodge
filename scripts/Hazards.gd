@@ -170,9 +170,12 @@ func gusts_in_play() -> Array[Gust]:
 
 # ---------- lightning ----------
 
+var _clock := 0.0
+
 ## Per-frame update, driven by Main during a run (delta in seconds).
 func update(delta: float) -> void:
-	var now := Time.get_ticks_msec() / 1000.0
+	_clock += delta   # (advances by the frame's own delta, like everything else: a slow frame is never caught up)
+	var now := _clock
 	for g in _gusts:   # faint while far, lit when close; the stripes slide the way the wind blows
 		g.mat.albedo_color.a = 0.4 if is_lit(g) else 0.12
 		var w := g.x1 - g.x0

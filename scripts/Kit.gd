@@ -18,7 +18,7 @@ extends Node3D
 enum { BARN, TRACTOR, WINDMILL, CROW, BALLOON, POWERLINE, DUSTER, KITE, HAY }
 const NAMES := ["barn", "tractor", "windmill", "crow", "balloon", "powerline", "duster", "kite", "hay"]
 const POOL := [10, 4, 6, 14, 6, 10, 3, 6, 16]
-const STRIDE := 9            # collider floats: type, cx, cz, hx (radius for circles), hz, cos, sin, owner, flags
+const STRIDE := 10           # collider floats: type, cx, cz, hx (radius for circles), hz, cos, sin, owner, flags, bounding radius
 const MAX_COLLIDERS := 96
 const T_RECT := 0.0
 const T_CIRCLE := 1.0
@@ -77,6 +77,10 @@ class Ent extends Node3D:
 	var arrow: Node3D                  # duster / tractor: the telegraph (world coordinates)
 	var rig: Node3D                    # duster / tractor: the model, turned the way it goes
 	var thru := 0                      # barn: frames the plane was inside the doorway
+	var arrow_mesh: Node3D             # duster: the arrow, the glowing edge and the row line (kept so nothing is looked up per frame)
+	var edge_node: Node3D
+	var line_node: Node3D
+	var puffs: Array[Node3D] = []      # tractor: the dust plume's puffs
 	var drops := 0                     # tractor: bales dropped so far
 	var drop_t := 0.0
 	var tail: Node3D
@@ -336,6 +340,7 @@ func _build(kind: int) -> Ent:
 				puff.cast_shadow = GeometryInstance3D.SHADOW_CASTING_SETTING_OFF
 				puff.position = Vector3(0.0, 0.4, 0.0)
 				e.arrow.add_child(puff)
+				e.puffs.append(puff)
 			add_child(e.arrow)
 			e.arrow.visible = false
 		WINDMILL:   # tower and hub; the blades (up to 4) turn on the pivot and are sized when it is spawned
@@ -382,18 +387,21 @@ func _build(kind: int) -> Ent:
 			ar.material_override = arrow_mat
 			ar.cast_shadow = GeometryInstance3D.SHADOW_CASTING_SETTING_OFF
 			e.arrow.add_child(ar)
+			e.arrow_mesh = ar
 			var edge_glow := MeshInstance3D.new()
 			edge_glow.mesh = _box(0.9, 0.02, 34.0)
 			edge_glow.material_override = warn_mat
 			edge_glow.cast_shadow = GeometryInstance3D.SHADOW_CASTING_SETTING_OFF
 			edge_glow.name = "edge"
 			e.arrow.add_child(edge_glow)
+			e.edge_node = edge_glow
 			var row_line := MeshInstance3D.new()
 			row_line.mesh = _box(Tuning.ortho_size, 0.02, 0.2)
 			row_line.material_override = warn_line_mat
 			row_line.cast_shadow = GeometryInstance3D.SHADOW_CASTING_SETTING_OFF
 			row_line.name = "line"
 			e.arrow.add_child(row_line)
+			e.line_node = row_line
 			add_child(e.arrow)
 			e.arrow.visible = false
 		KITE:
@@ -690,12 +698,11 @@ func _pose_tractor(e: Ent, delta: float) -> void:
 			e.px = -e.dir * edge
 			e.arrow.visible = true
 			e.arrow.position = Vector3(-e.dir * (Tuning.ortho_size * 0.5 - 0.7), 0.0, e.pz)
-			var k := 0
-			for puff in e.arrow.get_children():
+			for k in e.puffs.size():
+				var puff := e.puffs[k]
 				var t := fposmod(e.state_age * 1.6 + k * 0.33, 1.0)
 				puff.position = Vector3(e.dir * t * 0.9, 0.3 + t * 0.7, (k - 1) * 0.45)
 				puff.scale = Vector3.ONE * (0.6 + t * 1.1) * (1.0 - t * 0.5)
-				k += 1
 			if e.state_age >= Tuning.tractor_telegraph:
 				e.state = 2
 				e.state_age = 0.0
@@ -743,10 +750,10 @@ func _pose_duster(e: Ent, delta: float) -> void:
 		warn_line_mat.albedo_color = Color(1.0, 0.1, 0.05, 0.2)
 		arrow_mat.albedo_color = Color(1.0, 0.35, 0.1) * (0.6 + 0.4 * pulse)
 		e.arrow.position = Vector3.ZERO
-		(e.arrow.get_child(0) as Node3D).position = Vector3(-e.dir * (half - 1.3), 0.5, screen_top_z + 1.6)
-		(e.arrow.get_child(0) as Node3D).rotation.y = 0.0 if e.dir > 0.0 else PI
-		(e.arrow.get_node("edge") as Node3D).position = Vector3(-e.dir * (half - 0.45), 1.45, plane_z - 9.0)
-		(e.arrow.get_node("line") as Node3D).position = Vector3(0.0, 0.3, e.pz)
+		e.arrow_mesh.position = Vector3(-e.dir * (half - 1.3), 0.5, screen_top_z + 1.6)
+		e.arrow_mesh.rotation.y = 0.0 if e.dir > 0.0 else PI
+		e.edge_node.position = Vector3(-e.dir * (half - 0.45), 1.45, plane_z - 9.0)
+		e.line_node.position = Vector3(0.0, 0.3, e.pz)
 
 ## Advance everything (called each frame by the Spawner after the rows have moved).
 func update(delta: float) -> void:
@@ -779,6 +786,7 @@ func _add(owner_i: int, type: float, cx: float, cz: float, hx: float, hz: float,
 	col[o + 6] = sin(ang)
 	col[o + 7] = owner_i
 	col[o + 8] = flags
+	col[o + 9] = hx if type == T_CIRCLE else sqrt(hx * hx + hz * hz)   # (a circle that holds the whole shape: the quick test)
 	col_count += 1
 
 func _fill_colliders() -> void:
@@ -843,11 +851,24 @@ func gap(p: Vector2, caps: PackedFloat32Array, o: int, ci: int) -> float:
 	var lb := Vector2(db.x * c + db.y * s, -db.x * s + db.y * c)
 	return Collision.segment_rect(la, lb, Vector2(col[q + 3] + rim, col[q + 4] + rim)) - caps[o + 4]
 
+## The radius of a circle around the plane's origin that holds all its shapes.
+func plane_radius(caps: PackedFloat32Array) -> float:
+	var r := 0.0
+	for o in range(0, caps.size(), 5):
+		r = maxf(r, maxf(Vector2(caps[o], caps[o + 1]).length(), Vector2(caps[o + 2], caps[o + 3]).length()) + caps[o + 4])
+	return r
+
 ## Is any collider overlapping the plane shapes right now? (sets last_hit_hay if it was a hay bale)
 func hits(p: Vector2, caps: PackedFloat32Array) -> bool:
+	var pr := plane_radius(caps) + Tuning.outline_thickness
 	for ci in col_count:
 		var q := ci * STRIDE
 		if absf(col[q + 2] - p.y) > NEAR_RANGE + 2.0 or absf(col[q + 1] - p.x) > 7.0:
+			continue
+		var dx := col[q + 1] - p.x
+		var dz := col[q + 2] - p.y
+		var reach := pr + col[q + 9]
+		if dx * dx + dz * dz > reach * reach:   # the circles around the plane and this shape do not even touch
 			continue
 		for o in range(0, caps.size(), 5):
 			if gap(p, caps, o, ci) < 0.0:
@@ -855,9 +876,18 @@ func hits(p: Vector2, caps: PackedFloat32Array) -> bool:
 				return true
 	return false
 
-func min_gap_of(e: Ent, p: Vector2, caps: PackedFloat32Array) -> float:
+## The smallest gap between the plane and a thing's shapes. Shapes farther than `margin` beyond the quick circles
+## (the plane's radius `pr` and the shape's) are skipped: their exact gap would be bigger than `margin` anyway.
+func min_gap_of(e: Ent, p: Vector2, caps: PackedFloat32Array, pr: float = INF, margin: float = 0.0) -> float:
 	var best := INF
 	for ci in range(e.col_first, e.col_first + e.col_n):
+		if pr < INF:
+			var q := ci * STRIDE
+			var dx := col[q + 1] - p.x
+			var dz := col[q + 2] - p.y
+			var reach := pr + col[q + 9] + margin
+			if dx * dx + dz * dz > reach * reach:
+				continue
 		for o in range(0, caps.size(), 5):
 			best = minf(best, gap(p, caps, o, ci))
 	return best
@@ -865,6 +895,7 @@ func min_gap_of(e: Ent, p: Vector2, caps: PackedFloat32Array) -> float:
 ## Close calls: track each thing's closest approach while it is near the plane; once it has gone by (or flown off),
 ## report it if it came closer than `limit` without touching. Events carry what Main needs.
 func update_near_misses(p: Vector2, caps: PackedFloat32Array, limit: float, behind: float, out: Array[Dictionary], whisker: float) -> void:
+	var pr := plane_radius(caps) + Tuning.outline_thickness
 	for e in active:
 		if e.passed or not e.solid:
 			if not e.passed and e.state == 0:
@@ -875,7 +906,7 @@ func update_near_misses(p: Vector2, caps: PackedFloat32Array, limit: float, behi
 			e.thru += 1
 		if near:
 			e.entered = true
-			var g := min_gap_of(e, p, caps)
+			var g := min_gap_of(e, p, caps, pr, limit + 0.3)
 			if g < e.min_clear:
 				e.min_clear = g
 				e.min_side = 1 if e.px > p.x else -1
@@ -923,36 +954,68 @@ func break_hay(p: Vector2, caps: PackedFloat32Array, battering: bool, speed_ok: 
 ## A survived hit: the things the plane overlaps are done (no close-call credit for them).
 func mark_hit(p: Vector2, caps: PackedFloat32Array) -> void:
 	for e in active:
-		if e.solid and not e.passed and min_gap_of(e, p, caps) < 0.0:
+		if e.solid and not e.passed and min_gap_of(e, p, caps, plane_radius(caps) + Tuning.outline_thickness, 0.1) < 0.0:
 			e.passed = true
 
 # ---------- pre-warm ----------
 
-## Show one of everything (and every pooled hay bale and glow colour) in view, to warm the materials and meshes.
+## Pre-warm: show EVERY pooled thing on screen (variants too: closed and fly-through barns of every size, all three
+## windmills, hay of every colour, the crow, the duster with its warning, the tractor with its dust), stacked on a grid
+## inside the view, so every mesh, material and outline is drawn before real play. Nothing is allocated for this: the
+## things come from their pools like in a run, and prewarm_hide() puts them back.
 func prewarm_show() -> void:
 	release_all()
-	var n := 0
+	var slot := 0
 	for k in KINDS_COUNT():
-		var lst: Array = _free[k]
-		var take := mini(lst.size(), 3)
-		for i in take:
+		var count := (_free[k] as Array).size()
+		for i in count:
 			var fake_row := _FakeRow.new()
-			fake_row.position.z = -2.0 - 2.2 * n
-			var e := spawn(k, fake_row, -3.5 + 1.8 * i, 0.0, 0.9 if k == BARN else 2.0, 0.0, 0.0, 1.0, 0.0, 1.0)
-			if e != null:
-				e.state = 2 if (k == CROW or k == DUSTER or k == TRACTOR) else e.state
-				e.solid = true
-				e.visible = true
-				if k == DUSTER or k == TRACTOR:
-					e.arrow.visible = true
-					e.arrow.position = Vector3(1.5, 0.0, 2.0)
-					if k == DUSTER:
-						(e.arrow.get_child(0) as Node3D).position = Vector3(0.0, 0.5, 0.0)
-						(e.arrow.get_node("edge") as Node3D).position = Vector3(4.5, 1.45, 0.0)
-						(e.arrow.get_node("line") as Node3D).position = Vector3(0.0, 0.3, 0.0)
-				_pose(e, 0.0)
-				e.position = Vector3(-3.5 + 1.8 * i, 0.0, -2.0 - 2.2 * (n % 8))
-		n += 1
+			fake_row.position.z = 0.0
+			var a := 0.0
+			var b := 0.0
+			match k:
+				BARN:   # sizes 0..4 closed (hx 0.8 .. 2.4), then fly-through with the three wall thicknesses
+					if i % 2 == 0:
+						a = 0.8 + 0.4 * ((i / 2) % 5)
+					else:
+						a = WALLS[(i / 2) % WALLS.size()]
+						b = 1.0
+				WINDMILL:
+					a = float(i % 3)
+				POWERLINE:
+					a = -4.0 + 0.7 * i
+				HAY:
+					b = float(1 + i % 3)   # every glow colour
+			var x := -3.6 + 1.8 * (slot % 5)
+			var z := -6.0 + 2.1 * ((slot / 5) % 6)
+			var e := spawn(k, fake_row, x, 0.0, a, b, 0.5, 1.0, float(i), 1.0 if i % 2 == 0 else -1.0)
+			slot += 1
+			if e == null:
+				continue
+			if k == CROW or k == DUSTER or k == TRACTOR:
+				e.state = 2
+			e.solid = true
+			e.visible = true
+			_pose(e, 0.0)
+			e.position = Vector3(x, 0.0, z)
+			e.px = x
+			e.pz = z
+			if e.ghost != null:
+				e.ghost.position = Vector3(x, 1.012, z)
+			if k == DUSTER:   # the warning: arrow, glowing edge and row line, in view
+				e.arrow.visible = true
+				e.arrow.position = Vector3.ZERO
+				e.arrow_mesh.position = Vector3(-2.0 + 2.0 * i, 0.5, -5.0)
+				e.edge_node.position = Vector3(4.2, 1.45, 0.0)
+				e.line_node.position = Vector3(0.0, 0.3, z)
+				warn_mat.albedo_color.a = 0.4
+				warn_line_mat.albedo_color.a = 0.3
+			if k == TRACTOR:   # the dust plume
+				e.arrow.visible = true
+				e.arrow.position = Vector3(x + 1.2, 0.0, z)
+				for pf in e.puffs:
+					pf.position = Vector3(0.0, 0.5, 0.0)
+					pf.scale = Vector3.ONE
 	_fill_colliders()
 
 class _FakeRow extends RefCounted:
