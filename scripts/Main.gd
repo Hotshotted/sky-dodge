@@ -65,6 +65,7 @@ var _extra_picks := 0                 # purple crates broken: instant extra pick
 var _pick_is_extra := false               # crates broken this run (Cat's Cradle counts them)
 
 func _ready() -> void:
+	Engine.max_physics_steps_per_frame = 1   # no physics here: make sure a stall can never trigger catch-up steps
 	fuel = Tuning.fuel_max()
 	add_child(fx)
 	add_child(trail)
@@ -183,6 +184,11 @@ func _prewarm() -> void:
 ## material and UI node stays alive (and warm) across runs; only the game state is reset.
 func restart() -> void:
 	screen = SCREEN_PLAY
+	sim_time = 0.0
+	_run_start_ms = Time.get_ticks_msec()
+	_paused_total_ms = 0
+	_skip_frames = 0
+	_note_event("run started")
 	map = DebugFlags.start_map if DebugFlags.start_map >= 0 else Save.selected_map
 	spawner.apply_map(map)
 	_apply_palette()
@@ -231,20 +237,98 @@ func restart() -> void:
 	_update_plane_zone()
 	spawner.reset(_first_row_z(_half_height()))   # after the plane is back: the opening is timed to reach it
 
-func _process(delta: float) -> void:
-	delta = minf(delta, 0.05)
+## ---- Frame time: the simulation can never run ahead of the clock ----------------------------------------
+## However long the real frame was, the simulation advances by at most Tuning.max_frame_delta; a stall (a tab
+## switch, a long hitch) is dropped, not simulated; and a couple of frames are skipped after a pick, a stall or the
+## window coming back, so nothing catches up. While the game is paused (the pick screen) or suspended (the window
+## lost focus) no time accumulates anywhere. ?perf logs every frame over 50 ms and what was going on.
+
+var _skip_frames := 0            # frames still to skip after a resume
+var _suspended := false          # the window / tab is in the background: the world stands still
+var _event := ""                 # the latest thing worth naming in the hitch log, and the frame it happened on
+var _event_frame := -100
+var sim_time := 0.0              # seconds of simulation this run (should track the wall clock minus pauses)
+var _run_start_ms := 0
+var _paused_since_ms := 0        # when the current pause / suspension began (0 = not paused)
+var _paused_total_ms := 0
+
+func _note_event(what: String) -> void:
+	_event = what
+	_event_frame = Engine.get_process_frames()
+
+## The part of this real frame (`raw` seconds) the simulation may use: 0 to skip it.
+func _frame_delta(raw: float) -> float:
+	var used := 0.0
+	var why := ""
+	if _suspended:
+		why = "window in the background"
+	elif _skip_frames > 0:
+		_skip_frames -= 1
+		why = "skipped (resuming)"
+	elif raw > Tuning.stall_delta:
+		_skip_frames = Tuning.resume_skip_frames
+		why = "stall dropped"
+	else:
+		used = minf(raw, Tuning.max_frame_delta)
+		why = "clamped" if raw > Tuning.max_frame_delta else ""
+	if raw > 0.05 and DebugFlags.perf_enabled():
+		hud.note_hitch(raw, used, why, _hitch_context())
+	return used
+
+func _hitch_context() -> String:
+	var parts: Array[String] = []
+	if Engine.get_process_frames() - _event_frame <= 4 and _event != "":
+		parts.append(_event)
+	if spawner.rows_spawned > 0:
+		parts.append("%d row(s) spawned" % spawner.rows_spawned)
+	if _picking:
+		parts.append("pick screen up")
+	if _gliding:
+		parts.append("gliding")
+	if combo_banner_active():
+		parts.append("combo banner")
+	return ", ".join(parts) if not parts.is_empty() else "nothing special"
+
+func combo_banner_active() -> bool:
+	return hud._combo_label.visible
+
+func _notification(what: int) -> void:
+	match what:
+		NOTIFICATION_APPLICATION_FOCUS_OUT, NOTIFICATION_APPLICATION_PAUSED, NOTIFICATION_WM_WINDOW_FOCUS_OUT:
+			if not _suspended:
+				_suspended = true
+				_paused_since_ms = Time.get_ticks_msec()
+				_note_event("window went to the background")
+		NOTIFICATION_APPLICATION_FOCUS_IN, NOTIFICATION_APPLICATION_RESUMED, NOTIFICATION_WM_WINDOW_FOCUS_IN:
+			if _suspended:
+				_suspended = false
+				_paused_total_ms += Time.get_ticks_msec() - _paused_since_ms
+				_skip_frames = Tuning.resume_skip_frames
+				player.clear_input()   # (the drag that piled up while away must not jump the plane)
+				_note_event("window came back")
+
+## Seconds of this run on the wall clock, without the time spent paused.
+func run_wall_time() -> float:
+	return maxf((Time.get_ticks_msec() - _run_start_ms - _paused_total_ms) / 1000.0, 0.0)
+
+func _process(raw_delta: float) -> void:
 	_update_camera()
 	_update_plane_zone()
 	if _warming or not alive:
 		return
-
+	var delta := _frame_delta(raw_delta)
+	if DebugFlags.perf_enabled():
+		hud.set_clock(sim_time, run_wall_time())
+	if delta <= 0.0:
+		return
+	sim_time += delta
 	elapsed += delta
 	player.step(delta)   # 1:1 finger movement this frame (the path from prev_xz to here is swept below)
 	picks.update(delta)
 	var tail := 1.0 + picks.value("tailwind") * 0.01   # Tailwind: more speed and more coins
 	var speed := Tuning.map_speed(map, elapsed) * tail
 	var step := speed * delta
-	score += step * Tuning.coins_per_unit * (bonus if Tuning.score_uses_bonus else 1.0) * earn_mult()
+	score += step * Tuning.coins_per_unit * distance_pay() * earn_mult()
 	spawner.near_miss_scale = 1.0 + picks.value("daredevil") * 0.01
 	spawner.plane_z = player.position.z   # clouds fade as they near the plane,
 	spawner.run_time = elapsed            # start late in the run,
@@ -290,12 +374,13 @@ func _process(delta: float) -> void:
 		else:
 			_end_run(HEADER_STRUCK, REASON_STRUCK)
 			return
-	var can_ram: bool = picks.level("battering_ram") > 0 or player.velocity.y < -Tuning.ram_speed   # Battering Ram, or flying up fast
+	var battering: bool = picks.level("battering_ram") > 0                          # Battering Ram: any touch breaks a crate
+	var ram_ok: bool = Tuning.ram_speed <= 0.0 or player.velocity.y < -Tuning.ram_speed   # (optional extra: moving up fast enough)
 	var from: Vector2 = player.prev_xz
 	var steps := clampi(ceili(from.distance_to(plane) / SWEEP_STEP), 1, MAX_SWEEP_STEPS)
 	for i in range(1, steps + 1):
 		var p: Vector2 = from.lerp(plane, float(i) / steps)
-		for b in spawner.break_crates(p, caps, can_ram):   # a crate in the way breaks if it may
+		for b in spawner.break_crates(p, caps, battering, ram_ok, from.y):   # a crate in the way breaks if it may
 			_on_crate_break(b["kind"], b["pos"])
 		if _invuln <= 0.0 and not DebugFlags.god and spawner.hits(p, caps):
 			if _can_absorb():   # Nine Lives / Shield / Patch: the plane takes the hit and keeps flying
@@ -354,6 +439,10 @@ func _check_fuel(delta: float) -> void:
 			return
 	_end_run(HEADER_FUEL, REASON_FUEL)
 
+## Coins per unit flown at the current bonus: bonus - bonus_pay_offset (x1 = 0.2, x2 = 1.2, x3 = 2.2).
+func distance_pay() -> float:
+	return maxf(bonus - Tuning.bonus_pay_offset, 0.0) if Tuning.score_uses_bonus else 1.0
+
 ## Everything earned is multiplied by this: the permanent multiplier (map x Coin Value), Tailwind, Double Coins.
 func earn_mult() -> float:
 	return coin_mult * (1.0 + picks.value("tailwind") * 0.01) * (2.0 if picks.has_boost("double_coins") else 1.0)
@@ -366,6 +455,8 @@ func _can_absorb() -> bool:
 ## The score reached the next pick: pause the game completely, deal three cards.
 func _begin_pick(extra: bool = false) -> void:
 	_picking = true
+	_paused_since_ms = Time.get_ticks_msec()
+	_note_event("pick screen opened")
 	_pick_is_extra = extra
 	if extra:
 		_extra_picks = maxi(_extra_picks - 1, 0)
@@ -385,6 +476,9 @@ func _on_pick_chosen(i: int) -> void:
 	pick_screen.hide_cards()
 	get_tree().paused = false
 	_picking = false
+	_paused_total_ms += Time.get_ticks_msec() - _paused_since_ms   # (the pause does not count as run time)
+	_skip_frames = Tuning.resume_skip_frames                       # and nothing catches up after it
+	_note_event("pick resume")
 	if tune_panel:
 		tune_panel.set_available(true)
 	_apply_card(card)
@@ -451,6 +545,7 @@ func _add_fuel(amount: float) -> void:
 
 ## A crate broke (kind 1 gold = coins, 2 green = fuel, 3 purple = an extra pick).
 func _on_crate_break(kind: int, pos: Vector3) -> void:
+	_note_event("crate broke")
 	Save.add_stat("crates")
 	var ram := picks.level("battering_ram")
 	var gold_touch := maxf(picks.value("golden_touch"), 1.0)   # Golden Touch: crates pay x2 / x3 / x4

@@ -19,17 +19,21 @@ const DT := 0.5
 var T: Node
 var S: Node
 
+## Two player types. ENGAGED chases close calls and cans (the model calibrated on the CHASER / SAFE autopilots). PASSIVE
+## mostly steers well clear of everything: few close calls (a short, low streak), few cans, fewer crashes.
+var passive := false
+
 func skill_at(runs: int) -> float:
 	return 0.25 + 0.35 * (1.0 - exp(-runs / 80.0))   # modest improvement: 0.25 -> ~0.6
 
 func catch_rate(s: float) -> float:      # fuel cans collected per second
-	return 0.01 + 0.115 * s
+	return 0.01 + 0.03 * s if passive else 0.01 + 0.115 * s
 func close_rate(s: float) -> float:      # close calls per second
-	return 0.35 + 0.30 * s
+	return 0.04 + 0.04 * s if passive else 0.35 + 0.30 * s
 func hazard0(s: float) -> float:         # crash hazard per second at start speed
-	return 0.045 * (1.0 - s) + 0.005
+	return (0.03 * (1.0 - s) + 0.004) if passive else (0.045 * (1.0 - s) + 0.005)
 func steps_reached(s: float) -> float:   # how long a close-call streak the player typically holds
-	return 3.0 + 6.0 * s
+	return 0.4 + 0.6 * s if passive else 3.0 + 6.0 * s
 
 func speed_at(t: float) -> float:
 	return minf(T.base_speed + T.speed_ramp * t, T.max_speed)
@@ -94,7 +98,7 @@ func evaluate(level: Dictionary, equipped: Array, s: float, target_dist_units: f
 			surv += term
 			term *= cum_h / float(k + 1)
 		var b := base_b + (head - 1.0) * exp(-t / 8.0)
-		var per_sec: float = sp * T.coins_per_unit * b * coin_mult + (lam * bounty + c * ccpay) * coin_mult
+		var per_sec: float = sp * T.coins_per_unit * maxf(b - T.bonus_pay_offset, 0.0) * coin_mult + (lam * bounty + c * ccpay) * coin_mult
 		e_coins += surv * per_sec * DT
 		e_time += surv * DT
 		e_dist += surv * sp * DT
@@ -134,13 +138,7 @@ func best_loadout(level: Dictionary, slots: int, s: float) -> Array:
 func fmt(n: float) -> String:
 	return T.fmt(n)
 
-func _initialize() -> void:
-	T = root.get_node("Tuning")
-	S = root.get_node("Save")
-	var skill_scale := 1.0
-	for kv in OS.get_environment("ECON_TUNE").split(",", false):
-		var parts := kv.split("=")
-		T.set(parts[0], float(parts[1]))
+func play(label: String) -> Dictionary:
 	var level := {}
 	for u in T.upgrades:
 		level[u["id"]] = 0
@@ -158,6 +156,11 @@ func _initialize() -> void:
 	var slot2_time := -1.0
 	var unlock50 := -1.0
 	var unlock90 := -1.0
+	var earned := 0.0
+	var reached := {}      # cumulative coins earned -> [run, minutes]
+	var goals := [1000.0, 10000.0, 100000.0, 1000000.0, 10000000.0]
+	print("")
+	print("=== %s player ===" % label)
 	print("minutes | runs | run length | coins/run | coins/min | balance | levels (coin/bounty/ccpay/cap | tank/eff/refill) | gear | slots | best-distance chance")
 	while clock < SESSION:
 		var s := skill_at(runs)
@@ -165,6 +168,10 @@ func _initialize() -> void:
 		var ev := evaluate(level, loadout, s, target_units)
 		runs += 1
 		coins += ev["coins"]
+		earned += ev["coins"]
+		for g in goals:
+			if earned >= g and not reached.has(g):
+				reached[g] = [runs, clock / 60.0]
 		clock += ev["time"] + OVERHEAD
 		unlock_p *= (1.0 - ev["p_target"])
 		if unlock50 < 0.0 and unlock_p <= 0.5:
@@ -243,4 +250,23 @@ func _initialize() -> void:
 	print("3,000 m goal (Coast unlock): 50%% chance reached by %.0f min, 90%% by %s (a run needs %.0f units = %.0f m)" % [
 			unlock50 / 60.0, ("%.0f min" % (unlock90 / 60.0)) if unlock90 > 0.0 else "after the 2 hours", target_units, 3000.0])
 	print("runs in 2 hours: %d, purchases: %d" % [runs, buys])
+	return {"reached": reached, "first_buy_run": first_buy_run, "slot2": slot2_time, "runs": runs}
+
+func _initialize() -> void:
+	T = root.get_node("Tuning")
+	S = root.get_node("Save")
+	for kv in OS.get_environment("ECON_TUNE").split(",", false):
+		var parts := kv.split("=")
+		T.set(parts[0], float(parts[1]))
+	passive = false
+	var eng := play("ENGAGED (chases close calls)")
+	passive = true
+	var pas := play("PASSIVE (mostly avoids close calls)")
+	print("")
+	print("=== runs needed to earn the same total (passive / engaged) ===")
+	for g in [1000.0, 10000.0, 100000.0, 1000000.0, 10000000.0]:
+		var e: Array = eng["reached"].get(g, [-1, -1.0])
+		var q: Array = pas["reached"].get(g, [-1, -1.0])
+		print("%8s coins: engaged %s runs (%.0f min), passive %s runs (%.0f min)  ->  %s" % [fmt(g), str(e[0]) if e[0] >= 0 else "-", e[1], str(q[0]) if q[0] >= 0 else "-", q[1], ("%.1fx as many runs" % (float(q[0]) / e[0])) if (e[0] > 0 and q[0] > 0) else "-"])
+	print("first purchase after run: engaged %d, passive %d" % [eng["first_buy_run"], pas["first_buy_run"]])
 	quit()

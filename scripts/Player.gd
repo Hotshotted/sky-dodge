@@ -217,6 +217,10 @@ func reset() -> void:
 func crash() -> void:
 	active = false
 
+## Forget finger movement that piled up while the game was not listening (a pause, a stall).
+func clear_input() -> void:
+	_pending_drag = Vector2.ZERO
+
 ## A push from the wind (a gust): move sideways by dx, kept inside the flyable width.
 func nudge_x(dx: float) -> void:
 	var x_limit := Tuning.ortho_size * 0.5 - Tuning.plane_edge_margin

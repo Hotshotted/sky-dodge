@@ -19,7 +19,7 @@ extends SceneTree
 ##       generated rows, checked every step), fade in late, sit above obstacles/cans but below the plane,
 ##       hide cans more often, ?nofx=clouds disables them, restart clears them, nothing new is allocated
 ##   2i. bonus: step-table streak bonus, cap (gold glowing label), steps coming off one by one, number-only text, reset on crash, huge caps
-##   2o. crates (shapes, contents, ram rules, rewards, Crate Shower) and milestones\n##   2n. combos: each of the seven triggers (perk 3 + partner) and its effect, the banner, the Logbook\n##   2m. in-run picks: prices, pause + three cards, card odds, every perk / boost / supply effect\n##   2l. maps: unlocks, medals, palettes, gulls / wind gusts / lightning and their fairness rules
+##   2p. frame time: clamp, stall dropping, resume skipping, pause / background accounting, the ?perf hitch log\n##   2o. crates (shapes, contents, ram rules, rewards, Crate Shower) and milestones\n##   2n. combos: each of the seven triggers (perk 3 + partner) and its effect, the banner, the Logbook\n##   2m. in-run picks: prices, pause + three cards, card odds, every perk / boost / supply effect\n##   2l. maps: unlocks, medals, palettes, gulls / wind gusts / lightning and their fairness rules
 ##   2k. Whisker close: doubled step, popup/burst, decay, cap, detection by clearance
 ##   2j. progression: save file round trip (versioned), coin award, Hangar purchases apply, ?tune save buttons
 ##   3. ?debug flags parse, and switching an effect off really skips it
@@ -1065,14 +1065,14 @@ func _initialize() -> void:
 	main.coin_mult = 1.0
 	main._process(0.05)
 	var spd: float = tuning.base_speed + tuning.speed_ramp * 0.05
-	check(absf(main.score - spd * 0.05 * tuning.coins_per_unit) < 0.001, "the run total grows by distance x bonus x multiplier (%.3f for %.3f units)" % [main.score, spd * 0.05])
+	check(absf(main.score - spd * 0.05 * tuning.coins_per_unit * (1.0 - tuning.bonus_pay_offset)) < 0.001, "at x1 distance pays only %.1f per unit (bonus - %.1f): %.3f coins for %.3f units" % [1.0 - tuning.bonus_pay_offset, tuning.bonus_pay_offset, main.score, spd * 0.05])
 	main._steps.append(0.5)
 	main._refresh_bonus()
 	main.coin_mult = 3.0
 	var s0: float = main.score
 	main._process(0.05)
 	spd = tuning.base_speed + tuning.speed_ramp * 0.10
-	check(absf((main.score - s0) - spd * 0.05 * 1.5 * 3.0) < 0.001, "...times the close-call bonus (x1.5) and the multiplier (x3)")
+	check(absf((main.score - s0) - spd * 0.05 * (1.5 - tuning.bonus_pay_offset) * 3.0) < 0.001, "...at x1.5 it pays 0.7 per unit, times the multiplier (x3)")
 	main.score = 1234.6
 	main._end_run(main.HEADER_CRASH, main.REASON_OBSTACLE)
 	check(tsave.coins == 1234.0 and tsave.high_score == 1234.0 and main.last_was_best and main.hud._over.text.contains("+1.2K coins") and main.hud._over.text.contains("NEW BEST!"),
@@ -1124,11 +1124,11 @@ func _initialize() -> void:
 	tsave.add_coins(50.0)
 	main.hud._select_tab("earnings")
 	var cv_row: Dictionary = main.hud._upg_rows[0]
-	check((cv_row["buy"] as Button).disabled and (cv_row["buy"] as Button).text == "400", "Coin Value costs 400 and is greyed out with 50 coins")
+	check((cv_row["buy"] as Button).disabled and (cv_row["buy"] as Button).text == "280", "Coin Value costs 280 and is greyed out with 50 coins")
 	tsave.add_coins(1000000.0)
 	check(main.hud._hangar_coins.text == "Coins: 1M" and not (cv_row["buy"] as Button).disabled, "balance shows with suffixes (Coins: 1M)")
 	(cv_row["buy"] as Button).pressed.emit()
-	check(tsave.level("coin_value") == 1 and is_equal_approx(tuning.coin_value_mult(), 1.1) and tsave.coins == 1000050.0 - 400.0 and (cv_row["title"] as Label).text.contains("Lv 1"), "buying Coin Value: level 1, coins x1.1, cost deducted")
+	check(tsave.level("coin_value") == 1 and is_equal_approx(tuning.coin_value_mult(), 1.1) and tsave.coins == 1000050.0 - 280.0 and (cv_row["title"] as Label).text.contains("Lv 1"), "buying Coin Value: level 1, coins x1.1, cost deducted")
 	for id in ["can_bounty", "close_call_pay", "bonus_cap", "fuel_tank", "efficiency", "refill"]:
 		tsave.buy(id)
 	check(is_equal_approx(tuning.can_bounty_pay(), 8.0) and is_equal_approx(tuning.close_call_pay(), 4.0) and is_equal_approx(tuning.bonus_cap_now(), 3.5)
@@ -1787,7 +1787,7 @@ func _initialize() -> void:
 	main.run_distance = 0.0
 	main._process(0.05)
 	var sp1: float = tuning.map_speed(0, 0.05)
-	check(absf(main.run_distance - sp1 * 1.3 * 0.05) < 0.001 and absf(main.score - sp1 * 1.3 * 0.05 * 1.3) < 0.001, "Tailwind level 3: +30%% speed and +30%% coins")
+	check(absf(main.run_distance - sp1 * 1.3 * 0.05) < 0.001 and absf(main.score - sp1 * 1.3 * 0.05 * (1.0 - tuning.bonus_pay_offset) * 1.3) < 0.001, "Tailwind level 3: +30%% speed and +30%% coins")
 	fresh.call()
 	pk.set_perk("daredevil", 3)
 	var ddrow = sp._rows_make_for_test(-4.0, [main.player.position.x + tuning.pickup_reach() + 0.0])
@@ -2153,36 +2153,77 @@ func _initialize() -> void:
 	check(absf(float(n_cr) / n_blk - 0.5) < 0.04 and absf(kinds[0] / float(n_cr) - 0.55) < 0.05 and absf(kinds[1] / float(n_cr) - 0.30) < 0.05 and absf(kinds[2] / float(n_cr) - 0.15) < 0.04,
 			"crate_chance %.2f of blocked cells; contents about 55%% gold / 30%% green / 15%% purple (%d / %d / %d)" % [tuning.crate_chance, kinds[0], kinds[1], kinds[2]])
 	check(tuning.crate_colors[0] != tuning.crate_colors[1] and tuning.crate_colors[1] != tuning.crate_colors[2] and tuning.crate_colors[2] != tuning.crate_colors[0], "glow colours: gold, green, purple")
-	# (b) the ram rules
+	# (b) the crate rules: the front face breaks it, the sides crash
 	tuning.crate_chance = 0.0
-	main.restart()
-	main.set_process(false)
-	sp.reset(-500.0)
-	pk.enabled = false
-	pk.next_pick = INF
+	var crate_run := func():
+		main.restart()
+		main.set_process(false)
+		sp.reset(-500.0)
+		pk.enabled = false
+		pk.next_pick = INF
+	crate_run.call()
 	var pz: float = main.player.position.z
 	var px: float = main.player.position.x
-	var crow = sp._rows_make_for_test(pz, [px])
-	crow.crate_kind[0] = 1
+	var chalf: Vector2 = sp._obstacle_half()
 	var ccaps: PackedFloat32Array = main.player.hit_capsules()
-	check(sp.break_crates(Vector2(px, pz), ccaps, false).is_empty() and sp.hits(Vector2(px, pz), ccaps) and sp.last_hit_crate, "touching a crate without ramming does not break it: it is a hit")
+	check(is_equal_approx(tuning.ram_speed, 0.0) and tuning.crate_front_forgive > 0.0, "no speed requirement any more (ram_speed %.0f), and the front face is more forgiving (+%.2f)" % [tuning.ram_speed, tuning.crate_front_forgive])
+	var crow = sp._rows_make_for_test(pz - 0.6, [px])   # a crate scrolling in on a plane that just holds position
+	crow.crate_kind[0] = 1
+	main.score = 0.0
 	main._process(0.02)
-	check(not main.alive and main.hud._over.text.contains(main.REASON_CRATE), "...it crashes the plane (\"%s\")" % main.REASON_CRATE)
-	main.restart()
-	main.set_process(false)
-	sp.reset(-500.0)
-	pk.enabled = false
-	pk.next_pick = INF
+	check(main.alive and crow.crate_kind[0] == 0 and crow.xs[0] > 1000.0 and not crow.obs[0].visible and main.score >= tuning.crate_coins,
+			"a crate that scrolls into the plane's nose head-on breaks (no flick needed), pays and the plane flies on (coins %.0f)" % main.score)
+	check(count_visible(main.fx._crate_emitters) >= 1, "...with a break effect")
+	check(not sp.hits(Vector2(px, pz), ccaps), "a broken crate is gone for good")
+	crate_run.call()
+	pz = main.player.position.z
+	px = main.player.position.x
+	crow = sp._rows_make_for_test(pz, [px + 1.5])   # beside the wing
+	crow.crate_kind[0] = 1
+	main._process(0.02)
+	check(not main.alive and main.hud._over.text.contains(main.REASON_CRATE), "a crate touched from the SIDE crashes the plane (\"%s\")" % main.REASON_CRATE)
+	crate_run.call()
+	pz = main.player.position.z
+	px = main.player.position.x
+	crow = sp._rows_make_for_test(pz + 0.4, [px])   # the plane is level with / above its centre: not a front hit
+	crow.crate_kind[0] = 1
+	main._process(0.02)
+	check(not main.alive, "...and so does one the plane is already beside or above")
+	# forgiveness: the front face counts wider than the crate, the sides do not
+	var inside_front: float = chalf.x + tuning.crate_front_forgive - 0.05
+	var outside_front: float = chalf.x + tuning.crate_front_forgive + 0.1
+	crate_run.call()
+	pz = main.player.position.z
+	px = main.player.position.x
+	crow = sp._rows_make_for_test(pz - 0.6, [px + inside_front])
+	crow.crate_kind[0] = 1
+	main._process(0.02)
+	check(main.alive and crow.crate_kind[0] == 0, "a head-on touch just off the crate's width (%.2f from its centre, its half-width is %.2f) still breaks it" % [inside_front, chalf.x])
+	crate_run.call()
+	pz = main.player.position.z
+	px = main.player.position.x
+	crow = sp._rows_make_for_test(pz - 0.6, [px + outside_front])
+	crow.crate_kind[0] = 1
+	main._process(0.02)
+	check(not main.alive, "...but a touch further out (%.2f) is a side hit and crashes" % outside_front)
+	# the optional speed rule still works when ram_speed is set
+	tuning.ram_speed = 9.0
+	crate_run.call()
 	pz = main.player.position.z
 	px = main.player.position.x
 	crow = sp._rows_make_for_test(pz - 0.6, [px])
 	crow.crate_kind[0] = 1
-	main.score = 0.0
-	drag_by(main.player, Vector2(0.0, -160.0))   # a fast flick up the screen
+	main._process(0.02)
+	check(not main.alive, "(with ram_speed 9 a plane that is not moving up crashes)")
+	crate_run.call()
+	pz = main.player.position.z
+	px = main.player.position.x
+	crow = sp._rows_make_for_test(pz - 0.6, [px])
+	crow.crate_kind[0] = 1
+	drag_by(main.player, Vector2(0.0, -160.0))
 	main._process(0.05)
-	check(main.alive and crow.crate_kind[0] == 0 and crow.xs[0] > 1000.0 and not crow.obs[0].visible and main.score >= tuning.crate_coins, "flying UP faster than ram_speed (%.0f u/s) breaks the crate: it pays and the plane flies on (coins %.0f)" % [tuning.ram_speed, main.score])
-	check(count_visible(main.fx._crate_emitters) >= 1, "...with a break effect")
-	check(not sp.hits(Vector2(px, pz), ccaps), "a broken crate is gone for good")
+	check(main.alive and crow.crate_kind[0] == 0, "(...and one flying up fast enough breaks it)")
+	tuning.ram_speed = 0.0
 	# Battering Ram: any contact breaks it
 	main.restart()
 	main.set_process(false)
@@ -2318,6 +2359,104 @@ func _initialize() -> void:
 	var snap_crates := snapshot(main)
 	check(same_world(base, snap_crates), "crates, their bursts, milestones and the Logbook created nothing new  [%s]" % describe(snap_crates))
 	tsave.reset_all()
+
+	print("2p. frame time: nothing fast-forwards")
+	tsave.reset_all()
+	tuning.crate_chance = 0.0
+	main.restart()
+	main.set_process(false)
+	sp.reset(-500.0)
+	pk.enabled = false
+	pk.next_pick = INF
+	check(Engine.max_physics_steps_per_frame == 1, "physics catch-up is off (max_physics_steps_per_frame = %d)" % Engine.max_physics_steps_per_frame)
+	var e0: float = main.elapsed
+	main._process(0.2)
+	check(is_equal_approx(main.elapsed - e0, tuning.max_frame_delta), "a long frame (0.2 s) advances the simulation by at most %.2f s" % tuning.max_frame_delta)
+	e0 = main.elapsed
+	main._process(2.0)
+	check(main.elapsed == e0 and main._skip_frames == tuning.resume_skip_frames, "a stall (2 s: a tab switch, a hitch) is dropped: nothing is simulated")
+	var skipped_ok := true
+	for i in tuning.resume_skip_frames:
+		main._process(0.016)
+		skipped_ok = skipped_ok and main.elapsed == e0
+	main._process(0.016)
+	check(skipped_ok and is_equal_approx(main.elapsed - e0, 0.016), "...and the next %d frames are skipped too, then play resumes at normal speed (no catching up)" % tuning.resume_skip_frames)
+	# a long random run with stalls: the simulation never gets ahead of the frames that really passed
+	main.restart()
+	main.set_process(false)
+	sp.reset(-500.0)
+	pk.enabled = false
+	pk.next_pick = INF
+	var raw_sum := 0.0
+	var max_step := 0.0
+	var prev_sim := 0.0
+	for i in 400:
+		var rd := randf_range(0.008, 0.03)
+		if i % 57 == 0:
+			rd = randf_range(0.3, 2.5)   # a stall
+		elif i % 23 == 0:
+			rd = randf_range(0.06, 0.2)   # a hitch
+		raw_sum += rd
+		main._process(rd)
+		max_step = maxf(max_step, main.sim_time - prev_sim)
+		prev_sim = main.sim_time
+		main.score = 0.0
+		if not main.alive:
+			main.restart()
+			main.set_process(false)
+			sp.reset(-500.0)
+			pk.enabled = false
+			prev_sim = 0.0
+	check(max_step <= tuning.max_frame_delta + 0.0001 and main.sim_time <= raw_sum, "400 frames with stalls and hitches: no frame advanced more than %.2f s, and the simulation (%.1f s) never exceeded the real time (%.1f s)" % [tuning.max_frame_delta, main.sim_time, raw_sum])
+	# a pause (the pick screen) does not accumulate time, and resuming skips frames
+	main.restart()
+	main.set_process(false)
+	sp.reset(-500.0)
+	pk.enabled = true
+	pk.start_run(1.0)
+	main.score = 600.0
+	main._process(0.02)
+	check(main.get_tree().paused, "(a pick is up)")
+	var wall0: float = main.run_wall_time()
+	await real_wait(0.6)
+	main.pick_screen._on_card(0)
+	check(main._skip_frames == tuning.resume_skip_frames and main.run_wall_time() - wall0 < 0.25, "resuming from the pick: the pause is not counted as run time, and frames are skipped (nothing catches up)")
+	pk.enabled = false
+	pk.next_pick = INF
+	var e1: float = main.elapsed
+	main._process(0.016)
+	check(main.elapsed == e1, "...the first frame after the pick does not move the world")
+	# the window in the background
+	main.restart()
+	main.set_process(false)
+	sp.reset(-500.0)
+	pk.enabled = false
+	pk.next_pick = INF
+	main._notification(main.NOTIFICATION_APPLICATION_FOCUS_OUT)
+	e1 = main.elapsed
+	main._process(0.05)
+	main._process(0.05)
+	check(main._suspended and main.elapsed == e1, "with the window in the background the world stands still")
+	main.player._pending_drag = Vector2(900.0, 900.0)
+	main._notification(main.NOTIFICATION_APPLICATION_FOCUS_IN)
+	check(not main._suspended and main._skip_frames == tuning.resume_skip_frames and main.player._pending_drag == Vector2.ZERO, "...and when it comes back frames are skipped and the finger drag that piled up is forgotten")
+	main._skip_frames = 0
+	# ?perf: frames over 50 ms are logged with what was happening
+	DebugFlags.parse(["perf", "tune"])
+	main.hud._hitch_log.clear()
+	main.hud._hitch_count = 0
+	main._note_event("pick resume")
+	main.spawner.rows_spawned = 2
+	main._process(0.3)
+	check(main.hud._hitch_log.size() == 1 and main.hud._hitch_log[0].contains("300 ms") and main.hud._hitch_log[0].contains("simulated 0 ms") and main.hud._hitch_log[0].contains("stall dropped")
+			and main.hud._hitch_log[0].contains("pick resume") and main.hud._hitch_log[0].contains("2 row(s) spawned"),
+			"?perf logs a 300 ms frame and what was happening: \"%s\"" % (main.hud._hitch_log[0] if main.hud._hitch_log.size() > 0 else ""))
+	main._skip_frames = 0
+	main._process(0.08)
+	check(main.hud._hitch_log.size() == 2 and main.hud._hitch_log[1].contains("80 ms") and main.hud._hitch_log[1].contains("simulated 50 ms") and main.hud._hitch_log[1].contains("clamped"), "...an 80 ms frame is logged as clamped to 50 ms")
+	main._process(0.016)
+	check(main.hud._hitch_log.size() == 2 and main.hud._clock_text.begins_with("sim ") and main.hud._clock_text.contains("wall"), "...a normal frame is not logged; the readout shows sim vs wall time (\"%s\")" % main.hud._clock_text)
+	DebugFlags.parse(["tune"])
 
 	print("3. debug flags")
 	DebugFlags.parse(["nofx=sparks,bogus", "noprewarm", "perf", "v=abc1234"])

@@ -5,6 +5,14 @@ extends Node
 ## Distances are world units. The camera looks (almost) straight down: screen-right = +x,
 ## screen-down = +z, and the plane flies toward -z (screen-up).
 
+# ---------- Frame time ----------
+## The simulation never advances more than this per frame (seconds), whatever the real frame took.
+var max_frame_delta := 0.05
+## A frame longer than this (a tab switch, a long hitch) is a stall: it is not simulated at all.
+var stall_delta := 0.25
+## Frames skipped (no simulation) after a pick, a stall or the window coming back, so nothing catches up.
+var resume_skip_frames := 2
+
 # ---------- Camera / screen ----------
 ## Camera tilt away from straight-down, in degrees, so cube front faces (toward the bottom of
 ## the screen) show and shade. 0 = exactly top-down.
@@ -278,13 +286,15 @@ func combo_def(id: String) -> Dictionary:
 	return {}
 
 ## CRATES: breakable blocks that take a blocked cell of a row (so fairness treats them as blocked). A glow on
-## top shows what is inside: gold = coins, green = fuel, purple = an instant extra pick. Flying into one while
-## moving UP the screen faster than ram_speed (units/second) breaks it; any other touch crashes (unless Battering Ram).
+## top shows what is inside: gold = coins, green = fuel, purple = an instant extra pick. Touching a crate's
+## FRONT (bottom) face head-on breaks it, which includes just holding position as it scrolls in; touching it
+## from the side crashes (unless Battering Ram). The front face is a bit more forgiving than the side edges.
 var crates_enabled := true
 var crate_chance := 0.10           # chance a blocked cell is a crate
 var crate_shower_chance := 0.8     # ...in the rows after a Crate Shower
 var crate_start_time := 5.0        # none in the first seconds of a run
-var ram_speed := 9.0
+var ram_speed := 0.0               # extra rule: you must also be moving up the screen this fast (units/second); 0 = none
+var crate_front_forgive := 0.35    # a crate's front (bottom) face counts this much wider than the crate itself; the sides get no slack
 var crate_coins := 30.0            # gold crate: coins (x the earn multiplier, Battering Ram level, Golden Touch)
 var crate_fuel := 30.0             # green crate: fuel (x Golden Touch)
 var crate_weights: Array[float] = [0.55, 0.30, 0.15]   # gold, green, purple
@@ -319,6 +329,9 @@ func perk_value(id: String, level: int) -> float:
 ## Coins per world unit flown, before the close-call bonus, the map multiplier and Coin Value. The run
 ## total on screen IS the coins you earn (a crash keeps them all).
 var coins_per_unit := 1.0
+## Distance pays coins_per_unit x (bonus - bonus_pay_offset): x1 pays 0.2, x2 pays 1.2, x3 pays 2.2. So the
+## close-call bonus is what earns; flying without close calls pays very little.
+var bonus_pay_offset := 0.8
 ## Multiplier on everything earned, per map (Countryside, Coast, Mountains, Stormfront).
 var map_coin_mult: Array[float] = [1.0, 2.0, 4.0, 8.0]   # (Countryside x1, Coast x2, Mountains x4, Stormfront x8)
 
@@ -331,7 +344,7 @@ var double_every := 25
 var earn_cost_growth := 1.12
 var plane_cost_growth := 1.5
 ## Gear slots: the first is free; buying the others is a milestone. Cost of slot 2 and slot 3.
-var gear_slot_costs: Array[float] = [0.0, 40000.0, 2500000.0]
+var gear_slot_costs: Array[float] = [0.0, 28000.0, 1750000.0]
 ## Reserve Tank refills the tank to this fraction of its size.
 var reserve_refill_fraction := 0.6
 ## Nine Lives: after a survived hit the plane is invulnerable (sputtering) for this many seconds.
@@ -347,13 +360,13 @@ var magnet_pull_speed := 16.0
 ##   steps (gear: the value at level 0, 1, 2 ...).
 var upgrades: Array[Dictionary] = [
 	{"id": "coin_value", "tab": "earnings", "name": "Coin Value", "glyph": "$", "color": Color(1.0, 0.8, 0.2),
-			"line": "Every coin worth more: {a} -> {b}", "fmt": "x", "max": -1, "cost_base": 400.0, "per": 0.10},
+			"line": "Every coin worth more: {a} -> {b}", "fmt": "x", "max": -1, "cost_base": 280.0, "per": 0.10},
 	{"id": "can_bounty", "tab": "earnings", "name": "Can Bounty", "glyph": "C", "color": Color(0.35, 0.85, 0.45),
-			"line": "Each fuel can pays {a} -> {b} coins", "fmt": "big", "max": -1, "cost_base": 600.0, "per": 8.0},
+			"line": "Each fuel can pays {a} -> {b} coins", "fmt": "big", "max": -1, "cost_base": 420.0, "per": 8.0},
 	{"id": "close_call_pay", "tab": "earnings", "name": "Close Call Pay", "glyph": "!", "color": Color(1.0, 0.55, 0.2),
-			"line": "Each close call pays {a} -> {b} coins", "fmt": "big", "max": -1, "cost_base": 800.0, "per": 4.0},
+			"line": "Each close call pays {a} -> {b} coins", "fmt": "big", "max": -1, "cost_base": 560.0, "per": 4.0},
 	{"id": "bonus_cap", "tab": "earnings", "name": "Bonus Cap", "glyph": "^", "color": Color(1.0, 0.4, 0.6),
-			"line": "Close-call bonus can reach {a} -> {b}", "fmt": "x1", "max": -1, "cost_base": 1200.0, "per": 0.5},
+			"line": "Close-call bonus can reach {a} -> {b}", "fmt": "x1", "max": -1, "cost_base": 840.0, "per": 0.5},
 	{"id": "fuel_tank", "tab": "plane", "name": "Fuel Tank", "glyph": "F", "color": Color(0.3, 0.7, 1.0),
 			"line": "Hold {d} more fuel ({a} -> {b})", "fmt": "int", "max": 12, "cost_base": 80.0, "per": 15.0, "falloff": 0.92},
 	{"id": "efficiency", "tab": "plane", "name": "Efficiency", "glyph": "E", "color": Color(0.4, 0.9, 0.8),
@@ -361,17 +374,17 @@ var upgrades: Array[Dictionary] = [
 	{"id": "refill", "tab": "plane", "name": "Refill", "glyph": "R", "color": Color(0.6, 0.8, 0.3),
 			"line": "Each can gives {d} more fuel ({a} -> {b})", "fmt": "dec1", "max": 12, "cost_base": 120.0, "per": 4.0, "falloff": 0.92},
 	{"id": "nine_lives", "tab": "gear", "name": "Nine Lives", "glyph": "9", "color": Color(1.0, 0.35, 0.35),
-			"line": "Survive hits per run: {a} -> {b}", "fmt": "int", "max": 3, "costs": [2000.0, 60000.0, 2400000.0], "steps": [0, 1, 2, 3]},
+			"line": "Survive hits per run: {a} -> {b}", "fmt": "int", "max": 3, "costs": [1400.0, 42000.0, 1680000.0], "steps": [0, 1, 2, 3]},
 	{"id": "reserve_tank", "tab": "gear", "name": "Reserve Tank", "glyph": "T", "color": Color(0.5, 0.6, 1.0),
-			"line": "Refill the tank when empty: {a} -> {b} times", "fmt": "int", "max": 2, "costs": [3000.0, 120000.0], "steps": [0, 1, 2]},
+			"line": "Refill the tank when empty: {a} -> {b} times", "fmt": "int", "max": 2, "costs": [2100.0, 84000.0], "steps": [0, 1, 2]},
 	{"id": "magnet", "name": "Can Magnet", "tab": "gear", "glyph": "M", "color": Color(0.8, 0.5, 1.0),
-			"line": "Pull cans from {a} -> {b} units away", "fmt": "dec1", "max": 3, "costs": [1500.0, 45000.0, 1800000.0], "steps": [0.0, 1.5, 2.5, 3.5]},
+			"line": "Pull cans from {a} -> {b} units away", "fmt": "dec1", "max": 3, "costs": [1050.0, 31500.0, 1260000.0], "steps": [0.0, 1.5, 2.5, 3.5]},
 	{"id": "cloud_eye", "tab": "gear", "name": "Cloud Eye", "glyph": "O", "color": Color(0.8, 0.9, 1.0),
-			"line": "Outlines show obstacles under clouds: {a} -> {b}", "fmt": "onoff", "max": 1, "costs": [5000.0], "steps": [0, 1]},
+			"line": "Outlines show obstacles under clouds: {a} -> {b}", "fmt": "onoff", "max": 1, "costs": [3500.0], "steps": [0, 1]},
 	{"id": "steady_nerves", "tab": "gear", "name": "Steady Nerves", "glyph": "S", "color": Color(0.95, 0.75, 0.5),
-			"line": "A hit keeps {a} -> {b} of your close-call bonus", "fmt": "pct", "max": 2, "costs": [4000.0, 120000.0], "steps": [0.0, 0.5, 1.0]},
+			"line": "A hit keeps {a} -> {b} of your close-call bonus", "fmt": "pct", "max": 2, "costs": [2800.0, 84000.0], "steps": [0.0, 0.5, 1.0]},
 	{"id": "head_start", "tab": "gear", "name": "Head Start", "glyph": "H", "color": Color(1.0, 0.9, 0.3),
-			"line": "Begin each run at bonus {a} -> {b}", "fmt": "x1", "max": 2, "costs": [2500.0, 75000.0], "steps": [1.0, 1.5, 2.0]},
+			"line": "Begin each run at bonus {a} -> {b}", "fmt": "x1", "max": 2, "costs": [1750.0, 52500.0], "steps": [1.0, 1.5, 2.0]},
 ]
 
 func upgrade_def(id: String) -> Dictionary:

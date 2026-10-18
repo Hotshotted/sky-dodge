@@ -228,7 +228,10 @@ func reset(first_row_z: float = -12.0) -> void:
 	_last_row_z = first_row_z + Tuning.spawn_spacing
 
 ## Move the world toward the plane by `dist` units and spawn/remove rows as needed.
+var rows_spawned := 0              # rows spawned by the latest advance() (the ?perf hitch log reports it)
+
 func advance(dist: float) -> void:
+	rows_spawned = 0
 	_update_look()
 	for r in _rows:
 		r.position.z += dist
@@ -237,6 +240,7 @@ func advance(dist: float) -> void:
 	hazards.advance(dist)
 	while _last_row_z > -Tuning.spawn_distance:
 		_last_row_z -= Tuning.spawn_spacing
+		rows_spawned += 1
 		_spawn_row(_last_row_z)
 	while not _rows.is_empty() and _rows[0].position.z > Tuning.spawn_distance:
 		_release_row(_rows.pop_front())
@@ -729,12 +733,12 @@ func _make_crates(row: Row, width: float) -> void:
 		glow.scale = Vector3(width * 0.78, 0.04, Tuning.obstacle_depth * 0.78)
 		glow.visible = true
 
-## Break the crates the plane touches, if it may (`ram_ok`: it is flying up fast enough, or has Battering Ram).
-## Returns what broke: [{"kind": 1 gold / 2 green / 3 purple, "pos": where}]. Crates it may not break stay, and crash it.
-func break_crates(p: Vector2, caps: PackedFloat32Array, ram_ok: bool) -> Array[Dictionary]:
+## Break the crates the plane touches head-on. A touch breaks a crate when the plane is below its centre and within its
+## width plus crate_front_forgive (the front face), and `speed_ok` (see ram_speed); with `battering` (the perk) any
+## touch breaks it. `from_z` = where the plane was at the start of this frame's path. Anything else (a side touch) stays and crashes the plane. Returns what broke:
+## [{"kind": 1 gold / 2 green / 3 purple, "pos": where}].
+func break_crates(p: Vector2, caps: PackedFloat32Array, battering: bool, speed_ok: bool = true, from_z: float = -INF) -> Array[Dictionary]:
 	var out: Array[Dictionary] = []
-	if not ram_ok:
-		return out
 	var half := _obstacle_half()
 	for r in _rows:
 		if absf(r.position.z - p.y) > NEAR_RANGE:
@@ -742,15 +746,22 @@ func break_crates(p: Vector2, caps: PackedFloat32Array, ram_ok: bool) -> Array[D
 		for k in r.xs.size():
 			if r.crate_kind[k] == 0 or absf(r.xs[k] - p.x) > FAR_X:
 				continue
+			var touching := false
 			for o in range(0, caps.size(), 5):
 				if _gap(p, caps, o, r.xs[k], r.position.z, half) < 0.0:
-					out.append({"kind": r.crate_kind[k], "pos": Vector3(r.xs[k], 0.4, r.position.z)})
-					r.crate_kind[k] = 0
-					r.xs[k] = BROKEN_X
-					r.obs[k].visible = false
-					r.crate_glows[r.obs_cols[k]].visible = false
-					r.obs_ghosts[k].visible = false
+					touching = true
 					break
+			if not touching:
+				continue
+			# front = the plane came from below the crate (this step or the start of the frame's path: a fast flick can jump past its centre)
+			var front: bool = maxf(p.y, from_z) > r.position.z and absf(p.x - r.xs[k]) <= half.x + Tuning.crate_front_forgive
+			if battering or (front and speed_ok):
+				out.append({"kind": r.crate_kind[k], "pos": Vector3(r.xs[k], 0.4, r.position.z)})
+				r.crate_kind[k] = 0
+				r.xs[k] = BROKEN_X
+				r.obs[k].visible = false
+				r.crate_glows[r.obs_cols[k]].visible = false
+				r.obs_ghosts[k].visible = false
 	return out
 
 ## ---- Gulls: obstacles that drift sideways ------------------------------------------------------------

@@ -86,6 +86,9 @@ var _nm_count := 0             # near misses seen (for the ?perf log)
 var _nm_handler_ms := 0.0      # time the near-miss code took on the CPU (ms)
 var _nm_frames_left := 0       # frames still being watched after a near miss
 var _nm_worst := 0.0           # slowest of those frames (ms)
+var _hitch_log: Array[String] = []   # frames over 50 ms: "#n 312 ms (simulated 50 ms) ...: what was happening"
+var _hitch_count := 0
+var _clock_text := ""
 var _nm_log: Array[String] = []  # last few "#n code X ms, next frames worst Y ms" lines
 const PUNCH_TIME := 0.28
 const SHRINK_TIME := 0.6
@@ -928,6 +931,19 @@ func note_near_miss(handler_ms: float) -> void:
 	_nm_frames_left = 4
 	_nm_worst = 0.0
 
+## ?perf: a frame took more than 50 ms. `raw` = the real frame, `used` = what the simulation took of it.
+func note_hitch(raw: float, used: float, why: String, context: String) -> void:
+	_hitch_count += 1
+	var line := "#%d %.0f ms (simulated %.0f ms) %s | %s" % [_hitch_count, raw * 1000.0, used * 1000.0, why, context]
+	_hitch_log.append(line)
+	if _hitch_log.size() > 5:
+		_hitch_log.pop_front()
+	print("[hitch] " + line)   # (also in the browser console)
+
+## ?perf: simulated seconds vs wall-clock seconds this run (pauses excluded). Simulated above wall = a fast-forward.
+func set_clock(sim: float, wall: float) -> void:
+	_clock_text = "sim %.1f s / wall %.1f s" % [sim, wall]
+
 func _update_perf(delta: float) -> void:
 	if _perf_label == null:
 		return
@@ -945,7 +961,7 @@ func _update_perf(delta: float) -> void:
 		_perf_shown = _perf_worst
 		_perf_worst = 0.0
 		_perf_window_start = now
-	_perf_label.text = "worst frame (3s): %.0f ms\nnear misses:\n%s" % [_perf_shown, "\n".join(_nm_log)]
+	_perf_label.text = "worst frame (3s): %.0f ms   %s\nhitches (over 50 ms):\n%s\nnear misses:\n%s" % [_perf_shown, _clock_text, "\n".join(_hitch_log), "\n".join(_nm_log)]
 
 ## Startup pre-warm: a splash screen (nearly opaque, so the effects behind it are really drawn
 ## on screen and not skipped) while the game draws every popup tier at every font size and the
