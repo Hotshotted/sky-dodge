@@ -717,12 +717,17 @@ func _on_near_miss(ev: Dictionary) -> void:
 		fx.streaks(player.position)
 	if not DebugFlags.off("flash"):
 		spawner.flash_obstacle(ev["outline"])
+	var barnstormer: bool = ev.get("special", "") == "barnstormer"
 	if whisker and not DebugFlags.off("sparks"):
 		fx.whisker(player.position + Vector3(side * 1.05, 0.0, 0.1))   # the special burst
+		if barnstormer:   # ...and one on the other wingtip too
+			fx.whisker(player.position + Vector3(-side * 1.05, 0.0, 0.1))
 	if not DebugFlags.off("popup"):
 		var i := Tuning.popup_tier(bonus)
 		var pos := camera.unproject_position(player.position + Vector3(0, 0, -2.0))
-		if whisker:   # "Whisker close!" + the number: bigger, in its own colour
+		if barnstormer:   # "Barnstormer!" + the number
+			hud.popup(Tuning.barnstormer_text + "\n" + Tuning.popup_text(bonus), Tuning.whisker_size, Tuning.barnstormer_color, pos)
+		elif whisker:   # "Whisker close!" + the number: bigger, in its own colour
 			hud.popup(Tuning.whisker_text + "\n" + Tuning.popup_text(bonus), Tuning.whisker_size, Tuning.whisker_color, pos)
 		else:         # regular close call: just the number
 			hud.popup(Tuning.popup_text(bonus), Tuning.near_miss_sizes[mini(i, Tuning.near_miss_sizes.size() - 1)],

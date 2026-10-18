@@ -42,13 +42,21 @@ func _kit_pass(kit, carrier: Node3D, kind: int, d: float, kpz: float, kcaps: Pac
 	kit.plane_x = 0.0
 	kit.plane_z = kpz
 	var moving := kind != 3
-	carrier.position.z = (-12.0 if kind == 6 else kpz - 9.0) if moving else -8.0
+	carrier.position.z = (-30.0 if kind == 6 else kpz - 9.0) if moving else -8.0
 	var vscroll := 7.0 if kind == 6 else 14.0
+	kit.scroll_speed = vscroll
 	match kind:
 		0: kit.spawn(kind, carrier, 2.0 + d, 0.0, 1.2)
+		9: kit.spawn(0, carrier, 3.2 + d, 0.0, 0.6, 1.0)   # a fly-through barn: pass beside it
+		1:
+			var k_tr = kit.spawn(kind, carrier, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 1.0)   # a tractor, already driving
+			k_tr.state = 2
+			k_tr.solid = true
+			k_tr.drops = 99
+			k_tr.state_age = 0.47 - d * 0.2
 		5: kit.spawn(kind, carrier, -5.0, 0.0, -d - 1.5); kit.spawn(kind, carrier, d + 1.5, 0.0, 5.0)
 		3: kit.spawn(kind, carrier, 0.0, 0.0, 0.0, 0.0, d)
-		6: kit.spawn(kind, carrier, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 1.0, (d + 0.5) * 0.4)
+		6: kit.spawn(kind, carrier, 0.0, 0.0, d * 0.15 + 1.35, 0.0, 0.0, 0.0, 0.0, 1.0)
 		4: kit.spawn(kind, carrier, 2.5 + d, 0.0, 0.0, 0.0, 1.0, 0.8, 0.0)
 		2: kit.spawn(kind, carrier, 3.2 + d, 0.0, 0.0, 0.0, 0.0, 0.0, 0.7, 1.0)
 		8: kit.spawn(kind, carrier, 1.4 + d, 0.0, 0.0, 1.0)
@@ -2696,7 +2704,7 @@ func _initialize() -> void:
 		kpool_ok = kpool_ok and kit._free[kind].size() == kit.POOL[kind]
 	check(kpool_ok, "released things go back to their pools")
 	# hit shapes: standing in the middle of each static kind is a crash, far to the side is not
-	for kind in [0, 1, 2, 4, 7, 8]:
+	for kind in [0, 2, 4, 7, 8]:
 		k_carrier.position.z = kpz
 		var k_ent2 = kit.spawn(kind, k_carrier, 0.0, 0.0, 1.6 if kind == 0 else 0.0)
 		kit.update(0.0)
@@ -2712,7 +2720,7 @@ func _initialize() -> void:
 	check(not kit.hits(Vector2(0.0, kpz), kcaps), "power line: the gap between the poles is open")
 	kit.release_all()
 	# close calls against every kind, moving ones included: some offset passes without touching and still scores a near miss
-	var sweep_kinds := {0: "barn", 1: "silo", 2: "windmill", 4: "balloon", 7: "kite", 3: "crow", 6: "duster", 5: "powerline", 8: "hay"}
+	var sweep_kinds := {0: "barn", 1: "tractor", 9: "fly-through barn", 2: "windmill", 4: "balloon", 7: "kite", 3: "crow", 6: "duster", 5: "powerline", 8: "hay"}
 	for kind in sweep_kinds:
 		var k_got_event := false
 		var k_d := 4.0
@@ -2766,6 +2774,114 @@ func _initialize() -> void:
 	var k_br2: Array[Dictionary] = kit.break_hay(kp, kcaps, false, true, kpz)
 	check(k_br2.is_empty() and kit.hits(kp, kcaps) and kit.last_hit_hay, "hay: hitting it from the side crashes (a crate crash)")
 	kit.release_all()
+	# the fly-through barn: walls crash, the doorway is clear, flying straight through is a Barnstormer
+	kit.release_all()
+	k_carrier.position.z = kpz
+	var k_barn = kit.spawn(0, k_carrier, 0.0, 0.0, 1.0, 1.0)
+	kit.update(0.0)
+	check(kit.hits(Vector2(-2.2, kpz), kcaps) and kit.hits(Vector2(2.2, kpz), kcaps), "a fly-through barn: its walls crash the plane")
+	check(not kit.hits(Vector2(0.0, kpz), kcaps), "...and the doorway between them (%.1f wide) is clear" % tuning.barn_door_width)
+	check(kit.col_count == 2, "...two wall shapes, no roof over the doorway")
+	var k_ev: Array[Dictionary] = []
+	var k_behind := 0.0
+	for o in range(0, kcaps.size(), 5):
+		k_behind = maxf(k_behind, maxf(kcaps[o + 1], kcaps[o + 3]) + kcaps[o + 4])
+	k_carrier.position.z = kpz - 5.0
+	while k_carrier.position.z < kpz + 6.0:
+		k_carrier.position.z += 0.2
+		kit.update(0.0)
+		kit.update_near_misses(Vector2(0.0, kpz), kcaps, tuning.near_miss_distance, k_behind, k_ev, tuning.whisker_close_distance)
+	check(k_ev.size() == 1 and k_ev[0].get("special", "") == "barnstormer" and k_ev[0]["whisker"], "flying straight through gives one Barnstormer (a Whisker close)")
+	kit.release_all()
+	k_ev.clear()
+	var k_barn2 = kit.spawn(0, k_carrier, 3.6, 0.0, 1.0, 1.0)   # flying past the outside is only an ordinary close call or nothing
+	k_carrier.position.z = kpz - 5.0
+	while k_carrier.position.z < kpz + 6.0:
+		k_carrier.position.z += 0.2
+		kit.update(0.0)
+		kit.update_near_misses(Vector2(0.0, kpz), kcaps, tuning.near_miss_distance, k_behind, k_ev, tuning.whisker_close_distance)
+	check(k_ev.is_empty() or k_ev[0].get("special", "") != "barnstormer", "going around a barn is not a Barnstormer")
+	kit.release_all()
+	# windmill variants: standard 4 blades, large 3, small 2 (fast); the colliders follow the blades
+	var blade_counts := []
+	for k_v in 3:
+		kit.release_all()
+		k_carrier.position.z = kpz - 6.0
+		var k_wm = kit.spawn(2, k_carrier, 0.0, 0.0, float(k_v), 0.0, 0.0, 0.0, 0.0, 1.0)
+		kit.update(0.0)
+		blade_counts.append(kit.col_count - 1)
+		var longest := 0.0
+		for ci in kit.col_count:
+			longest = maxf(longest, kit.col[ci * kit.STRIDE + 3])
+		check(absf(longest - maxf(tuning.windmill_blade[k_v] * 0.5, tuning.windmill_hub[k_v])) < 0.001, "windmill variant %d: blade shapes are the blade length (%.1f)" % [k_v, tuning.windmill_blade[k_v]])
+	check(blade_counts == [4, 3, 2], "windmills: standard 4 blades, large 3, small 2 (%s)" % str(blade_counts))
+	check(tuning.windmill_blade[0] >= 3.0 and tuning.windmill_blade[1] > tuning.windmill_blade[0] - 0.01 and tuning.windmill_speed[2] > tuning.windmill_speed[0] * 2.0, "the blades span most of the lane; the small one is much faster")
+	# the blades always show their `phase` when the windmill reaches the plane's row, at any scroll speed
+	var angle_ok := true
+	for k_spd in [7.0, 13.0, 26.0]:
+		kit.release_all()
+		kit.scroll_speed = k_spd
+		var k_wm2 = kit.spawn(2, k_carrier, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 1.1, 1.0)
+		k_carrier.position.z = kpz
+		kit.update(0.0)
+		angle_ok = angle_ok and absf(k_wm2.ang - 1.1) < 0.0001
+	check(angle_ok, "windmill blades are at their pattern phase when they reach the plane, whatever the speed")
+	kit.scroll_speed = 7.0
+	kit.release_all()
+	# the tractor: dust plume first, then it drives across (solid), dropping hay bales behind it
+	k_carrier.position.z = -10.0
+	var k_tractor = kit.spawn(1, k_carrier, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 1.0)
+	kit.update(1.0 / 60.0)
+	check(k_tractor.state == 1 and k_tractor.arrow.visible and not k_tractor.solid, "a tractor first shows a dust plume at the edge (not solid yet)")
+	var t_tr := 0.0
+	while k_tractor.state < 2 and t_tr < 3.0:
+		kit.update(1.0 / 60.0)
+		t_tr += 1.0 / 60.0
+	check(k_tractor.state == 2 and k_tractor.solid and not k_tractor.arrow.visible and t_tr >= tuning.tractor_telegraph - 0.05, "...then drives in after %.1f s" % t_tr)
+	var x_a: float = k_tractor.px
+	for i in 60:
+		kit.update(1.0 / 60.0)
+	check(absf((k_tractor.px - x_a) - tuning.tractor_speed) < 0.05, "it crosses slowly: %.1f units/second" % tuning.tractor_speed)
+	var hay_n := 0
+	for i in 240:
+		kit.update(1.0 / 60.0)
+	for e2 in kit.active:
+		hay_n += int(e2.kind == 8)
+	check(hay_n >= 2 and hay_n <= tuning.tractor_drops, "it drops hay bales behind it (%d so far)" % hay_n)
+	check(kit.dropped == 0, "...and the pools had room")
+	kit.release_all()
+	# the crop duster's warning: the edge glows and pulses, a red line marks its row, and it stays until the duster enters
+	kit.scroll_speed = 8.0
+	kit.plane_z = kpz
+	k_carrier.position.z = kpz - 30.0
+	var k_dwarn = kit.spawn(6, k_carrier, 0.0, 0.0, 0.7, 0.0, 0.0, 0.0, 0.0, 1.0)
+	var warned_at := -1.0
+	var entered_at := -1.0
+	var glow_pulses: Array[float] = []
+	var line_ok := true
+	var t_d2 := 0.0
+	while t_d2 < 8.0 and entered_at < 0.0:
+		k_carrier.position.z += 8.0 / 60.0
+		kit.update(1.0 / 60.0)
+		t_d2 += 1.0 / 60.0
+		if k_dwarn.state == 1:
+			if warned_at < 0.0:
+				warned_at = t_d2
+			glow_pulses.append(kit.warn_mat.albedo_color.a)
+			var edge_node: Node3D = k_dwarn.arrow.get_node("edge")
+			var line_node: Node3D = k_dwarn.arrow.get_node("line")
+			line_ok = line_ok and k_dwarn.arrow.visible and edge_node.position.x < -3.0 and absf(line_node.position.z - k_dwarn.pz) < 0.001
+		if k_dwarn.state == 2 and entered_at < 0.0:
+			entered_at = t_d2
+	var pmin := 1.0
+	var pmax := 0.0
+	for pa in glow_pulses:
+		pmin = minf(pmin, pa)
+		pmax = maxf(pmax, pa)
+	check(warned_at > 0.0 and entered_at - warned_at >= tuning.duster_telegraph - 0.03, "the duster's warning runs %.2f s before it enters (set %.1f s)" % [entered_at - warned_at, tuning.duster_telegraph])
+	check(line_ok and pmax - pmin > 0.2 and not k_dwarn.arrow.visible, "the edge glow pulses (%.2f..%.2f), the red row line follows the row, and both stay until it enters" % [pmin, pmax])
+	kit.release_all()
+	kit.scroll_speed = 7.0
 	# a long kit run allocates nothing
 	ksp.reset(-14.0)
 	main.set_process(false)
@@ -2788,7 +2904,7 @@ func _initialize() -> void:
 	var pz_pats: Array = P.all()
 	var pz_names_seen := {}
 	var pz_data_ok := true
-	var kinds_ok := ["barn", "silo", "windmill", "balloon", "kite", "powerline", "crow", "duster"]
+	var kinds_ok := ["barn", "tractor", "windmill", "balloon", "kite", "powerline", "crow", "duster"]
 	for vpt in pz_pats:
 		pz_data_ok = pz_data_ok and not pz_names_seen.has(vpt["name"]) and int(vpt["diff"]) >= 1 and int(vpt["diff"]) <= 5 and int(vpt["rows"]) >= 2 and int(vpt["rows"]) <= 6
 		pz_data_ok = pz_data_ok and float(vpt["speed"][0]) < float(vpt["speed"][1]) and (vpt["tags"] as Array).size() >= 1

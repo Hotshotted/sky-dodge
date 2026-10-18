@@ -115,14 +115,33 @@ var cloud_color := Color(1.0, 1.0, 1.0)
 
 # ---------- Countryside obstacle kit ----------
 ## Windmill blades turn this fast (radians/second) and reach this far from the hub (units).
-var windmill_speed := 1.5
-var windmill_blade := 2.3
+## Windmills come in three variants [standard, large, small]: blades (count), blade length (from the hub), blade half width,
+## turning speed (radians/second) and hub radius. The standard and large ones span most of the lane.
+var windmill_blades: Array[int] = [4, 3, 2]
+var windmill_blade: Array[float] = [3.4, 3.8, 1.9]
+var windmill_width: Array[float] = [0.3, 0.36, 0.22]
+var windmill_speed: Array[float] = [1.2, 0.4, 3.2]
+var windmill_hub: Array[float] = [0.85, 1.0, 0.6]
+## Barn: the doorway between the walls is this wide (the plane is about 2.3 wide); flying through is a "Barnstormer!".
+var barn_door_width := 3.2
+var barnstormer_text := "Barnstormer!"
+var barnstormer_color := Color(1.0, 0.55, 0.15)
+## Tractor: drives sideways at tractor_speed, starts tractor_lead units before the top of the screen after a dust plume of
+## tractor_telegraph seconds, and drops a bale every tractor_drop_every seconds (tractor_drops at most).
+var tractor_speed := 2.6
+var tractor_telegraph := 1.0
+var tractor_lead := 10.0
+var tractor_drop_every := 0.9
+var tractor_drops := 4
 ## Crows: they hover at the top edge for crow_telegraph seconds (flapping, in view), then swoop toward where the
 ## plane IS at that moment at crow_speed (units/second) and fly straight on: never homing after the swoop starts.
 var crow_telegraph := 1.0
 var crow_speed := 11.0
 ## Crop duster: an arrow at the screen edge for duster_telegraph seconds, then the plane crosses at duster_speed.
-var duster_telegraph := 1.0
+var duster_telegraph := 1.5
+## ...the edge it comes from glows red, a faint red line marks its row, until it enters. The pattern checker gives the plane
+## duster_react seconds of human reaction time after the warning starts.
+var duster_react := 0.4
 var duster_speed := 9.0
 ## Balloons drift sideways (amplitude units, angular speed); kites wiggle the same way, smaller and quicker.
 var balloon_amp := 2.2

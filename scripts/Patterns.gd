@@ -56,14 +56,17 @@ static func realize(kit, pat: Dictionary, mirror: bool, carriers: Array, hay_fil
 		var dz: float = float(it.get("dz", 0.0))
 		var x: float = float(it.get("x", 0.0))
 		match String(it["t"]):
-			"barn":
-				kit.spawn(Kit.BARN, row, x, dz, float(it.get("hx", 1.2)))
+			"barn":   # "wall": a fly-through barn (a doorway between two walls of this thickness); "hx": a closed one
+				if it.get("door", true):
+					kit.spawn(Kit.BARN, row, x, dz, float(it.get("wall", 1.0)), 1.0)
+				else:
+					kit.spawn(Kit.BARN, row, x, dz, float(it.get("hx", 1.2)), 0.0)
 				placed += 1
-			"silo":
-				kit.spawn(Kit.SILO, row, x, dz)
+			"tractor":
+				kit.spawn(Kit.TRACTOR, row, 0.0, dz, 0.0, 0.0, 0.0, 0.0, 0.0, float(it.get("dir", 1.0)))
 				placed += 1
-			"windmill":
-				kit.spawn(Kit.WINDMILL, row, x, dz, 0.0, 0.0, 0.0, 0.0, float(it.get("phase", 0.0)), float(it.get("dir", 1.0)))
+			"windmill":   # "v": 0 standard, 1 large (3 blades), 2 small and fast
+				kit.spawn(Kit.WINDMILL, row, x, dz, float(it.get("v", 0)), 0.0, 0.0, 0.0, float(it.get("phase", 0.0)), float(it.get("dir", 1.0)))
 				placed += 1
 			"balloon":
 				kit.spawn(Kit.BALLOON, row, x, dz, 0.0, 0.0, float(it.get("amp", _tn().balloon_amp)), float(it.get("rate", _tn().balloon_rate)), float(it.get("phase", 0.0)))
@@ -93,7 +96,7 @@ static func realize(kit, pat: Dictionary, mirror: bool, carriers: Array, hay_fil
 						c.leader = lead
 						placed += 1
 			"duster":
-				kit.spawn(Kit.DUSTER, row, 0.0, dz, 0.0, 0.0, 0.0, 0.0, 0.0, float(it.get("dir", 1.0)), float(it.get("delay", 0.0)))
+				kit.spawn(Kit.DUSTER, row, 0.0, dz, float(it.get("arrive", 0.7)), 0.0, 0.0, 0.0, 0.0, float(it.get("dir", 1.0)), float(it.get("delay", 0.0)))
 				placed += 1
 	var slots: Array = pat.get("hay", [])
 	for i in slots.size():
@@ -170,6 +173,7 @@ static func _run(kit, pat: Dictionary, mirror: bool, speed: float, plane_z: floa
 	kit.screen_top_z = top_z
 	kit.plane_z = plane_z
 	kit.plane_x = 0.0
+	kit.scroll_speed = speed
 	kit.aim_override = aim
 	var z0 := top_z - 14.0
 	var rows := int(pat["rows"])
@@ -186,6 +190,8 @@ static func _run(kit, pat: Dictionary, mirror: bool, speed: float, plane_z: floa
 		cur.append(true)
 		nxt.append(false)
 	var launched := false
+	var warned := false          # a crop duster's warning has started
+	var freeze := 0              # steps the plane can not move yet (human reaction time after a warning)
 	var has_crow := aim > -90.0
 	var end_z := plane_z + 9.0
 	var steps := 0
@@ -201,6 +207,14 @@ static func _run(kit, pat: Dictionary, mirror: bool, speed: float, plane_z: floa
 			var bound: float = kit.col[q + 3] + (kit.col[q + 4] if kit.col[q] == Kit.T_RECT else 0.0) + 0.5
 			if absf(kit.col[q + 2] - plane_z) < bound + 2.0:
 				near.append(ci)
+		if not warned:
+			for e in kit.active:
+				if e.kind == Kit.DUSTER and e.state >= 1:
+					warned = true
+					if steps <= 1:
+						kit.release_all()
+						return "a crop duster's warning is already running when the pattern appears (no time to warn)"
+					freeze = int(ceil(_tn().duster_react / STEP))
 		if has_crow and not launched:
 			for e in kit.active:
 				if e.kind == Kit.CROW and e.state == 2:
@@ -212,7 +226,7 @@ static func _run(kit, pat: Dictionary, mirror: bool, speed: float, plane_z: floa
 		var any := false
 		for i in cells:
 			var ok := false
-			if cur[i] or (i > 0 and cur[i - 1]) or (i < cells - 1 and cur[i + 1]):
+			if cur[i] or (freeze <= 0 and ((i > 0 and cur[i - 1]) or (i < cells - 1 and cur[i + 1]))):
 				ok = true
 				if not near.is_empty():
 					p.x = -x_lim + i * CELL
@@ -231,6 +245,7 @@ static func _run(kit, pat: Dictionary, mirror: bool, speed: float, plane_z: floa
 			kit.release_all()
 			kit.aim_override = -99.0
 			return "no way through at step %d (t=%.2f s, aim %.1f)" % [steps, steps * STEP, aim]
+		freeze = maxi(freeze - (1 if warned else 0), 0) if freeze > 0 else 0
 		var tmp := cur
 		cur = nxt
 		nxt = tmp

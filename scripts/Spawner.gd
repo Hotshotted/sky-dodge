@@ -693,11 +693,9 @@ func wave_name() -> String:
 
 ## Phases change when a new pattern is about to be chosen (catching up if time jumped).
 func _wave_update() -> void:
-	var guard := 0
-	while guard < 64 and run_time - _wave_start >= Tuning.wave_seconds[wave_phase]:
+	if run_time - _wave_start >= Tuning.wave_seconds[wave_phase]:   # (one phase per pattern at most: none is ever skipped)
 		_wave_start += Tuning.wave_seconds[wave_phase]
 		_wave_step()
-		guard += 1
 
 func _wave_step() -> void:
 	wave_phase = (wave_phase + 1) % WAVE_NAMES.size()
@@ -728,9 +726,18 @@ func _kit_open_flags(row: Row, open: Array[bool]) -> void:
 		var lo := 0.0
 		var hi := 0.0
 		match e.kind:
-			Kit.BARN, Kit.SILO, Kit.BALLOON, Kit.KITE, Kit.HAY:
+			Kit.BARN, Kit.BALLOON, Kit.KITE, Kit.HAY:
 				lo = e.px - e.reach.x - 0.8
 				hi = e.px + e.reach.x + 0.8
+				if e.kind == Kit.BARN and e.b > 0.5:   # the doorway stays open: block the two walls separately
+					var door: float = Tuning.barn_door_width * 0.5
+					for c in open.size():
+						var cx := Tuning.column_center(c)
+						if absf(cx - e.px) > door - 0.3 and absf(cx - e.px) < e.reach.x + 0.8:
+							open[c] = false
+					continue
+			Kit.TRACTOR:
+				continue   # it drives through; the bales it drops are things of their own
 			Kit.WINDMILL:
 				lo = e.px - 1.6
 				hi = e.px + 1.6
@@ -1123,6 +1130,7 @@ func update_hazards(delta: float) -> void:
 			kit.glow_mats[k].albedo_color = Tuning.crate_colors[k] * pulse
 		kit.plane_x = plane_x
 		kit.plane_z = plane_z
+		kit.scroll_speed = scroll_speed
 		kit.update(delta)
 
 ## ---- Clouds: free-floating bundles --------------------------------------------------------------

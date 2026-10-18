@@ -2,7 +2,8 @@ class_name Kit
 extends Node3D
 ## The Countryside obstacle kit: simple low-poly things built in code from a few primitives (flat-shaded,
 ## black outline), all pooled (every node is created once at start-up and reused).
-##   BARN / SILO       static blockers (barns come in several footprints)
+##   BARN              closed: a static blocker; with a doorway: a fly-through (flying straight through is a Barnstormer)
+##   TRACTOR           drives sideways across the lane, dust plume first, and drops hay bales behind it
 ##   WINDMILL          static base, turning blades that sweep part of the lane
 ##   CROW              a flock enters from the top: it hovers at the edge (telegraph), then swoops toward where the
 ##                     plane is at that moment and flies straight on (never homing once it has started)
@@ -14,9 +15,9 @@ extends Node3D
 ## Every thing has colliders (rectangles / circles) built from the SAME numbers as its model, so the hit shape is
 ## what you see. Things belong to a "carrier" row of the Spawner: its z is their clock and, for most, their position.
 
-enum { BARN, SILO, WINDMILL, CROW, BALLOON, POWERLINE, DUSTER, KITE, HAY }
-const NAMES := ["barn", "silo", "windmill", "crow", "balloon", "powerline", "duster", "kite", "hay"]
-const POOL := [10, 8, 6, 14, 6, 10, 3, 6, 10]
+enum { BARN, TRACTOR, WINDMILL, CROW, BALLOON, POWERLINE, DUSTER, KITE, HAY }
+const NAMES := ["barn", "tractor", "windmill", "crow", "balloon", "powerline", "duster", "kite", "hay"]
+const POOL := [10, 4, 6, 14, 6, 10, 3, 6, 16]
 const STRIDE := 9            # collider floats: type, cx, cz, hx (radius for circles), hz, cos, sin, owner, flags
 const MAX_COLLIDERS := 96
 const T_RECT := 0.0
@@ -25,7 +26,8 @@ const F_HAY := 1.0
 const NEAR_RANGE := 5.0
 const HAY_HALF := Vector2(0.6, 0.55)     # hay bale: half width (x), half depth (z)
 const BARN_DEPTH := 1.3
-const SILO_RADIUS := 0.85
+const BARN_LONG := 1.9                   # a fly-through barn is longer than a closed one
+const WALLS := [0.6, 1.0, 1.6]           # wall thicknesses a fly-through barn comes in
 const BALLOON_RADIUS := 1.3
 const KITE_RADIUS := 0.42
 const CROW_RADIUS := 0.34
@@ -72,7 +74,11 @@ class Ent extends Node3D:
 	var wing_r: Node3D
 	var glow: MeshInstance3D           # hay: the contents glow
 	var ghost: MeshInstance3D          # Cloud Eye frame
-	var arrow: Node3D                  # duster: the telegraph arrow
+	var arrow: Node3D                  # duster / tractor: the telegraph (world coordinates)
+	var rig: Node3D                    # duster / tractor: the model, turned the way it goes
+	var thru := 0                      # barn: frames the plane was inside the doorway
+	var drops := 0                     # tractor: bales dropped so far
+	var drop_t := 0.0
 	var tail: Node3D
 	var col_first := 0
 	var col_n := 0
@@ -92,6 +98,9 @@ var _mats := {}
 var _meshes := {}
 var glow_mats: Array[StandardMaterial3D] = []
 var arrow_mat := StandardMaterial3D.new()
+var warn_mat := StandardMaterial3D.new()
+var warn_line_mat := StandardMaterial3D.new()
+var scroll_speed := 7.0            # set by the Spawner: the dusters time their warning by it   # the crop duster's red edge glow and row line
 var last_hit_hay := false
 var dropped := 0                   # spawn() calls that found their pool empty (tests expect 0)
 var aim_override := -99.0          # the validator forces where a crow flock aims
@@ -106,6 +115,16 @@ func _ready() -> void:
 	arrow_mat.shading_mode = BaseMaterial3D.SHADING_MODE_UNSHADED
 	arrow_mat.albedo_color = Color(1.0, 0.35, 0.1)
 	arrow_mat.cull_mode = BaseMaterial3D.CULL_DISABLED
+	warn_mat.shading_mode = BaseMaterial3D.SHADING_MODE_UNSHADED
+	warn_mat.transparency = BaseMaterial3D.TRANSPARENCY_ALPHA
+	warn_mat.albedo_color = Color(1.0, 0.1, 0.05, 0.3)
+	warn_mat.cull_mode = BaseMaterial3D.CULL_DISABLED
+	warn_mat.render_priority = 3
+	warn_line_mat.shading_mode = BaseMaterial3D.SHADING_MODE_UNSHADED
+	warn_line_mat.transparency = BaseMaterial3D.TRANSPARENCY_ALPHA
+	warn_line_mat.albedo_color = Color(1.0, 0.1, 0.05, 0.2)
+	warn_line_mat.cull_mode = BaseMaterial3D.CULL_DISABLED
+	warn_line_mat.render_priority = 3
 	for k in POOL.size():
 		var lst: Array[Ent] = []
 		_free.append(lst)
@@ -118,6 +137,13 @@ func _ready() -> void:
 		_wedge(2.0 * h + 0.1, 0.24, 2.0 * BARN_DEPTH + 0.1)
 	for i in range(1, 25):
 		_box(0.5 * i, 0.05, 2.0 * WIRE_HALF)
+	for w in WALLS:
+		_box(w, 0.5, 2.0 * BARN_LONG)
+		_box(w + 0.1, 0.12, 2.0 * BARN_LONG + 0.1)
+	_box(Tuning.barn_door_width, 0.02, 2.0 * BARN_LONG)
+	for v in 3:
+		_box(Tuning.windmill_blade[v], 0.05, 2.0 * Tuning.windmill_width[v])
+		_cyl(Tuning.windmill_hub[v], Tuning.windmill_hub[v] * 0.6, 0.5, 8)
 
 # ---------- meshes and materials ----------
 
@@ -287,21 +313,39 @@ func _build(kind: int) -> Ent:
 	e.outline.shader = _shader
 	e.outline.set_shader_parameter("thickness", Tuning.outline_thickness)
 	match kind:
-		BARN:   # sized when spawned (parts are rebuilt in place, see _size_barn)
+		BARN:   # closed: part 0 body + part 1 roof. Fly-through: parts 0/1 left wall + roof, 2/3 right wall + roof, 4 floor
 			_part(e, _box(2.0, 0.5, 2.0), Color(0.78, 0.22, 0.18), Vector3(0, 0.15, 0))
 			_part(e, _wedge(2.0, 0.24, 2.0), Color(0.5, 0.13, 0.11), Vector3(0, 0.52, 0))
-			_part(e, _box(0.5, 0.02, 0.5), Color(0.95, 0.9, 0.8), Vector3(0, 0.66, 0), null, false, false)
-		SILO:
-			_part(e, _cyl(SILO_RADIUS, SILO_RADIUS, 0.6, 9), Color(0.68, 0.74, 0.82), Vector3(0, 0.2, 0))
-			_part(e, _ball(SILO_RADIUS, 0.26, SILO_RADIUS, 9, 2, true, Color(0.5, 0.56, 0.68), Color(0.5, 0.56, 0.68)), Color.WHITE, Vector3(0, 0.5, 0), null, true, false)
-		WINDMILL:
+			_part(e, _box(2.0, 0.5, 2.0), Color(0.78, 0.22, 0.18), Vector3(0, 0.15, 0))
+			_part(e, _box(2.0, 0.12, 2.0), Color(0.5, 0.13, 0.11), Vector3(0, 0.5, 0))
+			_part(e, _box(2.0, 0.02, 2.0), Color(0.8, 0.7, 0.5), Vector3(0, 0.0, 0), null, false, false)
+		TRACTOR:   # drives along +x of its rig (the rig turns it the way it goes)
+			e.rig = Node3D.new()
+			e.add_child(e.rig)
+			_part(e, _box(1.1, 0.34, 0.8), Color(0.2, 0.62, 0.3), Vector3(0, 0.2, 0), e.rig)
+			_part(e, _box(0.7, 0.26, 0.5), Color(0.15, 0.5, 0.25), Vector3(0.85, 0.16, 0), e.rig)
+			_part(e, _box(0.5, 0.3, 0.6), Color(0.95, 0.85, 0.3), Vector3(-0.2, 0.5, 0), e.rig)
+			for sz in [-1.0, 1.0]:
+				_part(e, _box(0.5, 0.3, 0.14), Color(0.15, 0.15, 0.17), Vector3(-0.45, 0.12, 0.5 * sz), e.rig)
+				_part(e, _box(0.3, 0.22, 0.12), Color(0.15, 0.15, 0.17), Vector3(0.85, 0.08, 0.38 * sz), e.rig)
+			e.arrow = Node3D.new()   # the dust plume at the edge it will drive in from (world coordinates)
+			for k in 3:
+				var puff := MeshInstance3D.new()
+				puff.mesh = _box(0.4, 0.4, 0.4)
+				puff.material_override = _mat(Color(0.82, 0.72, 0.52))
+				puff.cast_shadow = GeometryInstance3D.SHADOW_CASTING_SETTING_OFF
+				puff.position = Vector3(0.0, 0.4, 0.0)
+				e.arrow.add_child(puff)
+			add_child(e.arrow)
+			e.arrow.visible = false
+		WINDMILL:   # tower and hub; the blades (up to 4) turn on the pivot and are sized when it is spawned
 			_part(e, _cyl(0.85, 0.5, 0.5, 8), Color(0.92, 0.86, 0.7), Vector3(0, 0.2, 0))
 			_part(e, _cyl(0.22, 0.22, 0.18, 8), Color(0.45, 0.3, 0.2), Vector3(0, 0.52, 0))
 			e.pivot = Node3D.new()
 			e.pivot.position = Vector3(0, 0.6, 0)
 			e.add_child(e.pivot)
-			_part(e, _box(2.0 * Tuning.windmill_blade, 0.05, 0.36), Color(0.78, 0.6, 0.38), Vector3.ZERO, e.pivot)
-			_part(e, _box(0.36, 0.05, 2.0 * Tuning.windmill_blade), Color(0.78, 0.6, 0.38), Vector3(0, 0.001, 0), e.pivot)
+			for k in 4:
+				_part(e, _box(1.0, 0.05, 0.4), Color(0.78, 0.6, 0.38) if k % 2 == 0 else Color(0.86, 0.7, 0.45), Vector3(0, 0.001 * k, 0), e.pivot)
 		CROW:
 			_part(e, _box(0.3, 0.12, 0.44), Color(0.2, 0.2, 0.24), Vector3(0, 0.4, 0))
 			_part(e, _box(0.12, 0.1, 0.12), Color(0.95, 0.6, 0.15), Vector3(0, 0.4, -0.28), null, false, false)
@@ -322,20 +366,34 @@ func _build(kind: int) -> Ent:
 			_part(e, _box(2.0 * POLE_HALF, 0.55, 2.0 * POLE_HALF), Color(0.5, 0.36, 0.22), Vector3(0, 0.12, 0))
 			_part(e, _box(1.0, 0.07, 0.16), Color(0.42, 0.3, 0.18), Vector3(0, 0.44, 0), null, false, false)
 			_part(e, _box(1.0, 0.07, 0.16), Color(0.42, 0.3, 0.18), Vector3(0, 0.44, 0), null, false, false)
-		DUSTER:
-			_part(e, _box(2.0 * DUSTER_BODY.x, 0.2, 2.0 * DUSTER_BODY.y), Color(0.95, 0.85, 0.2), Vector3(0, 0.4, 0))
-			_part(e, _box(2.0 * DUSTER_WING.x, 0.06, 2.0 * DUSTER_WING.y), Color(0.2, 0.65, 0.35), Vector3(0.1, 0.42, 0))
-			_part(e, _box(0.34, 0.05, 0.9), Color(0.2, 0.65, 0.35), Vector3(-0.75, 0.42, 0))
+		DUSTER:   # flies along +x of its rig
+			e.rig = Node3D.new()
+			e.add_child(e.rig)
+			_part(e, _box(2.0 * DUSTER_BODY.x, 0.2, 2.0 * DUSTER_BODY.y), Color(0.95, 0.85, 0.2), Vector3(0, 0.4, 0), e.rig)
+			_part(e, _box(2.0 * DUSTER_WING.x, 0.06, 2.0 * DUSTER_WING.y), Color(0.2, 0.65, 0.35), Vector3(0.1, 0.42, 0), e.rig)
+			_part(e, _box(0.34, 0.05, 0.9), Color(0.2, 0.65, 0.35), Vector3(-0.75, 0.42, 0), e.rig)
 			e.pivot = Node3D.new()
 			e.pivot.position = Vector3(0.92, 0.4, 0)
-			e.add_child(e.pivot)
+			e.rig.add_child(e.pivot)
 			_part(e, _box(0.06, 0.04, 0.8), Color(0.3, 0.3, 0.3), Vector3.ZERO, e.pivot, false, false)
-			e.arrow = Node3D.new()
+			e.arrow = Node3D.new()   # the arrow, the glowing edge and the red row line: world coordinates, children of the kit
 			var ar := MeshInstance3D.new()
 			ar.mesh = _arrow()
 			ar.material_override = arrow_mat
 			ar.cast_shadow = GeometryInstance3D.SHADOW_CASTING_SETTING_OFF
 			e.arrow.add_child(ar)
+			var edge_glow := MeshInstance3D.new()
+			edge_glow.mesh = _box(0.9, 0.02, 34.0)
+			edge_glow.material_override = warn_mat
+			edge_glow.cast_shadow = GeometryInstance3D.SHADOW_CASTING_SETTING_OFF
+			edge_glow.name = "edge"
+			e.arrow.add_child(edge_glow)
+			var row_line := MeshInstance3D.new()
+			row_line.mesh = _box(Tuning.ortho_size, 0.02, 0.2)
+			row_line.material_override = warn_line_mat
+			row_line.cast_shadow = GeometryInstance3D.SHADOW_CASTING_SETTING_OFF
+			row_line.name = "line"
+			e.arrow.add_child(row_line)
 			add_child(e.arrow)
 			e.arrow.visible = false
 		KITE:
@@ -408,17 +466,60 @@ func spawn(kind: int, row, x0: float, dz: float, a: float = 0.0, b: float = 0.0,
 func _setup(e: Ent) -> void:
 	match e.kind:
 		BARN:
-			var hx := snappedf(e.a, 0.4)
-			e.a = hx
-			e.b = BARN_DEPTH
-			e.reach = Vector2(hx, BARN_DEPTH)
-			(e.parts[0]).mesh = _box(2.0 * hx, 0.5, 2.0 * BARN_DEPTH)
-			(e.parts[1]).mesh = _wedge(2.0 * hx + 0.1, 0.24, 2.0 * BARN_DEPTH + 0.1)
-			(e.parts[2]).visible = false
-		SILO:
-			e.reach = Vector2(SILO_RADIUS, SILO_RADIUS)
+			var open := e.b > 0.5
+			if open:   # fly-through: two walls with a doorway between them
+				var wall: float = WALLS[0]
+				for w in WALLS:
+					if absf(w - e.a) < absf(wall - e.a):
+						wall = w
+				e.a = wall
+				var c: float = Tuning.barn_door_width * 0.5 + wall * 0.5
+				e.reach = Vector2(Tuning.barn_door_width * 0.5 + wall, BARN_LONG)
+				e.parts[0].mesh = _box(wall, 0.5, 2.0 * BARN_LONG)
+				e.parts[0].position = Vector3(-c, 0.15, 0)
+				e.parts[1].mesh = _box(wall + 0.1, 0.12, 2.0 * BARN_LONG + 0.1)
+				e.parts[1].position = Vector3(-c, 0.5, 0)
+				e.parts[2].mesh = _box(wall, 0.5, 2.0 * BARN_LONG)
+				e.parts[2].position = Vector3(c, 0.15, 0)
+				e.parts[3].mesh = _box(wall + 0.1, 0.12, 2.0 * BARN_LONG + 0.1)
+				e.parts[3].position = Vector3(c, 0.5, 0)
+				e.parts[4].mesh = _box(Tuning.barn_door_width, 0.02, 2.0 * BARN_LONG)
+				for k in 5:
+					e.parts[k].visible = true
+			else:
+				var hx := snappedf(e.a, 0.4)
+				e.a = hx
+				e.reach = Vector2(hx, BARN_DEPTH)
+				e.parts[0].mesh = _box(2.0 * hx, 0.5, 2.0 * BARN_DEPTH)
+				e.parts[0].position = Vector3(0, 0.15, 0)
+				e.parts[1].mesh = _wedge(2.0 * hx + 0.1, 0.24, 2.0 * BARN_DEPTH + 0.1)
+				e.parts[1].position = Vector3(0, 0.52, 0)
+				e.parts[0].visible = true
+				e.parts[1].visible = true
+				for k in range(2, 5):
+					e.parts[k].visible = false
+			e.thru = 0
+		TRACTOR:
+			e.reach = Vector2(1.3, 0.6)
+			e.drops = 0
+			e.drop_t = 0.0
+			e.rig.rotation.y = 0.0 if e.dir > 0.0 else PI
+			e.arrow.visible = false
 		WINDMILL:
-			e.reach = Vector2(Tuning.windmill_blade, Tuning.windmill_blade)
+			var v := clampi(int(e.a), 0, 2)
+			e.a = v
+			var n: int = Tuning.windmill_blades[v]
+			var len: float = Tuning.windmill_blade[v]
+			e.reach = Vector2(len, len)
+			e.parts[0].mesh = _cyl(Tuning.windmill_hub[v], Tuning.windmill_hub[v] * 0.6, 0.5, 8)
+			for k in 4:
+				var bl: MeshInstance3D = e.parts[2 + k]
+				bl.visible = k < n
+				if k < n:
+					var phi := TAU * k / n
+					bl.mesh = _box(len, 0.05, 2.0 * Tuning.windmill_width[v])
+					bl.position = Vector3(cos(phi) * len * 0.5, 0.001 * k, sin(phi) * len * 0.5)
+					bl.rotation.y = -phi
 		CROW:
 			e.reach = Vector2(CROW_RADIUS, CROW_RADIUS)
 		BALLOON:
@@ -440,6 +541,7 @@ func _setup(e: Ent) -> void:
 			(e.parts[4]).mesh = _box(0.9, 0.07, 0.16)
 		DUSTER:
 			e.reach = Vector2(DUSTER_BODY.x + 0.4, DUSTER_WING.y)
+			e.rig.rotation.y = 0.0 if e.dir > 0.0 else PI   # the nose points the way it flies
 		KITE:
 			e.reach = Vector2(KITE_RADIUS, KITE_RADIUS)
 		HAY:
@@ -458,14 +560,9 @@ func _setup(e: Ent) -> void:
 			e.glow.material_override = glow_mats[ck - 1]
 			e.glow.visible = true
 			e.parts[0].visible = true
-	for part in e.parts:
-		if part != null and e.kind != BARN:
-			pass
 	if e.ghost != null:
 		e.ghost.scale = Vector3(2.0 * e.reach.x + 0.3, 1.0, 2.0 * e.reach.y + 0.3)
 	e.rotation = Vector3.ZERO
-	if e.kind == DUSTER:
-		e.rotation.y = 0.0 if e.dir > 0.0 else PI   # the nose points the way it flies
 
 func release(e: Ent) -> void:
 	e.visible = false
@@ -499,13 +596,17 @@ func _carrier_z(e: Ent) -> float:
 ## (they fly on their own); everything else is carried along by its row.
 func _pose(e: Ent, delta: float) -> void:
 	match e.kind:
-		BARN, SILO, HAY:
+		BARN, HAY:
 			e.px = e.x0
 			e.pz = _carrier_z(e)
+		TRACTOR:
+			_pose_tractor(e, delta)
 		WINDMILL:
 			e.px = e.x0
 			e.pz = _carrier_z(e)
-			e.ang = e.phase + e.dir * Tuning.windmill_speed * e.age
+			# the blades turn at windmill_speed, but their angle is pinned to the moment the windmill reaches the plane's row:
+			# there it always shows `phase`, whatever the scroll speed (so a pattern's timing holds at every speed step)
+			e.ang = e.phase - e.dir * Tuning.windmill_speed[int(e.a)] * (plane_z - e.pz) / maxf(scroll_speed, 1.0)
 			e.pivot.rotation.y = -e.ang
 		BALLOON:
 			e.px = clampf(e.x0 + e.amp * sin(e.rate * e.age + e.phase), -4.4, 4.4)
@@ -571,26 +672,61 @@ func _pose_crow(e: Ent, delta: float) -> void:
 	else:
 		e.rotation.y = 0.0
 
-func _pose_duster(e: Ent, delta: float) -> void:
+func _pose_tractor(e: Ent, delta: float) -> void:
 	e.state_age += delta
 	var edge := Tuning.ortho_size * 0.5 + 1.4
 	e.pz = _carrier_z(e)
 	match e.state:
-		0:   # waiting for the row to come into view
+		0:   # waiting for its row to come close to the screen
 			e.solid = false
 			e.visible = false
 			e.px = -e.dir * edge
-			if e.pz >= _trigger_z():
+			if e.row != null and e.pz >= _trigger_z() - Tuning.tractor_lead:
 				e.state = 1
 				e.state_age = 0.0
-		1:   # the arrow at the edge it will come from
+		1:   # a dust plume at the edge it will drive in from
 			e.solid = false
 			e.visible = false
 			e.px = -e.dir * edge
 			e.arrow.visible = true
-			e.arrow.rotation.y = 0.0 if e.dir > 0.0 else PI
-			var blink := 0.6 + 0.4 * sin(e.state_age * 14.0)
-			arrow_mat.albedo_color = Color(1.0, 0.35, 0.1) * blink
+			e.arrow.position = Vector3(-e.dir * (Tuning.ortho_size * 0.5 - 0.7), 0.0, e.pz)
+			var k := 0
+			for puff in e.arrow.get_children():
+				var t := fposmod(e.state_age * 1.6 + k * 0.33, 1.0)
+				puff.position = Vector3(e.dir * t * 0.9, 0.3 + t * 0.7, (k - 1) * 0.45)
+				puff.scale = Vector3.ONE * (0.6 + t * 1.1) * (1.0 - t * 0.5)
+				k += 1
+			if e.state_age >= Tuning.tractor_telegraph:
+				e.state = 2
+				e.state_age = 0.0
+				e.arrow.visible = false
+				e.solid = true
+				e.visible = true
+		2:
+			e.px = -e.dir * edge + e.dir * Tuning.tractor_speed * e.state_age
+			e.drop_t += delta
+			if e.drops < Tuning.tractor_drops and e.drop_t >= Tuning.tractor_drop_every and absf(e.px) < Tuning.ortho_size * 0.5 - 0.2:
+				e.drop_t = 0.0
+				e.drops += 1
+				spawn(HAY, e.row, e.px - e.dir * 1.5, e.dz, 0.0, 0.0)   # a bale behind it (its contents by the usual odds)
+
+func _pose_duster(e: Ent, delta: float) -> void:
+	e.state_age += delta
+	var edge := Tuning.ortho_size * 0.5 + 1.4
+	e.pz = _carrier_z(e)
+	var half := Tuning.ortho_size * 0.5
+	match e.state:
+		0:   # waiting until it is time to warn: the telegraph, plus the delay and the wait before it reaches the plane row
+			e.solid = false
+			e.visible = false
+			e.px = -e.dir * edge
+			if e.row != null and (plane_z - e.pz) / maxf(scroll_speed, 1.0) <= Tuning.duster_telegraph + e.delay + e.a:
+				e.state = 1
+				e.state_age = 0.0
+		1:   # the warning (drawn below): it ends when the duster enters
+			e.solid = false
+			e.visible = false
+			e.px = -e.dir * edge
 			if e.state_age >= Tuning.duster_telegraph + e.delay:
 				e.state = 2
 				e.state_age = 0.0
@@ -600,8 +736,17 @@ func _pose_duster(e: Ent, delta: float) -> void:
 		2:
 			e.px = -e.dir * edge + e.dir * Tuning.duster_speed * e.state_age
 			e.pivot.rotation.x += delta * 40.0
-	if e.state == 1:   # (the arrow stays at the top corner of the screen, whatever the body's own position)
-		e.arrow.position = Vector3(-e.dir * (edge - 1.6) - e.px, 0.5, screen_top_z + 1.4 - e.pz)
+	if e.state == 1:   # the edge it comes from glows red and pulses, a faint red line marks its row, an arrow points in
+		e.arrow.visible = true
+		var pulse := 0.5 + 0.5 * sin(e.state_age * 11.0)
+		warn_mat.albedo_color = Color(1.0, 0.08, 0.05, 0.18 + 0.32 * pulse)
+		warn_line_mat.albedo_color = Color(1.0, 0.1, 0.05, 0.2)
+		arrow_mat.albedo_color = Color(1.0, 0.35, 0.1) * (0.6 + 0.4 * pulse)
+		e.arrow.position = Vector3.ZERO
+		(e.arrow.get_child(0) as Node3D).position = Vector3(-e.dir * (half - 1.3), 0.5, screen_top_z + 1.6)
+		(e.arrow.get_child(0) as Node3D).rotation.y = 0.0 if e.dir > 0.0 else PI
+		(e.arrow.get_node("edge") as Node3D).position = Vector3(-e.dir * (half - 0.45), 1.45, plane_z - 9.0)
+		(e.arrow.get_node("line") as Node3D).position = Vector3(0.0, 0.3, e.pz)
 
 ## Advance everything (called each frame by the Spawner after the rows have moved).
 func update(delta: float) -> void:
@@ -614,6 +759,8 @@ func update(delta: float) -> void:
 		elif e.kind == CROW and e.state == 2 and (e.pz > plane_z + 9.0 or absf(e.px) > 12.0):
 			release(e)
 		elif e.kind == DUSTER and e.state == 2 and e.px * e.dir > Tuning.ortho_size * 0.5 + 2.0:
+			release(e)
+		elif e.kind == TRACTOR and e.state == 2 and e.px * e.dir > Tuning.ortho_size * 0.5 + 1.8:
 			release(e)
 	_fill_colliders()
 
@@ -642,13 +789,23 @@ func _fill_colliders() -> void:
 		if e.solid:
 			match e.kind:
 				BARN:
-					_add(i, T_RECT, e.px, e.pz, e.a, e.b if e.b > 0.0 else BARN_DEPTH)
-				SILO:
-					_add(i, T_CIRCLE, e.px, e.pz, SILO_RADIUS, 0.0)
+					if e.b > 0.5:   # the two walls; the doorway between them is open
+						var c: float = Tuning.barn_door_width * 0.5 + e.a * 0.5
+						_add(i, T_RECT, e.px - c, e.pz, e.a * 0.5, BARN_LONG)
+						_add(i, T_RECT, e.px + c, e.pz, e.a * 0.5, BARN_LONG)
+					else:
+						_add(i, T_RECT, e.px, e.pz, e.a, BARN_DEPTH)
+				TRACTOR:
+					_add(i, T_RECT, e.px - 0.075 * e.dir, e.pz, 0.64, 0.58)   # body, cab and rear wheels
+					_add(i, T_RECT, e.px + 0.85 * e.dir, e.pz, 0.36, 0.46)    # hood and front wheels
 				WINDMILL:
-					_add(i, T_CIRCLE, e.px, e.pz, 0.85, 0.0)
-					_add(i, T_RECT, e.px, e.pz, Tuning.windmill_blade, 0.18, e.ang)
-					_add(i, T_RECT, e.px, e.pz, Tuning.windmill_blade, 0.18, e.ang + PI * 0.5)
+					var v := int(e.a)
+					var n: int = Tuning.windmill_blades[v]
+					var len: float = Tuning.windmill_blade[v]
+					_add(i, T_CIRCLE, e.px, e.pz, Tuning.windmill_hub[v], 0.0)
+					for k in n:
+						var phi: float = e.ang + TAU * k / n
+						_add(i, T_RECT, e.px + cos(phi) * len * 0.5, e.pz + sin(phi) * len * 0.5, len * 0.5, Tuning.windmill_width[v], phi)
 				CROW:
 					_add(i, T_CIRCLE, e.px, e.pz, CROW_RADIUS, 0.0)
 				BALLOON:
@@ -714,6 +871,8 @@ func update_near_misses(p: Vector2, caps: PackedFloat32Array, limit: float, behi
 				pass
 			continue
 		var near := absf(e.pz - p.y) < NEAR_RANGE + e.reach.y and absf(e.px - p.x) < 6.0 + e.reach.x
+		if e.kind == BARN and e.b > 0.5 and absf(p.y - e.pz) < BARN_LONG and absf(p.x - e.px) < Tuning.barn_door_width * 0.5:
+			e.thru += 1
 		if near:
 			e.entered = true
 			var g := min_gap_of(e, p, caps)
@@ -730,7 +889,9 @@ func update_near_misses(p: Vector2, caps: PackedFloat32Array, limit: float, behi
 				gone = e.pz - e.reach.y > p.y + behind
 		if gone:
 			e.passed = true
-			if e.entered and e.min_clear < limit and e.kind != HAY:
+			if e.kind == BARN and e.thru >= 2 and e.min_clear >= 0.0:   # straight through the doorway
+				out.append({"side": 1 if randf() < 0.5 else -1, "node": e.parts[0], "outline": e.outline, "clearance": 0.0, "whisker": true, "special": "barnstormer", "row": null, "k": -1})
+			elif e.entered and e.min_clear < limit and e.kind != HAY:
 				out.append({"side": e.min_side, "node": e.parts[0], "outline": e.outline, "clearance": e.min_clear, "whisker": e.min_clear <= whisker, "row": null, "k": -1})
 
 ## Hay: break the bales the plane touches head-on (or any touch with `battering`). Returns [{kind, pos}].
@@ -779,12 +940,16 @@ func prewarm_show() -> void:
 			fake_row.position.z = -2.0 - 2.2 * n
 			var e := spawn(k, fake_row, -3.5 + 1.8 * i, 0.0, 0.9 if k == BARN else 2.0, 0.0, 0.0, 1.0, 0.0, 1.0)
 			if e != null:
-				e.state = 2 if (k == CROW or k == DUSTER) else e.state
+				e.state = 2 if (k == CROW or k == DUSTER or k == TRACTOR) else e.state
 				e.solid = true
 				e.visible = true
-				if k == DUSTER:
+				if k == DUSTER or k == TRACTOR:
 					e.arrow.visible = true
-					e.arrow.position = Vector3(1.5, 0.5, 2.0)
+					e.arrow.position = Vector3(1.5, 0.0, 2.0)
+					if k == DUSTER:
+						(e.arrow.get_child(0) as Node3D).position = Vector3(0.0, 0.5, 0.0)
+						(e.arrow.get_node("edge") as Node3D).position = Vector3(4.5, 1.45, 0.0)
+						(e.arrow.get_node("line") as Node3D).position = Vector3(0.0, 0.3, 0.0)
 				_pose(e, 0.0)
 				e.position = Vector3(-3.5 + 1.8 * i, 0.0, -2.0 - 2.2 * (n % 8))
 		n += 1
