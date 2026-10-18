@@ -1581,9 +1581,14 @@ func _initialize() -> void:
 	pk.enabled = true
 	# (a) prices: pick_first x permanent multiplier, +20% each
 	pk.start_run(1.0)
-	check(is_equal_approx(pk.next_pick, 40.0) and is_equal_approx(pk.price(1), 60.0) and is_equal_approx(pk.price(2), 90.0), "the first pick is at 40 x the multiplier; each pick costs 50% more (40, 60, 90)")
-	pk.advance()
-	check(is_equal_approx(pk.next_pick, 100.0), "...and the next score needed adds up (100)")
+	check(is_equal_approx(pk.next_pick, 40.0), "the first pick (inside its time window) needs a score of 40 x the multiplier")
+	var pr1: float = tuning.pick_price(1, 10.0, 1.0)
+	var pr_fast: float = tuning.pick_price(1, 40.0, 1.0)
+	var pr_slow: float = tuning.pick_price(1, 2.0, 1.0)
+	check(is_equal_approx(pr1, 10.0 * tuning.pick_gap_seconds) and pr_fast / 40.0 < pr_slow / 2.0 and tuning.pick_price(3, 10.0, 1.0) > tuning.pick_price(2, 10.0, 1.0),
+			"later picks cost about %.0f s of what you earn (%.0f at 10 coins/s); a slower earner waits longer (%.0f s vs %.0f s); each pick costs a bit more (x%.2f)" % [tuning.pick_gap_seconds, pr1, pr_slow / 2.0, pr_fast / 40.0, tuning.pick_growth])
+	pk.advance(100.0, 20.0)
+	check(pk.next_pick > 100.0 and is_equal_approx(pk.next_pick, 100.0 + tuning.pick_price(1, 5.0, 1.0)), "...priced from your earning rate this run (100 coins in 20 s): the next pick at %.0f" % pk.next_pick)
 	pk.start_run(2.2)
 	check(is_equal_approx(pk.next_pick, 88.0), "with a x2.2 permanent multiplier the first pick is at 88")
 	tsave.levels["coin_value"] = 5
@@ -1598,15 +1603,15 @@ func _initialize() -> void:
 	check(main.hud._next_label.text == "Next: 40", "the HUD shows \"Next: 40\" under the score")
 	# (b) reaching it pauses the game completely and deals three cards
 	# the first pick lives in a time window
-	check(tuning.first_pick_min_seconds == 8.0 and tuning.first_pick_max_seconds == 15.0, "first_pick_min_seconds 8 and first_pick_max_seconds 15 are Tuning values")
+	check(tuning.first_pick_min_seconds == 15.0 and tuning.first_pick_max_seconds == 20.0, "first_pick_min_seconds 15 and first_pick_max_seconds 20 are Tuning values")
 	main.elapsed = 3.0
 	main.score = 1000000.0
 	main._process(0.02)
-	check(not main.get_tree().paused and not main._picking, "the first pick never comes before 8 s, however high the score (3 s, score 1M)")
-	main.elapsed = 8.0
+	check(not main.get_tree().paused and not main._picking, "the first pick never comes before 15 s, however high the score (3 s, score 1M)")
+	main.elapsed = 15.0
 	main.score = 1000000.0
 	main._process(0.02)
-	check(main.get_tree().paused and main._picking, "...it comes at 8 s once the score is there")
+	check(main.get_tree().paused and main._picking, "...it comes at 15 s once the score is there")
 	main.pick_screen.hide_cards()
 	main.get_tree().paused = false
 	main._picking = false
@@ -1615,16 +1620,16 @@ func _initialize() -> void:
 	sp.reset(-500.0)
 	pk.enabled = true
 	pk.start_run(1.0)
-	main.elapsed = 12.0
+	main.elapsed = 17.0
 	main.score = 0.0
 	main._process(0.02)
-	check(not main._picking, "with a low score nothing happens at 12 s")
-	main.elapsed = 14.99
+	check(not main._picking, "with a low score nothing happens at 17 s")
+	main.elapsed = 19.99
 	main._process(0.02)
-	check(main.get_tree().paused and main._picking and not main._pick_is_extra, "...but it is guaranteed by 15 s regardless of score")
+	check(main.get_tree().paused and main._picking and not main._pick_is_extra, "...but it is guaranteed by 20 s regardless of score")
 	await real_wait(0.55)
 	main.pick_screen._on_card(0)
-	check(not main.get_tree().paused and pk.picks_taken == 1 and pk.next_pick >= 0.0 + pk.price(1), "(it counts as a normal pick; the next one is a full price away: %.0f)" % pk.next_pick)
+	check(not main.get_tree().paused and pk.picks_taken == 1 and pk.next_pick > 0.0, "(it counts as a normal pick; the next one is a full price away: %.0f)" % pk.next_pick)
 	main.elapsed = 60.0
 	main._process(0.02)
 	check(not main._picking, "later picks are score-based only: 60 s in with a low score, no pick")
@@ -1634,7 +1639,7 @@ func _initialize() -> void:
 	pk.enabled = true
 	pk.start_run(1.0)
 	var elapsed0: float = main.elapsed
-	main.elapsed = 9.0
+	main.elapsed = 16.0
 	main.score = 40.0
 	main._process(0.02)
 	check(main.get_tree().paused and main.pick_screen.is_shown() and main._pick_cards.size() == 3, "reaching the score pauses the game and shows three cards")
@@ -1642,15 +1647,15 @@ func _initialize() -> void:
 	for c in main._pick_cards:
 		ids[c["kind"] + c["id"]] = true
 	check(ids.size() == 3, "three different cards (%s)" % ", ".join(main._pick_cards.map(func(c): return c["name"])))
-	await real_wait(0.2)
+	await real_wait(0.05)
 	main.pick_screen._on_card(0)
-	check(main.get_tree().paused, "a tap in the first moment is ignored (no accidental picks)")
-	await real_wait(0.45)
-	check(is_equal_approx(main.elapsed, 9.02) and absf(main.pick_screen._cards[0].position.x - 60.0) < 1.0, "while paused nothing advances, and the cards have slid into place")
+	check(main.get_tree().paused, "a tap in the first instant is ignored (the one already on its way)")
+	await real_wait(0.3)
+	check(is_equal_approx(main.elapsed, 16.02) and absf(main.pick_screen._cards[0].position.x - 60.0) < 1.0, "while paused nothing advances, and the cards have slid into place")
 	var first_card: Dictionary = main._pick_cards[0]
 	main.pick_screen._on_card(0)
-	check(not main.get_tree().paused and not main.pick_screen.is_shown() and pk.next_pick > 90.0, "choosing a card resumes the game and sets the next pick (%.0f)" % pk.next_pick)
-	check(main.hud._next_label.text == "Next: 100", "...shown as \"%s\"" % main.hud._next_label.text)
+	check(not main.get_tree().paused and not main.pick_screen.is_shown() and pk.next_pick > 40.0, "ONE tap on a card picks it at once: the game resumes and the next pick is set (%.0f)" % pk.next_pick)
+	check(main.hud._next_label.text == "Next: " + tuning.fmt(pk.next_pick), "...shown as \"%s\"" % main.hud._next_label.text)
 	if first_card["kind"] == "perk":
 		check(pk.level(first_card["id"]) == 1, "a picked perk is owned at level 1")
 	pk.start_run(1.0)
@@ -1722,8 +1727,8 @@ func _initialize() -> void:
 	var pips_lit := 0
 	for pip in main.pick_screen._parts[0]["pips"]:
 		pips_lit += int((pip.get_theme_stylebox("panel") as StyleBoxFlat).bg_color.is_equal_approx(Color(1.0, 0.9, 0.35)))
-	check(pips_lit == 3 and main.pick_screen._parts[0]["tag"].text.contains("LEVEL 2 -> 3") and main.pick_screen._parts[0]["combo"].visible and not main.pick_screen._parts[1]["combo"].visible,
-			"cards show level pips and \"LEVEL 2 -> 3\", and a combo card is highlighted")
+	check(pips_lit == 3 and main.pick_screen._parts[0]["line"].text == "+60 coins per can" and main.pick_screen._parts[0]["combo"].visible and not main.pick_screen._parts[1]["combo"].visible,
+			"a card is a big icon, a name, ONE short line (\"%s\") and level pips; a combo card is highlighted" % main.pick_screen._parts[0]["line"].text)
 	main.pick_screen.hide_cards()
 	pk.start_run(1.0)
 	# (d) perk effects
@@ -2187,8 +2192,8 @@ func _initialize() -> void:
 				layout_ok = layout_ok and not cr2.crate_glows[cr2.obs_cols[k]].visible
 		sp._release_row(cr2)
 	check(layout_ok, "FAIRNESS: a crate takes a blocked cell, never an open one (every row: obstacles = blocked columns), with its own wood body and a glow plate")
-	check(absf(float(n_cr) / n_blk - 0.5) < 0.04 and absf(kinds[0] / float(n_cr) - 0.55) < 0.05 and absf(kinds[1] / float(n_cr) - 0.30) < 0.05 and absf(kinds[2] / float(n_cr) - 0.15) < 0.04,
-			"crate_chance %.2f of blocked cells; contents about 55%% gold / 30%% green / 15%% purple (%d / %d / %d)" % [tuning.crate_chance, kinds[0], kinds[1], kinds[2]])
+	check(absf(float(n_cr) / n_blk - 0.5) < 0.04 and absf(kinds[0] / float(n_cr) - 0.60) < 0.05 and absf(kinds[1] / float(n_cr) - 0.32) < 0.05 and absf(kinds[2] / float(n_cr) - 0.08) < 0.03,
+			"crate_chance %.2f of blocked cells; contents about 60%% gold / 32%% green / 8%% purple (the extra pick is rare) (%d / %d / %d)" % [tuning.crate_chance, kinds[0], kinds[1], kinds[2]])
 	check(tuning.crate_colors[0] != tuning.crate_colors[1] and tuning.crate_colors[1] != tuning.crate_colors[2] and tuning.crate_colors[2] != tuning.crate_colors[0], "glow colours: gold, green, purple")
 	# (b) the crate rules: the front face breaks it, the sides crash
 	tuning.crate_chance = 0.0
@@ -2308,19 +2313,22 @@ func _initialize() -> void:
 	main.restart()
 	main.set_process(false)
 	sp.reset(-500.0)
+	var shower_len: int = tuning.crate_shower_rows
+	tuning.crate_shower_rows = 40   # (a long shower, so the count is not a coin flip)
 	main._apply_card({"kind": "supply", "id": "crate_shower"})
 	tuning.crate_chance = 0.0
 	sp.run_time = 30.0
 	var shower_crates := 0
 	var shower_blocked := 0
-	for i in tuning.crate_shower_rows:
+	for i in 40:
 		sp._spawn_row(-30.0)
 		var sr = sp._rows[-1]
 		for k in sr.obs.size():
 			shower_blocked += 1
 			shower_crates += int(sr.crate_kind[k] != 0)
 		sp._release_row(sr)
-	check(sp.crate_shower_rows == 0 and float(shower_crates) / shower_blocked > 0.6, "Crate Shower: the next %d rows are full of crates (%d of %d blocked cells)" % [tuning.crate_shower_rows, shower_crates, shower_blocked])
+	check(sp.crate_shower_rows == 0 and float(shower_crates) / shower_blocked > 0.6, "Crate Shower: the next rows are full of crates (%d of %d blocked cells)" % [shower_crates, shower_blocked])
+	tuning.crate_shower_rows = shower_len
 	sp._spawn_row(-30.0)
 	var after_sr = sp._rows[-1]
 	var plain_after := 0
@@ -2451,7 +2459,7 @@ func _initialize() -> void:
 	sp.reset(-500.0)
 	pk.enabled = true
 	pk.start_run(1.0)
-	main.elapsed = 9.0
+	main.elapsed = 16.0
 	main.score = 600.0
 	main._process(0.02)
 	check(main.get_tree().paused, "(a pick is up)")

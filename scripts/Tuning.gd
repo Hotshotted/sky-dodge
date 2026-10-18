@@ -184,18 +184,26 @@ func fmt_m(meters_value: float) -> String:
 	return txt + out + " m"
 
 # ---------- In-run picks ----------
-## The first pick comes at pick_first x your permanent multiplier (map multiplier x Coin Value, see pick_scale) in score; each
-## following pick costs pick_growth times the one before. The game pauses, three cards slide in, you choose.
+## The first pick comes at pick_first x your permanent multiplier (map multiplier x Coin Value, see pick_scale) in score,
+## or on the timer below. After that each pick is priced as described under pick_gap_seconds. The game pauses, three cards slide in, you choose.
 var pick_first := 40.0
-var pick_growth := 1.5
+var pick_growth := 1.1
+## Later picks are priced in SECONDS of your own earning: the next pick costs about pick_gap_seconds of the coins per
+## second you are making this run (x pick_growth for each pick already taken), so the spacing stays about the same
+## however much you earn. It is nudged by how well you earn: a slower earner waits somewhat longer
+## (the gap scales with relative_rate ^ -pick_rate_exponent; relative_rate = coins/s / (pick_rate_ref x multiplier)),
+## so engaged players get picks noticeably faster than passive ones.
+var pick_gap_seconds := 44.0
+var pick_rate_exponent := 0.4
+var pick_rate_ref := 10.0
 ## The permanent multiplier that scales the prices also counts the flat coin upgrades (Can Bounty + Close Call
 ## Pay), so that picks keep their pace as those grow: scale = map x Coin Value x (1 + weight x (bounty + close-call pay) / ref).
 var pick_flat_weight := 0.15
 var pick_flat_ref := 12.0
 ## The FIRST pick of every run comes inside this window (seconds into the run): never before the minimum, whatever
 ## the score, and guaranteed by the maximum, whatever the score. Later picks are purely score-based.
-var first_pick_min_seconds := 8.0
-var first_pick_max_seconds := 15.0
+var first_pick_min_seconds := 15.0
+var first_pick_max_seconds := 20.0
 var pick_cards := 3
 ## How much more often a perk you already own is offered (a card for each owned perk at 1.0 + this).
 var perk_owned_weight := 3.0
@@ -305,7 +313,7 @@ var ram_speed := 0.0               # extra rule: you must also be moving up the 
 var crate_front_forgive := 0.35    # a crate's front (bottom) face counts this much wider than the crate itself; the sides get no slack
 var crate_coins := 30.0            # gold crate: coins (x the earn multiplier, Battering Ram level, Golden Touch)
 var crate_fuel := 30.0             # green crate: fuel (x Golden Touch)
-var crate_weights: Array[float] = [0.55, 0.30, 0.15]   # gold, green, purple
+var crate_weights: Array[float] = [0.60, 0.32, 0.08]   # gold, green, purple (purple = the extra pick: rare)
 var crate_colors: Array[Color] = [Color(1.0, 0.8, 0.15), Color(0.25, 1.0, 0.45), Color(0.75, 0.35, 1.0)]
 var crate_wood := Color(0.55, 0.38, 0.2)
 ## Crate coins per Battering Ram level (the perk's own value is this multiplier) and the Crate Shower's length.
@@ -319,6 +327,18 @@ var milestones: Array[Dictionary] = [
 	{"id": "battering_ram", "perk": "battering_ram", "goal": "Break 50 crates", "kind": "stat", "stat": "crates", "target": 50.0},
 	{"id": "golden_touch", "perk": "golden_touch", "goal": "Reach the Coast", "kind": "map", "map": 1},
 ]
+
+## The ONE short line shown on a pick card (max ~6 words; {v} = the value at that level). The long descriptions
+## above live in the Logbook.
+var pick_short := {
+	"glide": "Glide {v} s when empty", "cloud_diver": "+{v} fuel/s under clouds", "lucky_whiskers": "{v}% can on Whisker closes",
+	"prop_wash": "Bumped obstacles pay {v}", "battering_ram": "Crates break on touch", "fuel_miser": "{v}% less fuel burn",
+	"hot_streak": "Bonus fades {v}% slower", "scavenger": "+{v} coins per can", "tailwind": "+{v}% speed and coins",
+	"daredevil": "Close calls from {v}% farther", "second_wind": "Refill {v}% once when low", "golden_touch": "Crates pay x{v}",
+	"double_coins": "Double coins, 20 s", "shield": "One free hit, 20 s", "magnet_storm": "Cans fly to you, 20 s",
+	"whisker_window": "Every close call Whisker", "fuel_freeze": "No fuel burn, 20 s",
+	"full_tank": "Fill the tank", "patch": "+1 hit this run", "crate_shower": "Next rows full of crates", "coin_bag": "+{v} coins now",
+}
 
 func perk_def(id: String) -> Dictionary:
 	for d in perks:
@@ -522,6 +542,11 @@ func refill_amount() -> float:
 
 func bonus_cap_now() -> float:
 	return upgrade_value("bonus_cap", Save.level("bonus_cap"))
+
+## What pick number k (1 = the second pick of the run) costs, given the coins per second made so far this run.
+func pick_price(k: int, rate: float, perm: float) -> float:
+	var r := clampf(rate / (pick_rate_ref * maxf(perm, 0.0001)), 0.05, 50.0)
+	return pick_gap_seconds * pow(pick_growth, k - 1) * pow(r, -pick_rate_exponent) * rate
 
 ## What the pick prices are multiplied by: the permanent multiplier (map x Coin Value), with the flat upgrades' share.
 func pick_scale(map: int) -> float:

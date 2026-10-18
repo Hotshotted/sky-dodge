@@ -62,7 +62,10 @@ var _second_wind_used := false
 var _combos := {}                     # combo id -> true: the combos that have switched on this run
 var _crates_broken := 0
 var _extra_picks := 0                 # purple crates broken: instant extra picks waiting to be shown
-var _pick_is_extra := false               # crates broken this run (Cat's Cradle counts them)
+var _pick_is_extra := false
+var _last_pick_time := 0.0             # run time of the latest pick (?perf shows the time since)
+var _pick_gap_sum := 0.0               # ...and the sum of the gaps (run start -> first pick -> ...) for the average
+var _pick_count := 0               # crates broken this run (Cat's Cradle counts them)
 
 func _ready() -> void:
 	Engine.max_physics_steps_per_frame = 1   # no physics here: make sure a stall can never trigger catch-up steps
@@ -211,6 +214,9 @@ func restart() -> void:
 	_crates_broken = 0
 	_extra_picks = 0
 	_pick_is_extra = false
+	_last_pick_time = 0.0
+	_pick_gap_sum = 0.0
+	_pick_count = 0
 	spawner.chain_nudges = false
 	spawner.crate_shower_rows = 0
 	_reset_bonus()
@@ -319,6 +325,7 @@ func _process(raw_delta: float) -> void:
 	var delta := _frame_delta(raw_delta)
 	if DebugFlags.perf_enabled():
 		hud.set_clock(sim_time, run_wall_time())
+		hud.set_pick_stats(elapsed - _last_pick_time, _pick_gap_sum / maxf(_pick_count, 1), _pick_count)
 	if delta <= 0.0:
 		return
 	sim_time += delta
@@ -487,9 +494,13 @@ func _on_pick_chosen(i: int) -> void:
 	_note_event("pick resume")
 	if tune_panel:
 		tune_panel.set_available(true)
+	_pick_gap_sum += elapsed - _last_pick_time
+	_last_pick_time = elapsed
+	_pick_count += 1
 	_apply_card(card)
 	if not _pick_is_extra:
-		picks.advance(score)
+		picks._bag_score = score
+		picks.advance(score, elapsed)
 	_pick_is_extra = false
 	hud.set_next(picks.next_pick)
 	_check_combos()

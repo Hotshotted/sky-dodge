@@ -8,10 +8,10 @@ signal chosen(index: int)
 
 const CARDS := 3
 const CARD_W := 960.0
-const CARD_H := 340.0
-const SLIDE_TIME := 0.3
-const STAGGER := 0.09
-const ARM_TIME := 0.45    # taps are ignored this long after the cards appear (no accidental picks)
+const CARD_H := 300.0
+const SLIDE_TIME := 0.15  # the cards slide in fast: all three are in place in about 0.19 s
+const STAGGER := 0.02
+const ARM_TIME := 0.22    # a tap this soon after they appear is ignored (the one that was already on its way); after that ONE tap picks
 
 var _root: Control
 var _cards: Array[Button] = []
@@ -55,35 +55,36 @@ func _ready() -> void:
 		_cards.append(b)
 		var icon := Panel.new()
 		var isb := StyleBoxFlat.new()
-		isb.set_corner_radius_all(60)
+		isb.set_corner_radius_all(85)
 		icon.add_theme_stylebox_override("panel", isb)
-		icon.position = Vector2(36, 36)
-		icon.size = Vector2(120, 120)
+		icon.position = Vector2(30, 65)
+		icon.size = Vector2(170, 170)
 		icon.mouse_filter = Control.MOUSE_FILTER_IGNORE
 		b.add_child(icon)
-		var glyph := _label("", 70, 36, 36, 120, 120, HORIZONTAL_ALIGNMENT_CENTER)
+		var glyph := _label("", 100, 30, 65, 170, 170, HORIZONTAL_ALIGNMENT_CENTER)
 		b.add_child(glyph)
-		var nm := _label("", 56, 190, 24, 560, 80, HORIZONTAL_ALIGNMENT_LEFT)
+		var nm := _label("", 66, 225, 40, 700, 100, HORIZONTAL_ALIGNMENT_LEFT)
 		b.add_child(nm)
-		var tag := _label("", 34, 190, 100, 560, 50, HORIZONTAL_ALIGNMENT_LEFT)
-		tag.add_theme_color_override("font_color", Color(0.75, 0.88, 1.0))
+		var tag := _label("", 1, 0, 0, 1, 1, HORIZONTAL_ALIGNMENT_LEFT)   # (kept so the card parts stay the same; unused)
+		tag.visible = false
 		b.add_child(tag)
 		var pips: Array[Panel] = []
 		for k in 3:
 			var pip := Panel.new()
 			var psb := StyleBoxFlat.new()
-			psb.set_corner_radius_all(14)
+			psb.set_corner_radius_all(16)
+			psb.set_border_width_all(3)
+			psb.border_color = Color(0, 0, 0, 0.6)
 			pip.add_theme_stylebox_override("panel", psb)
-			pip.position = Vector2(CARD_W - 60.0 - 44.0 * (3 - k), 40)
-			pip.size = Vector2(28, 28)
+			pip.position = Vector2(CARD_W - 70.0 - 52.0 * (3 - k), 30)
+			pip.size = Vector2(32, 32)
 			pip.mouse_filter = Control.MOUSE_FILTER_IGNORE
 			b.add_child(pip)
 			pips.append(pip)
-		var line := _label("", 36, 36, 190, CARD_W - 72.0, 130, HORIZONTAL_ALIGNMENT_LEFT)
-		line.autowrap_mode = TextServer.AUTOWRAP_WORD_SMART
-		line.vertical_alignment = VERTICAL_ALIGNMENT_TOP
+		var line := _label("", 44, 225, 155, CARD_W - 250.0, 90, HORIZONTAL_ALIGNMENT_LEFT)
+		line.add_theme_color_override("font_color", Color(0.85, 0.93, 1.0))
 		b.add_child(line)
-		var combo := _label("COMBO!", 48, CARD_W - 330.0, 90, 300, 70, HORIZONTAL_ALIGNMENT_RIGHT)
+		var combo := _label("COMBO!", 44, CARD_W - 330.0, 90, 300, 60, HORIZONTAL_ALIGNMENT_RIGHT)
 		combo.add_theme_color_override("font_color", Color(1.0, 0.85, 0.2))
 		combo.add_theme_color_override("font_outline_color", Color(0.9, 0.3, 0.0))
 		combo.visible = false
@@ -115,15 +116,6 @@ func show_cards(cards: Array[Dictionary], combos: Array = []) -> void:
 		(p["isb"] as StyleBoxFlat).bg_color = c["color"]
 		(p["glyph"] as Label).text = c["glyph"]
 		(p["name"] as Label).text = c["name"]
-		var tag := ""
-		match c["kind"]:
-			"perk":
-				tag = ("PERK   LEVEL %d -> %d" % [c["level"] - 1, c["level"]]) if c["owned"] else "PERK   NEW"
-			"boost":
-				tag = "BOOST   %d s" % int(Tuning.boost_time)
-			"supply":
-				tag = "SUPPLY   NOW"
-		(p["tag"] as Label).text = tag
 		(p["line"] as Label).text = c["line"]
 		for k in 3:
 			var pip := (p["pips"] as Array)[k] as Panel
@@ -134,7 +126,7 @@ func show_cards(cards: Array[Dictionary], combos: Array = []) -> void:
 		(p["combo"] as Label).text = "COMBO!" if is_combo else ""
 		var border := (b.get_theme_stylebox("normal") as StyleBoxFlat)
 		border.border_color = Color(1.0, 0.85, 0.2) if is_combo else Color(0.3, 0.4, 0.6)
-		b.position = Vector2(1200.0, 380.0 + (CARD_H + 30.0) * i)
+		b.position = Vector2(1200.0, 420.0 + (CARD_H + 30.0) * i)
 	_born_ms = Time.get_ticks_msec()
 	shown = true
 	_root.visible = true
@@ -160,9 +152,9 @@ func _on_card(i: int) -> void:
 ## Pre-warm: draw sample cards (every card kind) for a moment.
 func prewarm_show() -> void:
 	var sample: Array[Dictionary] = [
-		{"kind": "perk", "id": "x", "name": "Lucky Whiskers", "glyph": "W", "color": Color(1.0, 0.4, 0.85), "line": "A Whisker close drops a fuel can 50% of the time. 0123456789", "level": 2, "owned": true},
-		{"kind": "boost", "id": "x", "name": "Magnet Storm", "glyph": "M", "color": Color(0.8, 0.5, 1.0), "line": "Fuel cans fly to you from far away.", "level": 0, "owned": false},
-		{"kind": "supply", "id": "x", "name": "Coin Bag", "glyph": "$", "color": Color(1.0, 0.8, 0.2), "line": "Instant coins: 1.5K.", "level": 0, "owned": false},
+		{"kind": "perk", "id": "x", "name": "Lucky Whiskers", "glyph": "W", "color": Color(1.0, 0.4, 0.85), "line": "50% can on Whisker closes 0123456789", "level": 2, "owned": true},
+		{"kind": "boost", "id": "x", "name": "Magnet Storm", "glyph": "M", "color": Color(0.8, 0.5, 1.0), "line": "Cans fly to you, 20 s", "level": 0, "owned": false},
+		{"kind": "supply", "id": "x", "name": "Coin Bag", "glyph": "$", "color": Color(1.0, 0.8, 0.2), "line": "+1.5K coins now", "level": 0, "owned": false},
 	]
 	show_cards(sample, ["Combo", "", ""])
 	for b in _cards:

@@ -8,9 +8,9 @@ signal changed          # perks or boosts changed (the HUD redraws its icons)
 var levels := {}        # perk id -> level (1-3)
 var boosts := {}        # boost id -> seconds left
 var picks_taken := 0
+var _bag_score := 0.0   # (the score when the last pick was taken: the Coin Bag is sized from the gap to the next one)
 var next_pick := 0.0    # score at which the next pick comes
 var perm_mult := 1.0    # map multiplier x Coin Value: it scales the pick prices
-var _price_sum := 0.0
 var enabled := true     # false: no picks at all (the tests that set the score by hand use this)
 var debug_grants := {}  # ?tune: perk id -> level, given at the start of every run
 
@@ -20,23 +20,21 @@ func start_run(perm_mult_: float) -> void:
 	boosts.clear()
 	perm_mult = maxf(perm_mult_, 0.0001)
 	picks_taken = 0
-	_price_sum = price(0)
-	next_pick = _price_sum if enabled else INF
+	next_pick = price(0) if enabled else INF
 	for id in debug_grants:
 		levels[id] = int(debug_grants[id])
 	changed.emit()
 
-## What pick number `k` (0 = the first) costs in score: pick_first x multiplier, +20% each time.
+## The score the very first pick needs (it also comes on the timer, see first_pick_min_seconds).
 func price(k: int) -> float:
 	return Tuning.pick_first * perm_mult * pow(Tuning.pick_growth, k)
 
-## A pick was taken: the next one is due `price` more score later.
-func advance(score_now: float = 0.0) -> void:
+## A pick was taken: the next one is priced in seconds of what you are earning this run (Tuning.pick_price), and is
+## that far beyond the higher of the old threshold and the score you have now.
+func advance(score_now: float = 0.0, elapsed: float = 1.0) -> void:
 	picks_taken += 1
-	_price_sum += price(picks_taken)
-	next_pick = _price_sum
-	if picks_taken == 1:   # the first pick came on a timer: the second is a full price away from the score you have now
-		next_pick = maxf(next_pick, score_now + price(1))
+	var rate := maxf(score_now / maxf(elapsed, 5.0), 0.01)
+	next_pick = maxf(next_pick, score_now) + Tuning.pick_price(picks_taken, rate, perm_mult)
 
 func level(id: String) -> int:
 	return int(levels.get(id, 0))
@@ -92,12 +90,12 @@ func roll(fuel_frac: float, count: int = 3) -> Array[Dictionary]:
 		pool.append(perk_card(d, lvl + 1, lvl > 0))
 		weights.append(1.0 + (Tuning.perk_owned_weight if lvl > 0 else 0.0))
 	for d in Tuning.boosts:
-		pool.append({"kind": "boost", "id": d["id"], "name": d["name"], "glyph": d["glyph"], "color": d["color"], "line": d["line"], "level": 0, "owned": false})
+		pool.append({"kind": "boost", "id": d["id"], "name": d["name"], "glyph": d["glyph"], "color": d["color"], "line": Tuning.pick_short[d["id"]], "level": 0, "owned": false})
 		weights.append(Tuning.boost_weight)
 	for d in Tuning.supplies:
 		if d.get("needs", "") == "crates" and not Tuning.crates_enabled:
 			continue
-		var line: String = d["line"]
+		var line: String = Tuning.pick_short[d["id"]]
 		if d["id"] == "coin_bag":
 			line = line.replace("{v}", Tuning.fmt(coin_bag_amount()))
 		pool.append({"kind": "supply", "id": d["id"], "name": d["name"], "glyph": d["glyph"], "color": d["color"], "line": line, "level": 0, "owned": false})
@@ -121,11 +119,14 @@ func roll(fuel_frac: float, count: int = 3) -> Array[Dictionary]:
 
 func perk_card(d: Dictionary, new_level: int, owned: bool) -> Dictionary:
 	return {"kind": "perk", "id": d["id"], "name": d["name"], "glyph": d["glyph"], "color": d["color"],
-			"line": String(d["line"]).replace("{v}", _num(Tuning.perk_value(d["id"], new_level))), "level": new_level, "owned": owned}
+			"line": String(Tuning.pick_short[d["id"]]).replace("{v}", _num(Tuning.perk_value(d["id"], new_level))), "level": new_level, "owned": owned}
 
 ## The Coin Bag: a share of what the next pick costs.
 func coin_bag_amount() -> float:
-	return floorf(Tuning.coin_bag_fraction * price(picks_taken + 1))
+	var gap := next_pick - _bag_score
+	if gap <= 0.0 or gap > 1.0e30:   # (no price set yet: use the plain one)
+		gap = price(picks_taken + 1)
+	return floorf(Tuning.coin_bag_fraction * gap)
 
 ## Take a card: perks level up and boosts start here; supplies (instant) are Main's job.
 func take(card: Dictionary) -> void:

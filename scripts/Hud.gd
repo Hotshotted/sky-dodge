@@ -41,6 +41,8 @@ var _combo_sub: Label
 var _combo_ms := -100000
 var _logbook_box: VBoxContainer
 var _logbook: Control                     # the Logbook: discovered combos (and milestones)
+var _pick_rows: Array[Dictionary] = []      # the Logbook's long descriptions of every perk, boost and supply
+var _pick_row_defs: Array[Dictionary] = []
 var _milestone_rows: Array[Dictionary] = []
 var _logbook_rows: Array[Dictionary] = [] # per combo: icon style, glyph, title, line
 var _last_meters := -1
@@ -89,6 +91,7 @@ var _nm_worst := 0.0           # slowest of those frames (ms)
 var _hitch_log: Array[String] = []   # frames over 50 ms: "#n 312 ms (simulated 50 ms) ...: what was happening"
 var _hitch_count := 0
 var _clock_text := ""
+var _pick_text := ""
 var _nm_log: Array[String] = []  # last few "#n code X ms, next frames worst Y ms" lines
 const PUNCH_TIME := 0.28
 const SHRINK_TIME := 0.6
@@ -385,6 +388,15 @@ func _build_logbook() -> void:
 	_logbook_heading("MILESTONES  (they unlock more perks for the pick screen)")
 	for m in Tuning.milestones:
 		_milestone_rows.append(_logbook_row(120.0))
+	_logbook_heading("PERKS, BOOSTS & SUPPLIES  (what the pick cards do)")
+	for d in Tuning.perks:
+		_pick_row_defs.append(d)
+	for d in Tuning.boosts:
+		_pick_row_defs.append(d)
+	for d in Tuning.supplies:
+		_pick_row_defs.append(d)
+	for d in _pick_row_defs:
+		_pick_rows.append(_logbook_row(130.0))
 	var back := _make_button("BACK", 56, Vector2(380, 110))
 	_place(back, (W - 380.0) * 0.5, 1730, 380, 110)
 	back.pressed.connect(func(): back_pressed.emit())
@@ -452,6 +464,7 @@ func refresh_logbook(all_found: bool = false) -> void:
 	if _logbook == null:
 		return
 	_refresh_milestones()
+	_refresh_pick_rows()
 	for i in Tuning.combos.size():
 		var c: Dictionary = Tuning.combos[i]
 		var r := _logbook_rows[i]
@@ -462,6 +475,32 @@ func refresh_logbook(all_found: bool = false) -> void:
 		(r["title"] as Label).add_theme_color_override("font_color", Color.WHITE if found else Color(0.55, 0.6, 0.7))
 		(r["line"] as Label).text = c["line"] if found else "Hint: %s" % c["hint"]
 		(r["line"] as Label).add_theme_color_override("font_color", Color(0.85, 0.93, 1.0) if found else Color(0.5, 0.55, 0.65))
+
+## The long descriptions: every perk (with its three levels), boost and supply.
+func _refresh_pick_rows() -> void:
+	for i in _pick_row_defs.size():
+		var d: Dictionary = _pick_row_defs[i]
+		var r := _pick_rows[i]
+		var line: String = d["line"]
+		var tag := ""
+		if d.has("vals"):   # a perk: show the values of its three levels
+			var vs: Array[String] = []
+			for v in d["vals"]:
+				vs.append(("%d" % int(v)) if absf(v - round(v)) < 0.001 else ("%.1f" % v))
+			line = line.replace("{v}", " / ".join(vs))
+			tag = "   PERK"
+			if d["unlock"] != "" and not Save.milestones.has(d["unlock"]):
+				tag = "   PERK (locked: a milestone)"
+		elif Tuning.boosts.has(d):
+			tag = "   BOOST %d s" % int(Tuning.boost_time)
+		else:
+			tag = "   SUPPLY"
+			line = line.replace("{v}", "30% of the next pick's price")
+		(r["style"] as StyleBoxFlat).bg_color = d["color"]
+		(r["glyph"] as Label).text = d["glyph"]
+		(r["title"] as Label).text = String(d["name"]) + tag
+		(r["line"] as Label).text = line
+		(r["line"] as Label).add_theme_color_override("font_color", Color(0.85, 0.93, 1.0))
 
 func _refresh_milestones() -> void:
 	for i in Tuning.milestones.size():
@@ -941,6 +980,10 @@ func note_hitch(raw: float, used: float, why: String, context: String) -> void:
 	print("[hitch] " + line)   # (also in the browser console)
 
 ## ?perf: simulated seconds vs wall-clock seconds this run (pauses excluded). Simulated above wall = a fast-forward.
+## ?perf: time since the last pick and the average gap between picks this run.
+func set_pick_stats(since_last: float, avg_gap: float, picks: int) -> void:
+	_pick_text = "since last pick %.1f s | avg gap %s (%d picks)" % [since_last, ("%.1f s" % avg_gap) if picks > 0 else "-", picks]
+
 func set_clock(sim: float, wall: float) -> void:
 	_clock_text = "sim %.1f s / wall %.1f s" % [sim, wall]
 
@@ -961,7 +1004,7 @@ func _update_perf(delta: float) -> void:
 		_perf_shown = _perf_worst
 		_perf_worst = 0.0
 		_perf_window_start = now
-	_perf_label.text = "worst frame (3s): %.0f ms   %s\nhitches (over 50 ms):\n%s\nnear misses:\n%s" % [_perf_shown, _clock_text, "\n".join(_hitch_log), "\n".join(_nm_log)]
+	_perf_label.text = "worst frame (3s): %.0f ms   %s\n%s\nhitches (over 50 ms):\n%s\nnear misses:\n%s" % [_perf_shown, _clock_text, _pick_text, "\n".join(_hitch_log), "\n".join(_nm_log)]
 
 ## Startup pre-warm: a splash screen (nearly opaque, so the effects behind it are really drawn
 ## on screen and not skipped) while the game draws every popup tier at every font size and the

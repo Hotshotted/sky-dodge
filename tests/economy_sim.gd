@@ -90,8 +90,15 @@ func evaluate(level: Dictionary, equipped: Array, s: float, target_dist_units: f
 	var pick_k := 0
 	var picks_exp := 0.0
 	var first_pick_t := -1.0
+	var last_pick_t := 0.0
+	var next_thr := 0.0
+	var gap_sum := 0.0
+	var gap_w := 0.0
 	var target_t := -1.0
-	while t < t_fuel:
+	var hyp_gap_sum := 0.0
+	var hyp_gap_n := 0
+	while t < maxf(t_fuel, 150.0):
+		var alive := t < t_fuel
 		var sp := speed_at(t)
 		var h := hazard0(s) * pow(sp / T.base_speed, 1.5) * (0.9 if (eye and t > T.cloud_start_time) else 1.0)
 		cum_h += h * DT
@@ -103,21 +110,36 @@ func evaluate(level: Dictionary, equipped: Array, s: float, target_dist_units: f
 			term *= cum_h / float(k + 1)
 		var b := base_b + (head - 1.0) * exp(-t / 8.0)
 		var per_sec: float = sp * T.coins_per_unit * maxf(b - T.bonus_pay_offset, 0.0) * coin_mult + (lam * bounty + c * ccpay) * coin_mult
-		e_coins += surv * per_sec * DT
+		var w := surv if alive else 0.0
+		e_coins += w * per_sec * DT
 		path_coins += per_sec * DT
-		while pick_k < 40 and path_coins >= T.pick_first * coin_mult * pow(T.pick_growth, pick_k) * 0.0 + _pick_cum(pick_k, coin_mult * (1.0 + T.pick_flat_weight * (bounty + ccpay) / T.pick_flat_ref)):
-			picks_exp += surv
-			if first_pick_t < 0.0:
+		var pscale: float = coin_mult * (1.0 + T.pick_flat_weight * (bounty + ccpay) / T.pick_flat_ref)
+		if pick_k == 0:
+			var due: bool = (path_coins >= T.pick_first * pscale and t >= T.first_pick_min_seconds) or t >= T.first_pick_max_seconds
+			if due:
+				picks_exp += w
 				first_pick_t = t
-			pick_k += 1
-		e_time += surv * DT
-		e_dist += surv * sp * DT
+				last_pick_t = t
+				pick_k = 1
+				next_thr = maxf(T.pick_first * pscale, path_coins) + T.pick_price(pick_k, maxf(path_coins / maxf(t, 5.0), 0.01), pscale)
+		else:
+			while pick_k < 60 and path_coins >= next_thr:
+				picks_exp += w
+				gap_sum += (t - last_pick_t) * w
+				gap_w += w
+				hyp_gap_sum += t - last_pick_t
+				hyp_gap_n += 1
+				last_pick_t = t
+				pick_k += 1
+				next_thr = maxf(next_thr, path_coins) + T.pick_price(pick_k, maxf(path_coins / maxf(t, 5.0), 0.01), pscale)
+		e_time += w * DT
+		e_dist += w * sp * DT
 		dist += sp * DT
 		if target_t < 0.0 and dist >= target_dist_units:
 			target_t = t
 			p_target = surv
 		t += DT
-	return {"time": e_time, "coins": e_coins, "dist_units": e_dist, "p_target": p_target, "t_fuel": t_fuel, "picks": picks_exp, "first_pick": first_pick_t}
+	return {"time": e_time, "coins": e_coins, "dist_units": e_dist, "p_target": p_target, "t_fuel": t_fuel, "picks": picks_exp, "first_pick": first_pick_t, "gap_sum": gap_sum, "gap_w": gap_w, "hyp_gap": (hyp_gap_sum / hyp_gap_n) if hyp_gap_n > 0 else -1.0}
 
 ## The score at which pick number k (0 = the first) comes: the sum of the prices so far.
 func _pick_cum(k: int, perm: float) -> float:
@@ -260,7 +282,8 @@ func play(label: String) -> Dictionary:
 					clock / 60.0, runs, run_len, fmt(ev["coins"]), fmt(ev["coins"] / (run_len + OVERHEAD) * 60.0), fmt(coins),
 					level["coin_value"], level["can_bounty"], level["close_call_pay"], level["bonus_cap"],
 					level["fuel_tank"], level["efficiency"], level["refill"], str(loadout), slots, (1.0 - unlock_p) * 100.0])
-			print("          picks: first after %s, %.1f picks per run" % [("%.0f s" % ev["first_pick"]) if ev["first_pick"] >= 0.0 else "never", ev["picks"]])
+			print("          picks: first after %s, %.1f picks per run, %s between picks" % [("%.0f s" % ev["first_pick"]) if ev["first_pick"] >= 0.0 else "never", ev["picks"], ("%.0f s" % (ev["gap_sum"] / ev["gap_w"])) if ev["gap_w"] > 0.05 else "-"])
+			print("          (if the run lasted: %s between picks)" % (("%.0f s" % ev["hyp_gap"]) if ev["hyp_gap"] >= 0.0 else "-"))
 			next_mark += 1
 	print("")
 	for e in events:
