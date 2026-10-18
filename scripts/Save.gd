@@ -25,6 +25,7 @@ var maps_unlocked: Array = [true, false, false, false]
 var selected_map := 0
 var combos_found := {}              # combo id -> true (the Logbook shows them)
 var milestones := {}                # milestone id -> true (unlocks perks etc.)
+var explained := {}                 # pick-card kinds (perk / boost / supply) whose one-line explainer has been shown
 var map_stats := {}                 # map id -> {"best_distance": meters, "best_score": coins, "medals": 0..3 earned}
 
 func _ready() -> void:
@@ -42,6 +43,7 @@ func _defaults() -> void:
 	maps_unlocked = [true, false, false, false]
 	selected_map = 0
 	milestones = {}
+	explained = {}
 	combos_found = {}
 	map_stats = {}
 	for m in Tuning.maps:
@@ -113,6 +115,11 @@ func _apply(d: Dictionary) -> void:
 		for k in mi:
 			if bool(mi[k]):
 				milestones[String(k)] = true
+	var ex: Variant = d.get("explained", {})
+	if ex is Dictionary:
+		for k in ex:
+			if bool(ex[k]):
+				explained[String(k)] = true
 	var cf: Variant = d.get("combos_found", {})
 	if cf is Dictionary:
 		for k in cf:
@@ -139,7 +146,16 @@ func _is_gear(id: String) -> bool:
 func to_dict() -> Dictionary:
 	return {"version": VERSION, "high_score": high_score, "coins": coins, "levels": levels.duplicate(),
 			"slots": slots, "loadout": loadout.duplicate(), "stats": stats.duplicate(),
-			"milestones": milestones.duplicate(), "combos_found": combos_found.duplicate(), "maps_unlocked": maps_unlocked.duplicate(), "selected_map": selected_map, "map_stats": map_stats.duplicate(true)}
+			"milestones": milestones.duplicate(), "explained": explained.duplicate(), "combos_found": combos_found.duplicate(), "maps_unlocked": maps_unlocked.duplicate(), "selected_map": selected_map, "map_stats": map_stats.duplicate(true)}
+
+func was_explained(kind: String) -> bool:
+	return bool(explained.get(kind, false))
+
+## The one-line explainer of a card kind has been shown: remember it (saved).
+func mark_explained(kind: String) -> void:
+	if not was_explained(kind):
+		explained[kind] = true
+		save_game()
 
 func save_game() -> void:
 	var f := FileAccess.open(path, FileAccess.WRITE)

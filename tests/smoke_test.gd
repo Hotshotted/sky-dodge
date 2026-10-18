@@ -85,6 +85,12 @@ func _kit_pass(kit, carrier: Node3D, kind: int, d: float, kpz: float, kcaps: Pac
 	kit.release_all()
 	return {"hit": hit, "event": ev}
 
+func _cards_of(list: Array) -> Array[Dictionary]:
+	var out: Array[Dictionary] = []
+	for c in list:
+		out.append(c)
+	return out
+
 func real_wait(sec: float) -> void:
 	var t0 := Time.get_ticks_msec()
 	while Time.get_ticks_msec() - t0 < sec * 1000.0:
@@ -1780,7 +1786,7 @@ func _initialize() -> void:
 	main.pick_screen.show_cards(two_cards, ["Combo", ""])
 	var pips_lit := 0
 	for pip in main.pick_screen._parts[0]["pips"]:
-		pips_lit += int((pip.get_theme_stylebox("panel") as StyleBoxFlat).bg_color.is_equal_approx(Color(1.0, 0.9, 0.35)))
+		pips_lit += int((pip.get_theme_stylebox("panel") as StyleBoxFlat).bg_color.is_equal_approx(Color.WHITE))
 	check(pips_lit == 3 and main.pick_screen._parts[0]["line"].text == "+60 coins per can" and main.pick_screen._parts[0]["combo"].visible and not main.pick_screen._parts[1]["combo"].visible,
 			"a card is a big icon, a name, ONE short line (\"%s\") and level pips; a combo card is highlighted" % main.pick_screen._parts[0]["line"].text)
 	main.pick_screen.hide_cards()
@@ -3311,6 +3317,69 @@ func _initialize() -> void:
 			"slow frames are clamped (%.2f) or dropped, then the frames after a stall are skipped, never made up %s" % [tuning.max_frame_delta, str(raw_used)])
 	main.spawner.kit_enabled = false
 	main.spawner.apply_map(0)
+
+	print("11. pick cards: perk / boost / supply read at a glance")
+	var cs_pc = main.pick_screen
+	var cs_save = root.get_node("Save")
+	cs_save.explained = {}
+	var cs_pk = main.picks
+	cs_pk.set_perk("scavenger", 1)
+	var cs_perk: Dictionary = cs_pk.perk_card(tuning.perk_def("scavenger"), 2, true)
+	var cs_new: Dictionary = cs_pk.perk_card(tuning.perk_def("tailwind"), 1, false)
+	var cs_boost: Dictionary = {"kind": "boost", "id": "shield", "name": "Shield", "glyph": "O", "color": Color(0.4, 0.8, 1.0), "line": "One free hit, 20 s", "level": 0, "owned": false}
+	var cs_supply: Dictionary = {"kind": "supply", "id": "patch", "name": "Patch", "glyph": "+", "color": Color(1.0, 0.4, 0.4), "line": "+1 hit this run", "level": 0, "owned": false}
+	cs_pc.show_cards(_cards_of([cs_perk, cs_boost, cs_supply]), ["Combo", "", ""])
+	var cs_frames: Array[Color] = []
+	for i in 3:
+		cs_frames.append((cs_pc._cards[i].get_theme_stylebox("normal") as StyleBoxFlat).border_color)
+	check(cs_frames[1] == cs_pc.KIND_COLORS["boost"] and cs_frames[2] == cs_pc.KIND_COLORS["supply"], "boost cards have a blue frame, supply cards a green one")
+	check(cs_pc._parts[0]["kind"].text == "PERK" and cs_pc._parts[1]["kind"].text == "BOOST" and cs_pc._parts[2]["kind"].text == "SUPPLY", "each card has a PERK / BOOST / SUPPLY banner")
+	var cs_hues := [cs_pc.KIND_COLORS["perk"], cs_pc.KIND_COLORS["boost"], cs_pc.KIND_COLORS["supply"]]
+	check(cs_hues[0] != cs_hues[1] and cs_hues[1] != cs_hues[2] and cs_hues[0] != cs_hues[2] and absf(cs_hues[0].h - 0.12) < 0.06 and absf(cs_hues[1].h - 0.6) < 0.06 and absf(cs_hues[2].h - 0.38) < 0.06, "gold, blue and green are clearly different hues")
+	cs_pc.show_cards(_cards_of([cs_new, cs_boost, cs_supply]), ["", "", ""])
+	check((cs_pc._cards[0].get_theme_stylebox("normal") as StyleBoxFlat).border_color == cs_pc.KIND_COLORS["perk"], "a perk card has a gold frame (when it is not a combo)")
+	var cs_pips := 0
+	for pip in cs_pc._parts[0]["pips"]:
+		cs_pips += int(pip.visible)
+	check(cs_pips == 3 and not cs_pc._parts[1]["pips"][0].visible and not cs_pc._parts[2]["pips"][0].visible, "level pips only on perks")
+	check(cs_pc._parts[1]["watch"].visible and cs_pc._parts[1]["tag"].text == "%d s" % int(tuning.boost_time) and not cs_pc._parts[0]["watch"].visible, "a boost shows a stopwatch and how long it lasts (%s)" % cs_pc._parts[1]["tag"].text)
+	check(cs_pc._parts[2]["tag"].text == "INSTANT" and not cs_pc._parts[2]["watch"].visible, "a supply says INSTANT")
+	cs_pc.show_cards(_cards_of([cs_perk, cs_boost, cs_supply]), ["", "", ""])
+	check(cs_pc._parts[0]["level_up"].visible and cs_pc._parts[0]["level_up"].text == "LEVEL UP 1 -> 2" and not cs_pc._parts[1]["level_up"].visible, "an owned perk shows \"%s\"" % cs_pc._parts[0]["level_up"].text)
+	cs_pc.show_cards(_cards_of([cs_new, cs_boost, cs_supply]), ["Combo", "", ""])
+	check(cs_pc._parts[0]["combo"].visible and not cs_pc._parts[1]["combo"].visible and (cs_pc._cards[0].get_theme_stylebox("normal") as StyleBoxFlat).border_color != cs_pc.KIND_COLORS["perk"], "the COMBO! highlight is kept (and stands out from the gold frame)")
+	# the explainers: once per kind, the first time it appears
+	cs_save.explained = {}
+	cs_pc.show_cards(_cards_of([cs_new, cs_boost, cs_supply]), ["", "", ""])
+	check(cs_pc._parts[0]["explain"].text == "Lasts this run" and cs_pc._parts[1]["explain"].text == "Lasts 20 seconds" and cs_pc._parts[2]["explain"].text == "Used instantly", "the first time, each kind has its one-line explainer under the banner")
+	cs_pc.show_cards(_cards_of([cs_new, cs_boost, cs_supply]), ["", "", ""])
+	check(not cs_pc._parts[0]["explain"].visible and not cs_pc._parts[1]["explain"].visible and not cs_pc._parts[2]["explain"].visible, "...and never again")
+	cs_save.explained = {}
+	cs_pc.show_cards(_cards_of([cs_boost]), [""])
+	cs_pc.show_cards(_cards_of([cs_new, cs_boost, cs_supply]), ["", "", ""])
+	check(not cs_pc._parts[1]["explain"].visible and cs_pc._parts[0]["explain"].visible and cs_pc._parts[2]["explain"].visible, "...each kind on its own first appearance")
+	cs_save.load_game()
+	check(cs_save.was_explained("boost"), "...remembered in the save")
+	cs_pc.hide_cards()
+	# every set of three has a perk, and owned perks still come up more often
+	cs_pk.reset_run() if cs_pk.has_method("reset_run") else null
+	var cs_no_perk := 0
+	var cs_owned_hits := 0
+	var cs_other_hits := 0
+	cs_pk.set_perk("scavenger", 1)
+	for i in 4000:
+		var roll_cards: Array[Dictionary] = cs_pk.roll(0.5, 3)
+		var any_perk := false
+		for c in roll_cards:
+			any_perk = any_perk or c["kind"] == "perk"
+			if c["id"] == "scavenger":
+				cs_owned_hits += 1
+			elif c["id"] == "daredevil":
+				cs_other_hits += 1
+		cs_no_perk += int(not any_perk)
+	check(cs_no_perk == 0, "every set of 3 cards includes a perk (4000 rolls)")
+	check(cs_owned_hits > cs_other_hits * 1.2, "a perk you own is offered more often (%d vs %d)" % [cs_owned_hits, cs_other_hits])
+	cs_pk.set_perk("scavenger", 0)
 
 	DirAccess.remove_absolute(ProjectSettings.globalize_path("user://smoke_test_save.json"))
 	print("")

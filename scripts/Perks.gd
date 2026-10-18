@@ -115,6 +115,30 @@ func roll(fuel_frac: float, count: int = 3) -> Array[Dictionary]:
 		out.append(pool[idx])
 		pool.remove_at(idx)
 		weights.remove_at(idx)
+	# Every set of cards holds at least one perk: if none came up, a weighted perk (owned ones more likely) replaces the last card.
+	var has_perk := false
+	for c in out:
+		has_perk = has_perk or c["kind"] == "perk"
+	if not has_perk and not out.is_empty():
+		var perks_pool: Array[Dictionary] = []
+		var perk_w: Array[float] = []
+		for d in Tuning.perks:
+			if perk_offered(d):
+				var lv := level(d["id"])
+				perks_pool.append(perk_card(d, lv + 1, lv > 0))
+				perk_w.append(1.0 + (Tuning.perk_owned_weight if lv > 0 else 0.0))
+		if not perks_pool.is_empty():
+			var tot := 0.0
+			for w in perk_w:
+				tot += w
+			var rv := randf() * tot
+			var pick := perks_pool.size() - 1
+			for i in perks_pool.size():
+				rv -= perk_w[i]
+				if rv <= 0.0:
+					pick = i
+					break
+			out[out.size() - 1] = perks_pool[pick]
 	return out
 
 func perk_card(d: Dictionary, new_level: int, owned: bool) -> Dictionary:
