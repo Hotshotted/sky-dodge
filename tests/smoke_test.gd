@@ -199,20 +199,23 @@ func _initialize() -> void:
 		check(same_world(base, snap), "near misses created nothing new  [%s]" % describe(snap))
 		if run == 3:
 			break
-		var reason := "Hit an obstacle"
+		var header: String = main.HEADER_CRASH
+		var reason: String = main.REASON_OBSTACLE
 		if run == 2:   # this run ends by running dry instead
-			reason = "Out of fuel"
+			header = main.HEADER_FUEL
+			reason = main.REASON_FUEL
 			main.score = 1234.0
 			main.fuel = 0.05
 			await real_wait(0.3)
 		else:
 			force_crash(main)
 			await real_wait(0.2)
-		check(not main.alive, "run %d ends (%s)" % [run, reason])
+		check(not main.alive, "run %d ends (%s)" % [run, header])
 		check(main.hud._over.visible, "game-over UI is visible")
 		var shown: String = main.hud._over.text
-		check(shown.contains("CRASHED") and shown.contains(reason) and shown.contains("Score: 1234"),
-				"game-over shows the end reason \"%s\" and the score  (\"%s\")" % [reason, shown.replace("\n", " | ")])
+		var other_header: String = main.HEADER_FUEL if run != 2 else main.HEADER_CRASH
+		check(shown.begins_with(header + "\n") and shown.contains(reason) and shown.contains("Score: 1234") and not shown.contains(other_header),
+				"game-over header is \"%s\" with \"%s\" and the score, not \"%s\"  (\"%s\")" % [header, reason, other_header, shown.replace("\n", " | ")])
 		check(run != 2 or main.fuel <= 0.0, "out-of-fuel run ended with an empty tank")
 		await real_wait(0.6)   # Main ignores taps for 0.5 s after a crash
 		tap()

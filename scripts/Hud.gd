@@ -163,13 +163,14 @@ func _process(delta: float) -> void:
 		l.position.y = _pop_base_y[i] - 150.0 * (1.0 - pow(1.0 - t, 2.0))  # rise, easing out
 		l.modulate.a = 1.0 if t < 0.5 else 1.0 - (t - 0.5) / 0.5
 
-## Crash screen: what ended the run, the final score, and the restart hint.
-func show_game_over(points: int, reason: String) -> void:
-	_over.text = _game_over_text(points, reason)
+## End-of-run screen: a header ("CRASHED" / "OUT OF FUEL"), what ended the run, the final score and
+## the restart hint.
+func show_game_over(points: int, header: String, reason: String) -> void:
+	_over.text = _game_over_text(points, header, reason)
 	_over.visible = true
 
-func _game_over_text(points: int, reason: String) -> String:
-	return "CRASHED\n%s\n\nScore: %d\n\nTap to restart" % [reason, points]
+func _game_over_text(points: int, header: String, reason: String) -> String:
+	return "%s\n%s\n\nScore: %d\n\nTap to restart" % [header, reason, points]
 
 func _make_label(font_size: int) -> Label:
 	var l := Label.new()
@@ -245,7 +246,9 @@ func begin_prewarm(with_popups: bool) -> void:
 			l.text = Tuning.near_miss_texts[t]
 			l.position = Vector2(20.0, 120.0 + 90.0 * t)
 			l.set_meta("prewarm", true)
-	_over.text = _game_over_text(1234567890, "Hit an obstacle")  # same glyphs as the real screen
+	# Both end screens' glyphs, so neither is first drawn when a run ends.
+	_over.text = _game_over_text(1234567890, Main.HEADER_CRASH, Main.REASON_OBSTACLE) + "\n" \
+			+ _game_over_text(1234567890, Main.HEADER_FUEL, Main.REASON_FUEL)
 	_over.visible = true
 	_splash = Control.new()
 	_splash.set_anchors_and_offsets_preset(Control.PRESET_FULL_RECT)

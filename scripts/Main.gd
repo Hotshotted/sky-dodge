@@ -1,3 +1,4 @@
+class_name Main
 extends Node3D
 ## Game loop: scroll speed, score, collision, camera, restart.
 
@@ -7,8 +8,11 @@ extends Node3D
 @onready var sun: DirectionalLight3D = $Sun
 @onready var hud: CanvasLayer = $Hud
 
-const REASON_OBSTACLE := "Hit an obstacle"  # end reasons, shown on the game-over screen
-const REASON_FUEL := "Out of fuel"
+## What ends a run, shown on the game-over screen as a big header plus a line under it.
+const HEADER_CRASH := "CRASHED"
+const REASON_OBSTACLE := "Hit an obstacle"
+const HEADER_FUEL := "OUT OF FUEL"
+const REASON_FUEL := "The tank ran dry"
 
 var score := 0.0        # accumulates distance flown x multiplier
 var multiplier := 1     # raised by near misses, decays back to 1
@@ -135,7 +139,7 @@ func _process(delta: float) -> void:
 
 	var caps: PackedFloat32Array = player.hit_capsules()
 	if spawner.hits(plane, caps):
-		_end_run(REASON_OBSTACLE)
+		_end_run(HEADER_CRASH, REASON_OBSTACLE)
 		return
 
 	for ev in spawner.update_near_misses(plane, caps):
@@ -147,14 +151,14 @@ func _process(delta: float) -> void:
 		_on_pickup(pos)
 	hud.set_fuel(fuel / Tuning.fuel_start)
 	if fuel <= 0.0:
-		_end_run(REASON_FUEL)
+		_end_run(HEADER_FUEL, REASON_FUEL)
 
 ## End the run: freeze the plane and show the game-over screen with what ended it.
-func _end_run(reason: String) -> void:
+func _end_run(header: String, reason: String) -> void:
 	alive = false
 	_death_time = Time.get_ticks_msec() / 1000.0
 	player.crash()
-	hud.show_game_over(int(score), reason)
+	hud.show_game_over(int(score), header, reason)
 
 ## A fuel can was collected at `pos`: refill (never past a full tank) and pop.
 func _on_pickup(pos: Vector3) -> void:

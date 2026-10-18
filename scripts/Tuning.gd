@@ -24,7 +24,8 @@ var obstacle_depth := 1.4
 
 # ---------- Forward speed ----------
 ## Scroll speed at the start of a run (units/second).
-var base_speed := 10.0
+## It climbs by speed_ramp each second until max_speed: (26 - 7) / 0.2 = 95 s to reach top speed.
+var base_speed := 7.0
 ## How much scroll speed grows each second.
 var speed_ramp := 0.2
 ## Scroll speed never exceeds this.
@@ -55,14 +56,15 @@ var light_direction := Vector3(0.3, -0.8, -0.5)
 # ---------- Fuel ----------
 ## Starting fuel, which is also the size of the tank (refills never go above it).
 var fuel_start := 100.0
-## Fuel burned per second. With no cans at all a run lasts fuel_start / fuel_drain seconds (38 s).
-## Balance check (tests/fuel_balance_sim.gd, autopilots): a player who only flies the widest gaps ran
-## dry at a median of 38 s; random gaps about 36 s; a can-chasing player never ran dry.
-var fuel_drain := 2.6
+## Fuel burned per second. With no cans at all a run lasts fuel_start / fuel_drain seconds (29 s).
+## Balance check (tests/fuel_balance_sim.gd, autopilots, 12 runs each): a player who only flies the
+## widest gaps ran dry at 29 s every time; random gaps median 41 s; a can-chasing player's lowest fuel
+## averaged ~38 and 9 of 12 runs ended on an obstacle, 3 on fuel (can chance 0.18: 1 of 12).
+var fuel_drain := 3.4
 ## Fuel one can gives back.
-var fuel_refill := 25.0
+var fuel_refill := 20.0
 ## Chance (0-1) that a new row gets a fuel can (rows with no risky spot get none).
-var fuel_can_chance := 0.2
+var fuel_can_chance := 0.16
 ## How strongly cans prefer RISKY spots (0-1). A can is placed in a risky spot with this
 ## probability, otherwise in any open column. Risky = off the main safe path AND either next to an
 ## obstacle or in a column that closes in the next row. Cans are never put on the main safe path
