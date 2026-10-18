@@ -38,6 +38,10 @@ var base_speed := 7.0
 var speed_ramp := 0.10
 ## Scroll speed never exceeds this.
 var max_speed := 26.0
+## Countryside: speed does not ramp. It steps up by speed_step once per wave cycle, while a BREATHER passes the plane
+## (eased in at speed_step_rate units/s per second), toward max_speed: (26 - 7) / 3.2 = 6 steps, about 4.5 minutes.
+var speed_step := 3.2
+var speed_step_rate := 2.0
 
 # ---------- Obstacle spawning ----------
 ## Distance between spawn rows (units). Bigger = more time to react.

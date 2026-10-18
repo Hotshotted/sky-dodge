@@ -343,7 +343,7 @@ func _initialize() -> void:
 		defaults[e[0]] = tuning.get(e[0])
 	for t in panel.TOGGLES:
 		defaults[t[0]] = tuning.get(t[0])
-	check(panel.ENTRIES.size() == 21 and panel._sliders.size() == 21 and panel._toggles.size() == 1, "21 sliders and 1 on/off switch for the tuned values")
+	check(panel.ENTRIES.size() == 22 and panel._sliders.size() == 22 and panel._toggles.size() == 1, "22 sliders and 1 on/off switch for the tuned values")
 	var all_match := true
 	for e in panel.ENTRIES:
 		if not is_equal_approx(panel._sliders[e[0]].value, tuning.get(e[0])):
@@ -2943,6 +2943,38 @@ func _initialize() -> void:
 	check(main.tune_panel._status.text == "%s | %s" % [pz_gsp.pattern_name, pz_gsp.wave_name()] and pz_gsp.pattern_name != "", "the ?tune status shows the pattern and the wave phase: \"%s\"" % main.tune_panel._status.text)
 	pz_gsp._release_row(pz_gsp._rows[-1])
 	pz_gsp.kit.release_all()
+	# speed only steps up while a BREATHER passes, toward the top speed in about 4-5 minutes
+	pz_gsp.reset(-14.0)
+	pz_gsp.plane_z = 7.6
+	var st_t := 0.0
+	var st_speed: float = tuning.base_speed
+	var st_top_t := -1.0
+	var st_band_ok := true
+	var st_last_pat := ""
+	var st_mid_wave := 0
+	var st_prev_steps := 0
+	while st_t < 330.0:
+		pz_gsp.run_time = st_t
+		pz_gsp.scroll_speed = st_speed
+		pz_gsp.advance(st_speed * 0.05)
+		if pz_gsp.speed_steps != st_prev_steps:
+			st_prev_steps = pz_gsp.speed_steps
+			var near_breather := false
+			for rr in pz_gsp._rows:
+				near_breather = near_breather or rr.breather
+			st_mid_wave += int(not near_breather)
+		st_speed = pz_gsp.stepped_speed(pz_gsp.speed_steps)
+		if pz_gsp.pattern_name != st_last_pat:
+			st_last_pat = pz_gsp.pattern_name
+			var sp_pat: Dictionary = P.find(st_last_pat)
+			var planned: float = maxf(st_speed, pz_gsp.stepped_speed(pz_gsp.speed_steps_planned))
+			st_band_ok = st_band_ok and planned >= float(sp_pat["speed"][0]) - 0.01 and planned <= float(sp_pat["speed"][1])
+		if st_top_t < 0.0 and st_speed >= tuning.max_speed - 0.001:
+			st_top_t = st_t
+		st_t += 0.05
+	check(st_top_t > 230.0 and st_top_t < 300.0, "speed reaches the top in steps after %.0f s (about 4-5 minutes)" % st_top_t)
+	check(pz_gsp.speed_steps >= 6 and st_mid_wave == 0, "one step per wave cycle, each applied while a BREATHER row is on screen (%d steps, %d mid-wave)" % [pz_gsp.speed_steps, st_mid_wave])
+	check(st_band_ok, "every chosen pattern is inside its speed band at the speed step it will be flown at")
 	pz_gsp.reset()
 	pz_gsp.kit_enabled = false
 

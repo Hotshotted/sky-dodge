@@ -15,6 +15,7 @@ const ENTRIES := [
 	["base_speed", "Start speed", 3.0, 15.0, 0.5],
 	["max_speed", "Top speed", 10.0, 50.0, 1.0],
 	["speed_ramp", "Speed ramp (per s)", 0.0, 1.0, 0.01],
+	["speed_step", "Countryside speed step", 0.0, 8.0, 0.1],
 	["fuel_drain", "Fuel drain (per s)", 0.5, 8.0, 0.1],
 	["fuel_refill", "Fuel refill (per can)", 5.0, 60.0, 1.0],
 	["fuel_can_chance", "Fuel can chance", 0.0, 1.0, 0.01],

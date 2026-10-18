@@ -51,6 +51,8 @@ class Row extends Node3D:
 	var obs_ghosts: Array[MeshInstance3D] = []    # the frames of the cubes in use (same order as obs)
 	var obs: Array[MeshInstance3D] = []   # the cubes in use (same order as xs)
 	var outlines: Array[ShaderMaterial] = []  # their outline materials (same order)
+	var breather := false                 # spawned during a BREATHER
+	var step_mark := false                # the BREATHER's speed step is applied when this row reaches the plane
 	var entered := false                  # plane has been near this row
 	var passed := false                   # near-miss check already done
 	var min_clear := INF                  # closest approach seen
@@ -78,6 +80,8 @@ class Row extends Node3D:
 		obs.clear()
 		obs_ghosts.clear()
 		outlines.clear()
+		step_mark = false
+		breather = false
 		entered = false
 		passed = false
 		min_clear = INF
@@ -235,6 +239,9 @@ func reset(first_row_z: float = -12.0) -> void:
 	pattern_name = ""
 	wave_phase = 0
 	wave_cycle = 0
+	speed_steps = 0
+	speed_steps_planned = 0
+	_step_marked_cycle = -1
 	_wave_start = 0.0
 	_wave_apply()
 	_safe_col = Tuning.column_count / 2
@@ -253,6 +260,11 @@ func advance(dist: float) -> void:
 	_last_row_z += dist
 	_advance_clouds(dist)
 	hazards.advance(dist)
+	if kit_on:
+		for r in _rows:
+			if r.step_mark and r.position.z >= plane_z - 8.0:
+				r.step_mark = false
+				speed_steps += 1
 	while _last_row_z > -Tuning.spawn_distance:
 		_last_row_z -= Tuning.spawn_spacing
 		rows_spawned += 1
@@ -615,6 +627,11 @@ func _spawn_kit_row(z: float) -> void:
 	row.visible = true
 	row.stripe.scale = Vector3(Tuning.ortho_size * 2.0, 0.1, 0.4)
 	_carriers[_pat_row] = row
+	row.breather = wave_phase == 3
+	if wave_phase == 3 and _step_marked_cycle != wave_cycle:   # the first BREATHER row of a cycle carries the speed step
+		_step_marked_cycle = wave_cycle
+		row.step_mark = true
+		speed_steps_planned += 1
 	Patterns.realize(kit, _pat, _pat_mirror, _carriers, _hay_fill, _pat_row)
 	var open: Array[bool] = []
 	for c in Tuning.column_count:
@@ -661,8 +678,15 @@ var wave_can_mult := 1.0            # the intensity wave scales how many cans / 
 var wave_hay_mult := 1.0
 const WAVE_NAMES := ["CALM", "BUILD", "PEAK", "BREATHER"]
 var wave_phase := 0
+var speed_steps := 0                # speed steps applied so far (a BREATHER reached the plane)
+var speed_steps_planned := 0        # ...and spawned (patterns are chosen for the speed they will be flown at)
+var _step_marked_cycle := -1
 var wave_cycle := 0                 # finished CALM-BUILD-PEAK-BREATHER rounds this run
 var _wave_start := 0.0              # run_time when the current phase began
+
+## The Countryside's scroll speed after `steps` steps.
+func stepped_speed(steps: int) -> float:
+	return minf(Tuning.base_speed + steps * Tuning.speed_step, Tuning.max_speed)
 
 func wave_name() -> String:
 	return "%s #%d" % [WAVE_NAMES[wave_phase], wave_cycle + 1]
@@ -731,6 +755,7 @@ func _choose_pattern() -> Dictionary:
 		if not forced.is_empty():
 			return forced
 	var rng := wave_range()
+	var spd := maxf(scroll_speed, stepped_speed(speed_steps_planned)) if kit_on else scroll_speed
 	var slack := 0.5
 	while slack < 6.0:
 		var pool: Array[Dictionary] = []
@@ -738,7 +763,7 @@ func _choose_pattern() -> Dictionary:
 		for p in Patterns.all():
 			if p["name"] == _pat_last or float(p["diff"]) < rng.x - slack or float(p["diff"]) > rng.y + slack:
 				continue
-			if scroll_speed < float(p["speed"][0]) - 1.0 or scroll_speed > float(p["speed"][1]):
+			if spd < float(p["speed"][0]) - 0.01 or spd > float(p["speed"][1]):
 				continue
 			pool.append(p)
 			var w := 1.0 + 0.5 * (float(p["diff"]) - rng.x)

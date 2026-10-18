@@ -46,6 +46,7 @@ var _decay_acc := 0.0   # fractional steps accumulated towards the next one comi
 var _warming := false
 static var _haptic_warmed := false  # first-touch haptic warm-up done (once per app session)
 static var _warmed := false  # pre-warm only once per app session
+var _kit_speed := 0.0      # Countryside stepped scroll speed (eased)
 var elapsed := 0.0      # run time, drives the speed ramp
 var alive := true
 var _death_time := 0.0
@@ -227,6 +228,7 @@ func restart() -> void:
 		_bonus_timer = Tuning.bonus_hold_time
 		_decay_acc = 1.0
 	elapsed = 0.0
+	_kit_speed = Tuning.base_speed
 	alive = true
 	spawner.run_time = 0.0
 	fuel = Tuning.fuel_max()
@@ -334,6 +336,9 @@ func _process(raw_delta: float) -> void:
 	picks.update(delta)
 	var tail := 1.0 + picks.value("tailwind") * 0.01   # Tailwind: more speed and more coins
 	var speed := Tuning.map_speed(map, elapsed) * tail
+	if spawner.kit_on:   # Countryside: no ramp, only the steps a BREATHER brings (eased in)
+		_kit_speed = move_toward(_kit_speed, spawner.stepped_speed(spawner.speed_steps), Tuning.speed_step_rate * delta)
+		speed = _kit_speed * tail
 	var step := speed * delta
 	score += step * Tuning.coins_per_unit * distance_pay() * earn_mult()
 	spawner.near_miss_scale = 1.0 + picks.value("daredevil") * 0.01
