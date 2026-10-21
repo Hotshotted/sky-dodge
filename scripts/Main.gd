@@ -8,7 +8,7 @@ extends Node3D
 @onready var sun: DirectionalLight3D = $Sun
 @onready var hud: CanvasLayer = $Hud
 var shadows := ShadowBlobs.new()   # soft shadows under obstacles and cans
-var ground := GroundWorld.new()   # the countryside far below (parallax), the plane's shadow, Rusty's airstrip
+var ground := GroundWorld.new()   # the countryside below (scrolls with the obstacles), the plane's shadow, Rusty's airstrip
 var goals := Goals.new()        # gates for your best, the next medal and the next map unlock
 var crash_fx := CrashFx.new()   # the crash sequence's smoke, debris and Whiskers
 var sfx := Sfx.new()   # all sound (see Sfx.gd)
@@ -101,7 +101,7 @@ func _ready() -> void:
 		for d in list:
 			_callout_ms[d["id"]] = -100000
 	add_child(ground)
-	spawner.ground_mi.material_override = ground.backdrop_mat
+	spawner.ground_mi.material_override = ground.base_mat
 	add_child(shadows)
 	add_child(crash_fx)
 	add_child(goals)
@@ -1211,7 +1211,6 @@ func _update_camera() -> void:
 	camera.size = Tuning.ortho_size * (1.0 - 0.2 * _cam_ease)   # (a crash: the camera eases in toward the plane)
 	camera.position = Vector3(player.position.x * 0.55 * _cam_ease, 0, player.position.z * 0.35 * _cam_ease) + Vector3(0, cos(tilt), sin(tilt)) * 30.0
 	camera.rotation = Vector3(-(PI / 2 - tilt), 0, 0)
-	ground.sync_camera(camera, get_viewport().get_visible_rect().size)
 
 ## Screen spans z = -half .. +half (stretched slightly by the camera tilt).
 func _half_height() -> float:

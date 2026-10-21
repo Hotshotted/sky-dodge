@@ -183,17 +183,20 @@ var tod_sun_energy: Array[float] = [0.9, 1.0, 0.85, 0.45]
 var tod_ambient_energy: Array[float] = [0.45, 0.45, 0.4, 0.3]
 
 # ---------- Background readability ----------
-## The countryside is drawn small (1/ground_blur_div of the screen size) and blurred, muted toward the haze, so it reads
-## as far away and out of focus; the obstacles in front keep their crisp black outlines.
-var ground_blur_div := 4
-var ground_blur_radius := 1.6          # extra blur taps, in texels of the small picture
+## The countryside is told apart from the obstacles by colour only: muted, desaturated, pulled toward the haze, with soft
+## faded edges. (The obstacles in front keep saturated colours and black outlines.)
 var ground_haze := 0.62                # how far the ground colours are pulled toward the haze (1 = all haze)
 var ground_saturation := 0.5           # colour strength of the ground (1 = natural)
-## The soft shadow under each obstacle, pickup and the plane: strength, how far it falls toward the bottom of the screen,
-## and how much bigger than the thing it is.
+## Shadows on the ground. Things standing on the ground (barns, windmills, power lines, tractors, hay) get a contact shadow
+## directly beneath them. Flying things (the plane, crows, balloons, kites, the crop duster, fuel cans) cast a shadow offset
+## toward the bottom of the screen by their altitude x shadow_per_altitude, so they read as airborne.
 var shadow_alpha := 0.34
-var shadow_offset := 0.45
-var shadow_grow := 1.3
+var shadow_per_altitude := 0.14
+var shadow_grow := 1.3                 # a flying thing's shadow is this much bigger than it (a contact shadow only 1.08)
+## The altitude of each kit thing above the ground, in the order of Kit.NAMES (0 = it stands on the ground).
+var shadow_altitude: Array[float] = [0.0, 0.0, 0.0, 2.4, 3.0, 0.0, 2.4, 3.0, 0.0]
+var shadow_altitude_can := 2.0         # a fuel can
+var shadow_altitude_cube := 1.5        # the plain floating cubes of the other maps
 
 # ---------- Speed cues ----------
 ## Every source of a speed change shows itself on screen. The audit (see the smoke test): Tailwind (perk), the BREATHER

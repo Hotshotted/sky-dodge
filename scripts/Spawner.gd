@@ -136,7 +136,7 @@ var kit := Kit.new()               # the Countryside obstacle kit (barns, windmi
 var kit_on := false                # this run uses the kit instead of cubes (Countryside only)
 var kit_enabled := true            # (tests switch the kit off to count cubes)
 var _gull_mat := StandardMaterial3D.new()   # gulls are white (the cubes' material is swapped at spawn, both pre-built)
-var ground_mi: MeshInstance3D      # the ground plane (Main gives it the blurred countryside material)
+var ground_mi: MeshInstance3D      # the ground plane (Main gives it the ground colour material)
 var _ground_mat := StandardMaterial3D.new()
 var _stripe_mat := StandardMaterial3D.new()
 var _obs_color := Color(1.0, 0.3, 0.12)

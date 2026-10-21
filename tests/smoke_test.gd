@@ -363,7 +363,7 @@ func _initialize() -> void:
 		defaults[e[0]] = tuning.get(e[0])
 	for t in panel.TOGGLES:
 		defaults[t[0]] = tuning.get(t[0])
-	check(panel.ENTRIES.size() == 26 and panel._sliders.size() == 26 and panel._toggles.size() == 1, "26 sliders and 1 on/off switch for the tuned values")
+	check(panel.ENTRIES.size() == 25 and panel._sliders.size() == 25 and panel._toggles.size() == 1, "25 sliders and 1 on/off switch for the tuned values")
 	var all_match := true
 	for e in panel.ENTRIES:
 		if not is_equal_approx(panel._sliders[e[0]].value, tuning.get(e[0])):
@@ -3805,10 +3805,11 @@ func _initialize() -> void:
 			wd_no_outline = wd_no_outline and seg.material_overlay == null
 	check(wd_no_outline, "scenery has no outlines")
 	var wd_natural_green := Color(0.36, 0.6, 0.28)
-	check(wd_gw._field_mats[0].albedo_color.s < wd_natural_green.s - 0.05, "...and is faded toward the haze (saturation %.2f < %.2f)" % [wd_gw._field_mats[0].albedo_color.s, wd_natural_green.s])
+	var wd_field_col: Color = wd_gw._field_mats[0].get_shader_parameter("color")
+	check(wd_field_col.s < wd_natural_green.s - 0.05, "...and is faded toward the haze (saturation %.2f < %.2f)" % [wd_field_col.s, wd_natural_green.s])
 	var wd_z_before: float = wd_gw._chunks[0].position.z
 	wd_gw.scroll(10.0)
-	check(absf((wd_gw._chunks[0].position.z - wd_z_before) - 10.0 * wd_gw.parallax) < 0.001 and wd_gw.parallax < 1.0, "the ground scrolls slower than the obstacles: parallax x%.2f" % wd_gw.parallax)
+	check(absf((wd_gw._chunks[0].position.z - wd_z_before) - 10.0) < 0.001, "the ground scrolls at exactly the obstacles' speed (no parallax)")
 	var wd_base := snapshot(main)
 	for i in 400:
 		wd_gw.scroll(2.0)
@@ -3822,7 +3823,7 @@ func _initialize() -> void:
 	var shadow_high_scale: float = wd_gw.shadow.scale.x
 	main.player.position = Vector3(1.5, -1.5, 4.0)
 	wd_gw.update_shadow(main.player.position, true)
-	check(wd_gw.shadow.visible and absf(wd_gw.shadow.position.x - 1.5) < 0.001 and absf(wd_gw.shadow.position.z - (4.0 + root.get_node("/root/Tuning").shadow_offset * 0.6)) < 0.001 and wd_gw.shadow.scale.x < shadow_high_scale, "the plane casts a soft shadow that follows it and tightens when it is low")
+	check(wd_gw.shadow.visible and absf(wd_gw.shadow.position.x - 1.5) < 0.001 and absf(wd_gw.shadow.position.z - (4.0 + (main.player.position.y + 2.0) * root.get_node("/root/Tuning").shadow_per_altitude)) < 0.001 and wd_gw.shadow.scale.x < shadow_high_scale, "the plane casts a soft shadow offset by its altitude that follows it and tightens when it is low")
 	main.player.position = Vector3(0, 1.2, 4.0)
 	# takeoff
 	DebugFlags.god = true   # (nothing in the way matters here)
@@ -3933,31 +3934,74 @@ func _initialize() -> void:
 	main.restart()
 	main.picks.enabled = false
 	main.spawner.kit_enabled = true
-	# -- the countryside is a small blurred picture, muted, no outlines
+	# -- the countryside: colour only (muted, soft edges), no blur, no second render, scrolls with the obstacles
 	var sa_g: Node3D = main.ground
-	var sa_view: Vector2 = main.get_viewport().get_visible_rect().size
 	await process_frame
-	check(sa_g.vp.size.x <= int(sa_view.x / tuning.ground_blur_div) + 1 and sa_g.vp.size.x >= 8 and sa_g.vp.render_target_update_mode == SubViewport.UPDATE_ALWAYS, "the countryside is drawn at 1/%d size (%s) and blurred on the ground plane" % [tuning.ground_blur_div, str(sa_g.vp.size)])
-	check(main.spawner.ground_mi.material_override == sa_g.backdrop_mat and sa_g.backdrop_mat.get_shader_parameter("use_tex") == 1.0, "the ground plane shows the blurred picture")
+	var sa_vps := main.find_children("*", "SubViewport", true, false)
+	check(sa_vps.is_empty() and main.spawner.ground_mi.material_override == sa_g.base_mat, "no blur pass and no separate render: the ground is drawn straight in the game's own view")
 	var sa_sat := 0.0
-	for m in sa_g._all_mats:
-		sa_sat = maxf(sa_sat, m.albedo_color.s)
+	for c in sa_g.colors():
+		sa_sat = maxf(sa_sat, c.s)
 	var sa_obs_sat: float = main.spawner._obstacle_mat.albedo_color.s
 	check(sa_sat < 0.3 and sa_sat < sa_obs_sat, "ground colours are muted (max saturation %.2f vs obstacles %.2f)" % [sa_sat, sa_obs_sat])
 	var sa_outlined := 0
-	for mi in sa_g.world.find_children("*", "MeshInstance3D", true, false):
+	var sa_soft := true
+	for mi in sa_g.find_children("*", "MeshInstance3D", true, false):
 		if (mi as MeshInstance3D).material_overlay != null:
 			sa_outlined += 1
-	check(sa_outlined == 0 and sa_g.world.find_children("*", "Label3D", true, false).is_empty(), "no outlines and no text anywhere in the background")
-	for tod in [0.0, 0.35, 0.7, 1.0]:   # every time of day keeps the ground muted and darker or equal in saturation than the obstacles
+		if mi != sa_g.shadow:
+			sa_soft = sa_soft and (mi as MeshInstance3D).material_override is ShaderMaterial and float(((mi as MeshInstance3D).material_override as ShaderMaterial).get_shader_parameter("feather")) > 0.2
+	check(sa_outlined == 0 and sa_soft, "no outlines in the background, and every patch has soft faded edges")
+	for tod in [0.0, 0.35, 0.7, 1.0]:   # every time of day keeps the ground muted
 		main._apply_time_of_day(tod)
 		var mx := 0.0
-		for m in sa_g._all_mats:
-			mx = maxf(mx, m.albedo_color.s)
-		check(mx < 0.35, "time of day %.2f: ground saturation stays low (%.2f)" % [tod, mx])
+		for c in sa_g.colors():
+			mx = maxf(mx, c.s)
+		check(mx < 0.4, "time of day %.2f: ground saturation stays low (%.2f)" % [tod, mx])
 	main._apply_time_of_day(0.35)
+	# -- ground and structures move together
+	var sa_z0: float = sa_g._chunks[1].position.z
+	var sa_row0 = main.spawner._rows_make_for_test(-6.0, [0.0])
+	var sa_rz0: float = sa_row0.position.z
+	main.spawner.advance(1.7)
+	sa_g.scroll(1.7)
+	check(absf(fposmod((sa_g._chunks[1].position.z - sa_z0) - (sa_row0.position.z - sa_rz0) + 30.0, 60.0) - 30.0) < 0.0001, "the ground and the obstacles move the same distance in the same step")
+	main.spawner._release_row(sa_row0)
+	# -- contact shadows under ground structures, offset ones under flying things
+	var sa_kit = main.spawner.kit
+	var sa_car := Node3D.new()
+	main.spawner.add_child(sa_car)
+	sa_car.position.z = -8.0
+	var sa_kit_was: bool = main.spawner.kit_enabled
+	main.spawner.kit_enabled = true
+	sa_kit.release_all()
+	for sa_r in main.spawner._rows.duplicate():   # (nothing else in play: count only the blobs under what is spawned here)
+		main.spawner._release_row(sa_r)
+	var sa_barn = sa_kit.spawn(0, sa_car, 2.0, 0.0, 1.2)
+	sa_kit.update(0.016)
+	main.shadows.update_from(main.spawner, 0.0, true)
+	var sa_bt: Vector3 = main.shadows.blob_pos[0]
+
+	check(main.shadows.count == 1 and absf(sa_bt.z - sa_barn.global_position.z) < 0.001 and absf(sa_bt.x - sa_barn.global_position.x) < 0.001, "a barn's shadow is a contact shadow directly beneath it (no offset)")
+	sa_kit.release_all()
+	var sa_crow = sa_kit.spawn(3, sa_car, 0.0, 0.0, 0.0, 0.0, 1.0)
+	sa_crow.state = 2   # (already in flight)
+	sa_crow.visible = true
+	main.shadows.update_from(main.spawner, 0.0, true)
+	var sa_ct: Vector3 = main.shadows.blob_pos[0]
+	var sa_want: float = tuning.shadow_altitude[3] * tuning.shadow_per_altitude
+	check(main.shadows.count == 1 and absf((sa_ct.z - sa_crow.global_position.z) - sa_want) < 0.001 and sa_want > 0.2, "a crow's shadow is offset by its altitude (%.2f)" % sa_want)
+	sa_kit.release_all()
+	for kind_i in [1, 2, 5, 8]:   # the other things that stand on the ground
+		check(tuning.shadow_altitude[kind_i] == 0.0, "%s stands on the ground: contact shadow" % sa_kit.NAMES[kind_i])
+	for kind_i in [3, 4, 6, 7]:
+		check(tuning.shadow_altitude[kind_i] > 0.0, "%s flies: offset shadow" % sa_kit.NAMES[kind_i])
+	sa_car.queue_free()
+	main.spawner.kit_enabled = sa_kit_was
 	# -- obstacle shadows
 	var sa_row = main.spawner._rows_make_for_test(main.player.position.z - 6.0, [-2.0, 2.0])
+	for sa_c in sa_row.obs:
+		sa_c.visible = true
 	main.shadows.update_from(main.spawner, 0.0, true)
 	check(main.shadows.count >= 2 and main.shadows._mm.visible_instance_count == main.shadows.count, "each obstacle gets a soft shadow on the ground (%d blobs)" % main.shadows.count)
 	DebugFlags.parse(["tune", "nofx=shadows"])
@@ -3965,7 +4009,7 @@ func _initialize() -> void:
 	check(main.shadows.count == 0 and main.shadows._mm.visible_instance_count == 0, "?nofx=shadows hides them")
 	DebugFlags.parse(["tune", "nofx=ground"])
 	sa_g.apply_debug()
-	check(sa_g.vp.render_target_update_mode == SubViewport.UPDATE_DISABLED and sa_g.backdrop_mat.get_shader_parameter("use_tex") == 0.0, "?nofx=ground hides the countryside (flat colour, nothing drawn)")
+	check(not sa_g._chunks[0].visible and not sa_g._chunks[3].visible, "?nofx=ground hides the countryside (flat colour only)")
 	DebugFlags.parse(["tune"])
 	sa_g.apply_debug()
 	main.spawner._release_row(sa_row)
