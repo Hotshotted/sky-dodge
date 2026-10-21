@@ -6,7 +6,7 @@ extends Node
 ## and out with the wave phase (CALM: base; BUILD: + rhythm; PEAK: + lead and arpeggio; BREATHER: back to the base).
 ## Two buses, "Music" and "SFX", carry the volume settings of the start screen. ?nofx=sound / ?nofx=music switch them off.
 
-const ONE_SHOTS := ["whoosh", "whoosh_big", "barnstormer", "pickup", "crunch", "crash", "pick_open", "pick_select", "speed_whoosh", "tap", "tick"]
+const ONE_SHOTS := ["whoosh", "whoosh_big", "barnstormer", "pickup", "crunch", "crash", "pick_open", "pick_select", "speed_whoosh", "tap", "tick", "coin"]
 const POOL := 10
 const MUSIC_LAYERS := ["music_base", "music_rhythm", "music_full"]
 ## Which layers play in each wave phase (CALM, BUILD, PEAK, BREATHER) and in the menu.

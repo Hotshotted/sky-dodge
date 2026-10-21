@@ -19,11 +19,11 @@ var resume_skip_frames := 2
 var camera_tilt_deg := 12.0
 ## World units visible across the screen WIDTH (orthographic camera size, width locked).
 ## The visible height follows from the device aspect ratio (about 17.8 units on 9:16).
-var ortho_size := 10.0
+var ortho_size := 12.0
 
 # ---------- Hidden columns ----------
 ## Number of hidden columns across the screen width (never shown to the player).
-var column_count := 5
+var column_count := 7
 ## Obstacle width as a fraction of a column. Collision uses the visible size (cube + outline), so
 ## smaller = wider gaps. 0.6 keeps one-column corridors passable now the hitbox matches the wings.
 var obstacle_scale := 0.6
@@ -50,8 +50,8 @@ var speed_step_rate := 2.0
 var spawn_spacing := 10.0
 ## How many columns each row blocks (random between min and max, inclusive).
 ## A row always keeps at least one open column, so max is clamped to column_count - 1.
-var blocked_columns_min := 2
-var blocked_columns_max := 3
+var blocked_columns_min := 3
+var blocked_columns_max := 4
 ## A new row is created once the last one has scrolled past -spawn_distance (must be above the
 ## top of the screen, ~9-11 units on phones).
 var spawn_distance := 24.0
@@ -153,6 +153,10 @@ var kite_rate := 1.6
 ## Patterns: chance that a can slot of a pattern row gets a can, and the factor that turns crate_chance into the chance of a
 ## hay bale in each hay slot (0.10 x 4 = 0.4).
 var pattern_can_chance := 0.3
+## Coin trails: what a coin of a pattern's trail pays into the run score (x the run's coin multiplier), and how close the
+## plane has to be to collect it (a bit more generous than the coin itself).
+var trail_coin_value := 3.0
+var coin_pickup_radius := 0.5
 var hay_slot_factor := 4.0
 ## Intensity waves (Countryside): CALM -> BUILD -> PEAK -> BREATHER, repeating. Per phase: how long it lasts (seconds),
 ## the pattern difficulty range it draws from, and how many cans / hay bales its slots give (a multiplier). Every finished
@@ -167,10 +171,12 @@ var wave_hay: Array[float] = [1.8, 1.0, 0.5, 2.5]
 # ---------- World and pacing ----------
 ## Takeoff from Rusty's airstrip: the plane lifts off over this many seconds at the start of a run.
 var takeoff_seconds := 2.2
-## The first gentle_seconds of a Countryside run: only the easiest patterns (difficulty up to gentle_max_diff), with an empty
-## stretch between them.
-var gentle_seconds := 45.0
-var gentle_max_diff := 1.6
+## The opening of a Countryside run (its first opening_seconds): easy but busy. Only the "opening" patterns and the easy ones next
+## to them (difficulty up to opening_max_diff by the end of the opening), no empty stretches between: plenty of obstacles
+## and rewards, wide gaps, more than one route through each. The "opening" patterns are favoured by opening_weight.
+var gentle_seconds := 60.0
+var gentle_max_diff := 2.2
+var opening_weight := 3.0
 ## Time of day: morning at the start of a run, midday-ish (the map's own look), sunset, then dusk, over tod_seconds.
 var tod_seconds := 300.0
 ## Per keyframe (morning, day, sunset, dusk): the colour the sky and ambient light are pulled toward, how far, the sun's

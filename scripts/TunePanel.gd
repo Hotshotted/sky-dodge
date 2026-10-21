@@ -32,6 +32,7 @@ const ENTRIES := [
 	["cloud_reveal_distance", "Cloud reveal distance", 4.0, 24.0, 0.5],
 	["cloud_min_opacity", "Cloud min opacity", 0.0, 1.0, 0.05],
 	["fuel_can_under_cloud_chance", "Can-under-cloud chance", 0.0, 1.0, 0.01],
+	["trail_coin_value", "Trail coin value", 0.0, 10.0, 0.5],
 	["ground_haze", "Background haze", 0.0, 1.0, 0.02],
 	["ground_saturation", "Background colour", 0.0, 1.0, 0.02],
 	["shadow_alpha", "Obstacle shadow", 0.0, 0.8, 0.02],

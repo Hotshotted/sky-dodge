@@ -17,7 +17,7 @@ extends Node3D
 
 enum { BARN, TRACTOR, WINDMILL, CROW, BALLOON, POWERLINE, DUSTER, KITE, HAY }
 const NAMES := ["barn", "tractor", "windmill", "crow", "balloon", "powerline", "duster", "kite", "hay"]
-const POOL := [10, 4, 6, 14, 6, 10, 3, 6, 16]
+const POOL := [18, 4, 8, 14, 8, 12, 3, 10, 20]
 const STRIDE := 10           # collider floats: type, cx, cz, hx (radius for circles), hz, cos, sin, owner, flags, bounding radius
 const MAX_COLLIDERS := 96
 const T_RECT := 0.0
@@ -993,8 +993,8 @@ func prewarm_show() -> void:
 					a = -4.0 + 0.7 * i
 				HAY:
 					b = float(1 + i % 3)   # every glow colour
-			var x := -3.6 + 1.8 * (slot % 5)
-			var z := -6.0 + 2.1 * ((slot / 5) % 6)
+			var x := -4.5 + 1.5 * (slot % 7)
+			var z := -6.0 + 1.5 * ((slot / 7) % 8)
 			var e := spawn(k, fake_row, x, 0.0, a, b, 0.5, 1.0, float(i), 1.0 if i % 2 == 0 else -1.0)
 			slot += 1
 			if e == null:

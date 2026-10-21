@@ -8,7 +8,7 @@ extends RefCounted
 ## search over where the plane can be, whether it can be flown at a given speed (see check()).
 
 const SPACING := 10.0
-const WALL := 5.6                       # power lines run out to here (just past the screen edge)
+const WALL := 6.8                       # power lines run out to here (just past the screen edge)
 
 ## (Tuning is an autoload: reached through the tree so scripts that load this file before the autoloads exist still compile)
 static func _tn() -> Node:
@@ -76,8 +76,9 @@ static func _entry(pat: Dictionary) -> Dictionary:
 
 ## Put the items of `pat` into the kit. carriers[r] is the row object (anything with a .position.z) that pattern row r
 ## hangs on. hay_fill: which hay slots are filled (empty = all of them). only_row >= 0: just that row's items (the game
-## places a pattern one row at a time, as the rows come). Returns the number of things placed.
-static func realize(kit, pat: Dictionary, mirror: bool, carriers: Array, hay_fill: Array = [], only_row: int = -1) -> int:
+## places a pattern one row at a time, as the rows come). coins: the Coins pool that gets the pattern's coin trails (null = none).
+## Returns the number of things placed.
+static func realize(kit, pat: Dictionary, mirror: bool, carriers: Array, hay_fill: Array = [], only_row: int = -1, coins = null) -> int:
 	var placed := 0
 	var entry := _entry(pat)
 	var items: Array = entry["items_m"] if mirror else pat["items"]
@@ -131,6 +132,13 @@ static func realize(kit, pat: Dictionary, mirror: bool, carriers: Array, hay_fil
 			"duster":
 				kit.spawn(Kit.DUSTER, row, 0.0, dz, float(it.get("arrive", 0.7)), 0.0, 0.0, 0.0, 0.0, float(it.get("dir", 1.0)), float(it.get("delay", 0.0)))
 				placed += 1
+	if coins != null:
+		var sgn := -1.0 if mirror else 1.0
+		for c in (pat.get("coins", []) as Array):   # a trail: n coins from (x, dz) to "to" = [x, dz]
+			if only_row >= 0 and int(c["r"]) != only_row:
+				continue
+			var to: Array = c["to"]
+			placed += coins.spawn_line(carriers[int(c["r"])], sgn * float(c["x"]), float(c["dz"]), sgn * float(to[0]), float(to[1]), int(c["n"]))
 	var slots: Array = entry["hay_m"] if mirror else pat.get("hay", [])
 	for i in slots.size():
 		if only_row >= 0 and int(slots[i]["r"]) != only_row:
@@ -148,6 +156,8 @@ static func can_slots(pat: Dictionary, row: int, mirror: bool) -> Array[float]:
 # ---------- the passability check ----------
 
 const CELL := 0.25                      # the plane's possible x positions are searched on this grid...
+const MIN_ROUTE_CELLS := 3
+const COMFORT := 0.1                    # routes are counted for a plane this much fatter: a route has to be flyable with room to spare
 const STEP := 1.0 / 30.0                # ...once per step, and may move one cell per step (7.5 units/second)
 
 ## The plane's hit shapes made simpler and a bit bigger (one wing capsule + the fuselage), so the search is quick and
@@ -175,8 +185,9 @@ static func simple_caps(real: PackedFloat32Array) -> PackedFloat32Array:
 ## Plays the pattern with the real Kit (so the models' own hit shapes and moving parts decide) and keeps the set of x
 ## positions the plane could be at, moving at most 7.5 units/s, never touching anything. Hay bales count as solid.
 ## A crow flock aims at the plane's x when it swoops, so every aim is tried (the plane has to be there at that moment).
-## Returns {"ok", "why"}.
-static func check(kit, pat: Dictionary, mirror: bool, speed: float, plane_z: float, top_z: float, caps: PackedFloat32Array, x_lim: float, carriers: Array) -> Dictionary:
+## With count_routes it also counts the distinct comfortable routes (see routes_of(); hay bales are optional, so left out of that count): "routes" = the most any crow aim leaves (-1 = not counted).
+## Returns {"ok", "why", "routes"}.
+static func check(kit, pat: Dictionary, mirror: bool, speed: float, plane_z: float, top_z: float, caps: PackedFloat32Array, x_lim: float, carriers: Array, count_routes: bool = false) -> Dictionary:
 	var has_crow := false
 	for it in pat["items"]:
 		if it["t"] == "crow":
@@ -189,15 +200,91 @@ static func check(kit, pat: Dictionary, mirror: bool, speed: float, plane_z: flo
 			aims.append(a)
 			a += 0.5
 	var why := ""
+	var ok := false
 	for aim in aims:
 		var r := _run(kit, pat, mirror, speed, plane_z, top_z, caps, x_lim, carriers, aim)
 		if r == "":
-			return {"ok": true, "why": ""}
-		why = r
-	return {"ok": false, "why": why}
+			ok = true
+		else:
+			why = r
+	if not ok:
+		return {"ok": false, "why": why, "routes": 0}
+	if not count_routes:   # (counting doubles the work: only the pattern checker and one smoke-test pass ask for it)
+		return {"ok": true, "why": "", "routes": -1}
+	var fat := caps.duplicate()
+	for o in range(4, fat.size(), 5):
+		fat[o] += COMFORT
+	var best := 0
+	last_viable = []
+	for aim in aims:
+		if _run(kit, pat, mirror, speed, plane_z, top_z, fat, x_lim, carriers, aim, false) == "":
+			best = maxi(best, _last_routes)
+	return {"ok": true, "why": "", "routes": best}
+
+static var last_viable: Array = []   # the pruned viable cells of the latest route count (the checker's "show" mode draws them)
+static var _last_routes := 0   # the route count of the latest successful _run
+
+## The screen shapes every pattern is checked on: [top_z, plane_z] on a short and a tall screen, with the plane low and high
+## in its zone (scaled with the camera's width, so zooming out keeps the same screens).
+static func screen_cfgs() -> Array:
+	var k: float = _tn().ortho_size / 10.0
+	return [[-9.1 * k, 7.6 * k], [-10.4 * k, 8.9 * k], [-9.1 * k, 2.0 * k], [-10.4 * k, 2.4 * k]]
+
+## How many distinct routes a play-through left. `alive[t]` = the x cells the plane can be on after step t (forward
+## reachable); `frozen[t]` = it could not move at step t. Cells that cannot reach the end are dropped (dead ends), then the
+## viable cells of each step are cut into intervals, and the routes are the paths through the intervals from the start to the
+## end: an obstacle in the middle of open sky splits one interval into two (two routes, round the left or the right of it)
+## and the two join again behind it. A wide open stretch is ONE route however wide it is. Capped at 99.
+static func routes_of(alive: Array, frozen: Array, cells: int) -> int:
+	var n := alive.size()
+	if n == 0:
+		return 0
+	var ok: Array = []
+	ok.resize(n)
+	ok[n - 1] = alive[n - 1]
+	for t in range(n - 2, -1, -1):
+		var cur: PackedByteArray = (alive[t] as PackedByteArray).duplicate()
+		var nx: PackedByteArray = ok[t + 1]
+		var can_move: bool = int(frozen[t + 1]) <= 0
+		for i in cells:
+			if cur[i] == 0:
+				continue
+			var good := nx[i] != 0 or (can_move and ((i > 0 and nx[i - 1] != 0) or (i < cells - 1 and nx[i + 1] != 0)))
+			cur[i] = 1 if good else 0
+		ok[t] = cur
+	last_viable = ok
+	# intervals per step and the number of paths reaching each
+	var prev_iv: Array = []   # [lo, hi, paths]
+	for t in n:
+		var cur_iv: Array = []
+		var row: PackedByteArray = ok[t]
+		var i := 0
+		while i < cells:
+			if row[i] == 0:
+				i += 1
+				continue
+			var lo := i
+			while i < cells and row[i] != 0:
+				i += 1
+			if i - lo >= MIN_ROUTE_CELLS:   # (a sliver of space is not a route)
+				cur_iv.append([lo, i - 1, 1.0])
+		if t > 0:
+			var can_move2: bool = int(frozen[t]) <= 0
+			for iv in cur_iv:
+				var sum := 0.0
+				for pv in prev_iv:
+					var reach := 1 if can_move2 else 0
+					if pv[0] <= iv[1] + reach and pv[1] >= iv[0] - reach:
+						sum += pv[2]
+				iv[2] = minf(sum, 99.0)
+		prev_iv = cur_iv
+	var total := 0.0
+	for iv in prev_iv:
+		total += iv[2]
+	return int(minf(total, 99.0))
 
 ## One play-through (a fixed crow aim). "" = a path exists, else where it was lost.
-static func _run(kit, pat: Dictionary, mirror: bool, speed: float, plane_z: float, top_z: float, caps: PackedFloat32Array, x_lim: float, carriers: Array, aim: float) -> String:
+static func _run(kit, pat: Dictionary, mirror: bool, speed: float, plane_z: float, top_z: float, caps: PackedFloat32Array, x_lim: float, carriers: Array, aim: float, with_hay: bool = true) -> String:
 	kit.release_all()
 	kit.screen_top_z = top_z
 	kit.plane_z = plane_z
@@ -209,7 +296,13 @@ static func _run(kit, pat: Dictionary, mirror: bool, speed: float, plane_z: floa
 	for r in rows:
 		carriers[r].position.z = z0 - r * SPACING
 	kit.dropped = 0
-	realize(kit, pat, mirror, carriers)
+	var no_hay: Array = []
+	if not with_hay:
+		for _h in (pat.get("hay", []) as Array):
+			no_hay.append(false)
+		if no_hay.is_empty():
+			no_hay = [false]
+	realize(kit, pat, mirror, carriers, no_hay)
 	if kit.dropped > 0:
 		return "the kit ran out of pooled things (%d) for this pattern" % kit.dropped
 	var cells := int(round(2.0 * x_lim / CELL)) + 1
@@ -218,6 +311,8 @@ static func _run(kit, pat: Dictionary, mirror: bool, speed: float, plane_z: floa
 	for i in cells:
 		cur.append(true)
 		nxt.append(false)
+	var alive_log: Array = []
+	var frozen_log: Array = []
 	var launched := false
 	var warned := false          # a crop duster's warning has started
 	var freeze := 0              # steps the plane can not move yet (human reaction time after a warning)
@@ -274,10 +369,60 @@ static func _run(kit, pat: Dictionary, mirror: bool, speed: float, plane_z: floa
 			kit.release_all()
 			kit.aim_override = -99.0
 			return "no way through at step %d (t=%.2f s, aim %.1f)" % [steps, steps * STEP, aim]
+		var snap := PackedByteArray()
+		snap.resize(cells)
+		for i in cells:
+			snap[i] = 1 if nxt[i] else 0
+		alive_log.append(snap)
+		frozen_log.append(1 if freeze > 0 else 0)
 		freeze = maxi(freeze - (1 if warned else 0), 0) if freeze > 0 else 0
 		var tmp := cur
 		cur = nxt
 		nxt = tmp
 	kit.release_all()
 	kit.aim_override = -99.0
+	_last_routes = routes_of(alive_log, frozen_log, cells)
 	return ""
+
+# ---------- the coin trails' placement check ----------
+
+## A stand-in for the Coins pool that only remembers where coins would go.
+class CoinProbe extends RefCounted:
+	var pts: Array[Vector3] = []   # x, z, row index
+	func spawn_line(row, x0: float, dz0: float, x1: float, dz1: float, n: int) -> int:
+		for k in n:
+			var t := float(k) / maxf(n - 1, 1)
+			pts.append(Vector3(lerpf(x0, x1, t), row.position.z + lerpf(dz0, dz1, t), 0.0))
+		return n
+
+## What is wrong with this pattern's coin trails: a coin inside something that stands still (a barn, a power line pole or wire,
+## a hay bale, a windmill's hub), or out of the plane's reach sideways. Moving things (blades, crows, balloons, kites, the tractor,
+## the duster) may pass over a coin: that is the risk of the route. Returns the problems (empty = fine).
+static func coin_problems(kit, pat: Dictionary, mirror: bool, carriers: Array, x_lim: float) -> Array[String]:
+	var out: Array[String] = []
+	kit.release_all()
+	kit.plane_z = 8.0
+	kit.screen_top_z = -11.0
+	kit.scroll_speed = 7.0
+	for r in int(pat["rows"]):
+		carriers[r].position.z = -20.0 - r * SPACING
+	var probe := CoinProbe.new()
+	realize(kit, pat, mirror, carriers, [], -1, probe)
+	kit.update(0.0)
+	var dot := PackedFloat32Array([0.0, 0.0, 0.0, 0.0, 0.4 + 0.1])   # a coin (and a margin) as a circle
+	for pt in probe.pts:
+		if absf(pt.x) > x_lim + 0.4:
+			out.append("a coin at x=%.1f is out of the plane's reach" % pt.x)
+		for ci in kit.col_count:
+			var owner: int = int(kit.col[ci * Kit.STRIDE + 7])
+			var e = kit.active[owner] if owner >= 0 and owner < kit.active.size() else null
+			var still: bool = e != null and (e.kind == Kit.BARN or e.kind == Kit.POWERLINE or e.kind == Kit.HAY)
+			if e != null and e.kind == Kit.WINDMILL:   # (only the hub is solid ground: the blades sweep)
+				still = Vector2(pt.x - e.px, pt.y - e.pz).length() < _tn().windmill_hub[int(e.a)] + 0.5
+				if still:
+					out.append("a coin at (%.1f, %.1f) is on a windmill hub" % [pt.x, pt.y])
+				continue
+			if still and kit.gap(Vector2(pt.x, pt.y), dot, 0, ci) < 0.0:
+				out.append("a coin at (%.1f, %.1f) is inside a %s" % [pt.x, pt.y, Kit.NAMES[e.kind]])
+	kit.release_all()
+	return out

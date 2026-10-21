@@ -136,6 +136,7 @@ var kit := Kit.new()               # the Countryside obstacle kit (barns, windmi
 var kit_on := false                # this run uses the kit instead of cubes (Countryside only)
 var kit_enabled := true            # (tests switch the kit off to count cubes)
 var _gull_mat := StandardMaterial3D.new()   # gulls are white (the cubes' material is swapped at spawn, both pre-built)
+var coins := Coins.new()           # the pattern coin trails
 var ground_mi: MeshInstance3D      # the ground plane (Main gives it the ground colour material)
 var _ground_mat := StandardMaterial3D.new()
 var _stripe_mat := StandardMaterial3D.new()
@@ -207,6 +208,7 @@ func _ready() -> void:
 	kit.ghost_mesh = _ghost_mesh
 	kit.ghost_mat = _ghost_mat
 	add_child(kit)
+	add_child(coins)
 	for i in POOL_ROWS:  # everything is created now, so nothing is allocated while playing
 		_make_row()
 	for i in CLOUD_POOL:
@@ -246,11 +248,11 @@ func reset(first_row_z: float = -12.0) -> void:
 		_release_cloud(c)
 	hazards.reset()
 	kit.release_all()
+	coins.release_all()
 	_pat = {}
 	_pat_next = {}
 	_pat_row = 0
 	pattern_name = ""
-	_gentle_gap = false
 	wave_phase = 0
 	wave_cycle = 0
 	speed_steps = 0
@@ -459,11 +461,13 @@ func prewarm_show(with_flash: bool, with_clouds: bool = true) -> void:
 				cl.puffs[k].scale = Vector3(1.5, 1.0, 1.5)
 	hazards.prewarm_show()   # every pooled wind gust and lightning strip too
 	kit.prewarm_show()       # ...and one of each kit thing
+	coins.prewarm_show()     # ...and a screenful of coins
 
 ## End of the pre-warm: hide the pooled rows again.
 func prewarm_hide() -> void:
 	hazards.prewarm_hide()
 	kit.release_all()
+	coins.prewarm_hide()
 	for row in _all_rows:
 		for cube in row.cubes:
 			cube.material_override = _obstacle_mat
@@ -554,6 +558,7 @@ func _acquire_row() -> Row:
 
 func _release_row(row: Row) -> void:
 	kit.release_row(row)
+	coins.release_row(row)
 	_hide_row(row)
 	row.clear_state()
 	_rows.erase(row)
@@ -632,7 +637,6 @@ var _w_buf: Array[float] = []
 var _pat_mirror := false
 var _pat_last := ""
 var _cycle_i := -1
-var _gentle_gap := false             # the first minute: every easy pattern is followed by an empty stretch
 var pattern_name := ""              # the pattern being played (the ?tune panel shows it)
 var _carriers: Array = [null, null, null, null, null, null, null, null]   # the current pattern's rows (reused)
 var _hay_fill: Array[bool] = []
@@ -659,7 +663,7 @@ func _spawn_kit_row(z: float) -> void:
 		_step_marked_cycle = wave_cycle
 		row.step_mark = true
 		speed_steps_planned += 1
-	Patterns.realize(kit, _pat, _pat_mirror, _carriers, _hay_fill, _pat_row)
+	Patterns.realize(kit, _pat, _pat_mirror, _carriers, _hay_fill, _pat_row, null if DebugFlags.off("coins") else coins)
 	var open: Array[bool] = []
 	for c in Tuning.column_count:
 		open.append(true)
@@ -797,14 +801,14 @@ func _choose_pattern() -> Dictionary:
 		if not forced.is_empty():
 			return forced
 	var rng := wave_range()
-	if kit_on and run_time < Tuning.gentle_seconds:   # the first minute is gentle: easy patterns with an empty stretch between
-		rng = Vector2(1.0, lerpf(1.0, Tuning.gentle_max_diff, run_time / Tuning.gentle_seconds))   # (easiest at first, a touch more by the end of the minute)
-		if _gentle_gap and _pat_last != "open_sky" and _pat_last != "hay_field":
-			_gentle_gap = false
-			return Patterns.find("open_sky" if randf() < 0.6 else "hay_field")
-		_gentle_gap = true
+	var opening := kit_on and run_time < Tuning.gentle_seconds   # the opening: easy but busy (see Tuning.gentle_seconds)
+	if opening:
+		rng = Vector2(1.0, lerpf(1.0, Tuning.gentle_max_diff, run_time / Tuning.gentle_seconds))   # (easy at first, a touch more by the end)
 	var windmills_wait := kit_on and base_speed_now >= 0.0 and (speed_steps_planned != speed_steps or absf(base_speed_now - stepped_speed(speed_steps_planned)) > 0.05)
 	var spd := maxf(scroll_speed, stepped_speed(speed_steps_planned)) if kit_on else scroll_speed
+	var spd_hi := spd   # the first BREATHER pattern is chosen before its step is planned, but is flown at the faster speed
+	if kit_on and wave_phase == 3 and _step_marked_cycle != wave_cycle:
+		spd_hi = maxf(spd, stepped_speed(speed_steps_planned + 1))
 	var slack := 0.5
 	while slack < 6.0:
 		var pool := _pool_buf
@@ -814,14 +818,18 @@ func _choose_pattern() -> Dictionary:
 		for p in Patterns.all():
 			if p["name"] == _pat_last or float(p["diff"]) < rng.x - slack or float(p["diff"]) > rng.y + slack:
 				continue
+			if opening and Patterns.has_tag(p, "calm"):   # (no empty stretches in the opening)
+				continue
 			if windmills_wait and Patterns.has_tag(p, "windmill"):   # (their blade timing must not span a speed step)
 				continue
-			if spd < float(p["speed"][0]) - 0.01 or spd > float(p["speed"][1]):
+			if spd < float(p["speed"][0]) - 0.01 or spd_hi > float(p["speed"][1]):
 				continue
 			pool.append(p)
 			var w := 1.0 + 0.5 * (float(p["diff"]) - rng.x)
+			if opening and Patterns.has_tag(p, "opening"):
+				w *= Tuning.opening_weight
 			if wave_phase == 3 and Patterns.has_tag(p, "calm"):
-				w *= 4.0   # the breather is nearly empty
+				w *= 12.0   # the breather is nearly empty
 			weights.append(maxf(w, 0.1))
 		if not pool.is_empty():
 			var total := 0.0

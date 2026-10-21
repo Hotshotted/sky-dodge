@@ -1,6 +1,6 @@
 extends SceneTree
 ## Screenshot harness (needs a display, e.g. xvfb + software GL):
-##   xvfb-run -a -s "-screen 0 540x960x24" godot --rendering-driver opengl3 --resolution 540x960 --script res://tests/shots.gd -- out=/tmp/shots
+##   xvfb-run -a -s "-screen 0 540x1200x24" godot --rendering-driver opengl3 --resolution 540x1200 --script res://tests/shots.gd -- out=/tmp/shots
 ## Starts a run, spawns one of each Countryside kit thing in front of the plane at several times of day, saves PNGs.
 
 var out := "/tmp/shots"
@@ -16,7 +16,7 @@ func _initialize() -> void:
 	while main._warming:
 		await process_frame
 	await _frames(5)
-	var names := ["slalom_barns", "windmill_row", "crow_gauntlet", "balloon_pair", "powerline_gate", "duster_crossing", "kite_dance", "tractor_crossing", "hay_field", "bait_can"]
+	var names := ["meadow_weave", "farm_lane", "windmill_meadow", "balloon_meadow", "powerline_gate", "crow_ambush"]
 	var only := ""
 	for a in OS.get_cmdline_user_args():
 		if a.begins_with("only="):

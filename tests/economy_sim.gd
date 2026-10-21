@@ -35,6 +35,21 @@ func hazard0(s: float) -> float:         # crash hazard per second at start spee
 func steps_reached(s: float) -> float:   # how long a close-call streak the player typically holds
 	return 0.4 + 0.6 * s if passive else 3.0 + 6.0 * s
 
+## Coin trails: the coins every pattern lays per unit flown (the average over the pattern list), and the share of them the
+## player collects (an engaged player takes the risky routes the trails are on; a passive one mostly doesn't).
+var trail_density := -1.0
+func trail_rate(s: float, sp: float) -> float:
+	if trail_density < 0.0:
+		var coins_n := 0.0
+		var units := 0.0
+		for pat in load("res://scripts/PatternData.gd").LIST:
+			for c in pat["coins"]:
+				coins_n += float(c["n"])
+			units += float(pat["rows"]) * 10.0
+		trail_density = coins_n / units
+	var share := (0.12 + 0.2 * s) if passive else (0.25 + 0.45 * s)
+	return trail_density * sp * share
+
 func speed_at(t: float) -> float:
 	return minf(T.base_speed + T.speed_ramp * t, T.max_speed)
 
@@ -109,7 +124,7 @@ func evaluate(level: Dictionary, equipped: Array, s: float, target_dist_units: f
 			surv += term
 			term *= cum_h / float(k + 1)
 		var b := base_b + (head - 1.0) * exp(-t / 8.0)
-		var per_sec: float = sp * T.coins_per_unit * maxf(b - T.bonus_pay_offset, 0.0) * coin_mult + (lam * bounty + c * ccpay) * coin_mult
+		var per_sec: float = sp * T.coins_per_unit * maxf(b - T.bonus_pay_offset, 0.0) * coin_mult + (lam * bounty + c * ccpay + trail_rate(s, sp) * T.trail_coin_value) * coin_mult
 		var w := surv if alive else 0.0
 		e_coins += w * per_sec * DT
 		path_coins += per_sec * DT

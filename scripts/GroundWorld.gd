@@ -245,7 +245,7 @@ func _free_x(c: Chunk) -> float:
 func scroll(dist: float) -> void:
 	for c in _chunks:
 		c.position.z += dist
-		if c.position.z - LEN * 0.5 > 14.0:   # past the bottom of the screen: back to the top of the line
+		if c.position.z - LEN * 0.5 > 20.0:   # past the bottom of the screen: back to the top of the line
 			c.position.z -= LEN * CHUNKS
 			_refill(c)
 	if airstrip_active:

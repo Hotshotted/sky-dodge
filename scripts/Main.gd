@@ -35,6 +35,11 @@ var map := 0            # the map this run is on (Tuning.maps)
 var run_distance := 0.0 # world units flown this run (Tuning.meters() turns it into meters)
 var last_result := {}   # what the last run did to the map records (medals, unlocks)
 var _env: Environment
+var run_trail_coins := 0   # coins of the pattern trails collected this run
+var _coin_chain := 0       # coins in the current trail (the chime climbs)
+var _coin_last_ms := 0
+var _coin_acc := 0.0       # coins paid since the last "+N" popup
+var _coin_pop_pos := Vector3.ZERO
 var run_cans := 0       # fuel cans collected this run
 var last_earned := 0.0  # coins the last run earned (its score)
 var coin_mult := 1.0    # everything earned this run is multiplied by this (map multiplier x Coin Value)
@@ -265,6 +270,9 @@ func restart() -> void:
 	run_distance = 0.0
 	hud.set_distance(0.0)
 	run_cans = 0
+	run_trail_coins = 0
+	_coin_chain = 0
+	_coin_acc = 0.0
 	score = 0.0
 	coin_mult = Tuning.map_coin_mult[map] * Tuning.coin_value_mult()
 	lives = int(Tuning.gear_value("nine_lives"))
@@ -415,6 +423,8 @@ func _process(raw_delta: float) -> void:
 	_update_camera()
 	_update_plane_zone()
 	ground.update_shadow(player.position, not _warming and (screen == SCREEN_PLAY or screen == SCREEN_OVER))
+	if screen == SCREEN_PLAY:
+		_flush_coin_pop()
 	_apply_time_of_day(_current_tod())
 	if _warming or not alive or screen != SCREEN_PLAY:
 		shadows.update_from(spawner, _tod_dark, not _warming and screen == SCREEN_OVER)
@@ -470,6 +480,7 @@ func _process(raw_delta: float) -> void:
 	_pf("spawner.advance (rows, clouds)", t_pf)
 	t_pf = Time.get_ticks_usec()
 	spawner.update_hazards(delta)
+	spawner.coins.sync(player.position.z)
 	shadows.update_from(spawner, _tod_dark, true)
 	_pf("spawner.update_hazards (kit motion, colliders)", t_pf)
 	t_pf = Time.get_ticks_usec()
@@ -557,6 +568,11 @@ func _process(raw_delta: float) -> void:
 		for ci in cans.size():
 			_on_pickup(cans[ci], spawner.picked_golden[ci])
 		_pf("collision: cans", t_pf)
+		t_pf = Time.get_ticks_usec()
+		var got_coins: int = spawner.coins.collect(p, caps, Tuning.coin_pickup_radius)
+		if got_coins > 0:
+			_on_coins(got_coins, spawner.coins.last_pos)
+		_pf("collision: coins", t_pf)
 	hud.set_fuel(fuel / Tuning.fuel_max())
 	_check_fuel(delta)
 	if not _picking:
@@ -826,6 +842,8 @@ func _absorb_hit(p: Vector2, caps: PackedFloat32Array) -> void:
 
 ## End the run: freeze the plane and show the game-over screen with what ended it.
 func _end_run(header: String, reason: String) -> void:
+	_coin_last_ms = -100000
+	_flush_coin_pop()
 	alive = false
 	fx.stop_wind()
 	sfx.play("crash")
@@ -1030,6 +1048,26 @@ func _on_pickup(pos: Vector3, golden: bool = false) -> void:
 		hud.fuel_pulse()
 	if not DebugFlags.off("haptic"):
 		Input.vibrate_handheld(15)
+
+## Coins of a trail collected: they pay into the run score, the chime climbs along a trail, and a single "+N" pops when the
+## trail is done (not one per coin).
+func _on_coins(n: int, pos: Vector3) -> void:
+	var now := Time.get_ticks_msec()
+	_coin_chain = (_coin_chain if now - _coin_last_ms < 700 else 0) + n
+	_coin_last_ms = now
+	var pay: float = Tuning.trail_coin_value * earn_mult() * n
+	score += pay
+	run_trail_coins += n
+	_coin_acc += pay
+	_coin_pop_pos = pos
+	sfx.play("coin", 0.8, 1.0 + 0.05 * minf(float(_coin_chain), 12.0))
+	if not DebugFlags.off("haptic") and _coin_chain % 4 == 1:
+		Input.vibrate_handheld(6)
+
+func _flush_coin_pop() -> void:
+	if _coin_acc > 0.0 and Time.get_ticks_msec() - _coin_last_ms > 600:
+		hud.coin_pop("+" + Tuning.fmt(_coin_acc), camera.unproject_position(_coin_pop_pos) + Vector2(0, -50))
+		_coin_acc = 0.0
 
 ## Near miss: raise the bonus and fire every bit of feedback at once. Each effect can be
 ## switched off from the URL (?nofx=sparks,streaks,flash,popup,trail,haptic,punch) to find out

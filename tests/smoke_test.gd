@@ -363,7 +363,7 @@ func _initialize() -> void:
 		defaults[e[0]] = tuning.get(e[0])
 	for t in panel.TOGGLES:
 		defaults[t[0]] = tuning.get(t[0])
-	check(panel.ENTRIES.size() == 25 and panel._sliders.size() == 25 and panel._toggles.size() == 1, "25 sliders and 1 on/off switch for the tuned values")
+	check(panel.ENTRIES.size() == 26 and panel._sliders.size() == 26 and panel._toggles.size() == 1, "26 sliders and 1 on/off switch for the tuned values")
 	var all_match := true
 	for e in panel.ENTRIES:
 		if not is_equal_approx(panel._sliders[e[0]].value, tuning.get(e[0])):
@@ -2182,7 +2182,7 @@ func _initialize() -> void:
 	pk.set_perk("daredevil", 1)
 	main._check_combos()
 	check(main.combo_on("wingwalker"), "Prop Wash 3 + any Daredevil: WINGWALKER (a perk partner counts)")
-	var wwr = sp._rows_make_for_test(-5.0, [-4.0, -2.0, 0.0, 2.0])
+	var wwr = sp._rows_make_for_test(-5.0, [-3.6, -2.2, -0.8, 0.6])
 	var pays: Array[float] = []
 	var bump_cb := func(_pos, depth): pays.append(depth)
 	sp.bump.connect(bump_cb)
@@ -2694,14 +2694,14 @@ func _initialize() -> void:
 	sp.reset()
 
 	print("5. near-miss closest approach")
-	var near_row = sp._rows_make_for_test(-4.0, [wing_tip + half.x + 0.3])   # passes 0.3 clear on the right
+	var near_row = sp._rows_make_for_test(-4.0, [wing_tip + half.x + 0.25])   # passes 0.25 clear on the right
 	var found: Array[Dictionary] = []
 	var z := -4.0
 	while z < 6.0:
 		near_row.position.z = z
 		found.append_array(sp.update_near_misses(p0, caps))
 		z += 0.1
-	check(found.size() == 1 and found[0]["side"] == 1, "a pass 0.3 clear on the right gives one near miss on the right")
+	check(found.size() == 1 and found[0]["side"] == 1, "a pass 0.25 clear on the right gives one near miss on the right")
 	sp.reset()
 	var far_row = sp._rows_make_for_test(-4.0, [wing_tip + half.x + 1.5])    # 1.5 clear: not a near miss
 	found.clear()
@@ -2766,8 +2766,8 @@ func _initialize() -> void:
 	var sweep_kinds := {0: "barn", 1: "tractor", 9: "fly-through barn", 2: "windmill", 4: "balloon", 7: "kite", 3: "crow", 6: "duster", 5: "powerline", 8: "hay"}
 	for kind in sweep_kinds:
 		var k_got_event := false
-		var k_d := 4.0
-		while k_d > -2.5 and not k_got_event:
+		var k_d := 7.0
+		while k_d > -6.0 and not k_got_event:
 			var k_r := _kit_pass(kit, k_carrier, kind, k_d, kpz, kcaps)
 			if k_r["hit"]:
 				break
@@ -3016,22 +3016,38 @@ func _initialize() -> void:
 	var vcaps: PackedFloat32Array = P.simple_caps(main.player.hit_capsules())
 	var vlim: float = tuning.ortho_size * 0.5 - tuning.plane_edge_margin
 	var vkit = main.spawner.kit
-	check(not P.check(vkit, wall_pat, false, 10.0, 7.6, -9.1, vcaps, vlim, vcarriers)["ok"], "the checker rejects a wall across the whole lane")
-	check(P.check(vkit, P.find("open_sky"), false, 10.0, 7.6, -9.1, vcaps, vlim, vcarriers)["ok"], "...and accepts an empty sky")
+	check(not P.check(vkit, wall_pat, false, 10.0, 9.1, -10.9, vcaps, vlim, vcarriers)["ok"], "the checker rejects a wall across the whole lane")
+	check(P.check(vkit, P.find("open_sky"), false, 10.0, 9.1, -10.9, vcaps, vlim, vcarriers)["ok"], "...and accepts an empty sky")
 	# FAIRNESS: every pattern can be flown at the speeds it is built for (mirrored too, on a short and a tall screen, plane high and low)
 	var t_pat := Time.get_ticks_msec()
 	var pz_unflyable: Array[String] = []
 	for vpt in pz_pats:
 		var lo2: float = vpt["speed"][0]
 		var hi2: float = vpt["speed"][1]
-		var pz_speeds2: Array[float] = [lo2, lo2 + (hi2 - lo2) * 0.25, (lo2 + hi2) * 0.5, lo2 + (hi2 - lo2) * 0.75, hi2]
+		var pz_speeds2: Array[float] = [lo2, hi2]   # (the full sweep, three speeds on four screen shapes, is tests/pattern_check.gd)
 		for mir2 in [false, true]:
 			for sp2 in pz_speeds2:
-				for cfg2 in [[-9.1, 7.6], [-10.4, 8.9], [-9.1, 2.0], [-10.4, 2.4]]:
+				for cfg2 in [P.screen_cfgs()[0], P.screen_cfgs()[3]]:
 					var vres: Dictionary = P.check(vkit, vpt, mir2, sp2, cfg2[1], cfg2[0], vcaps, vlim, vcarriers)
 					if not vres["ok"]:
 						pz_unflyable.append("%s (%s, v=%.1f, plane z %.1f): %s" % [vpt["name"], "mirrored" if mir2 else "plain", sp2, cfg2[1], vres["why"]])
 	check(pz_unflyable.is_empty(), "FAIRNESS: all %d patterns can be flown at every speed they are built for, mirrored or not (%d s)  %s" % [pz_pats.size(), (Time.get_ticks_msec() - t_pat) / 1000, str(pz_unflyable.slice(0, 3))])
+	# ROUTES: every pattern (except the rare deliberate funnels) leaves at least two distinct comfortable routes, at both ends of
+	# its speed band (the full count, on every screen shape, is tests/pattern_check.gd)
+	var pz_single: Array[String] = []
+	var pz_funnels := 0
+	var pz_cfg0: Array = P.screen_cfgs()[0]
+	for vpt in pz_pats:
+		if P.has_tag(vpt, "funnel"):
+			pz_funnels += 1
+			continue
+		for sp2 in [float(vpt["speed"][0]), float(vpt["speed"][1])]:
+			for mir2 in [false, true]:
+				var vres2: Dictionary = P.check(vkit, vpt, mir2, sp2, pz_cfg0[1], pz_cfg0[0], vcaps, vlim, vcarriers, true)
+				if vres2["ok"] and int(vres2["routes"]) < 2:
+					pz_single.append("%s v=%.0f: %d" % [vpt["name"], sp2, int(vres2["routes"])])
+	check(pz_single.is_empty(), "ROUTES: every pattern offers at least two distinct routes %s" % str(pz_single.slice(0, 3)))
+	check(pz_funnels >= 1 and pz_funnels * 8 <= pz_pats.size(), "...and only a few are deliberate funnels (%d of %d)" % [pz_funnels, pz_pats.size()])
 	for vn in vcarriers:
 		vn.queue_free()
 	# chaining: rows of one pattern come in order, then another pattern; ?pattern= repeats one; nothing runs dry
@@ -3280,7 +3296,7 @@ func _initialize() -> void:
 			hk_wm[int(h_e.a)] = true
 		if h_e.kind == 8:
 			hk_glow[h_e.crate_kind] = true
-	check(hk_total == 75 and hk_ok, "pre-warm: all %d pooled kit things are in use, visible and inside the view" % hk_total)
+	check(hk_total == hk.POOL.reduce(func(a, b): return a + b, 0) and hk_ok, "pre-warm: all %d pooled kit things are in use, visible and inside the view" % hk_total)
 	check(hk_kinds.size() == 9 and hk_barns.has("open") and hk_barns.has("closed") and hk_barns.size() >= 7, "...every kind, closed and fly-through barns in every size (%d)" % hk_barns.size())
 	check(hk_wm.size() == 3 and hk_glow.size() == 3, "...all three windmills and every hay colour")
 	var hk_warn := false
@@ -3789,7 +3805,7 @@ func _initialize() -> void:
 	main.set_process(false)
 	check(main.goals.count == 2, "with no best yet there is no BEST flag (medal and unlock only)")
 
-	print("15. world and pacing: ground, shadow, takeoff, time of day, a gentle first minute, Whiskers' mood")
+	print("15. world and pacing: ground, shadow, takeoff, time of day, an easy but busy first minute, Whiskers' mood")
 	var wd_save = root.get_node("Save")
 	wd_save.reset_all()
 	main.spawner.kit_enabled = false
@@ -3809,7 +3825,7 @@ func _initialize() -> void:
 	check(wd_field_col.s < wd_natural_green.s - 0.05, "...and is faded toward the haze (saturation %.2f < %.2f)" % [wd_field_col.s, wd_natural_green.s])
 	var wd_z_before: float = wd_gw._chunks[0].position.z
 	wd_gw.scroll(10.0)
-	check(absf((wd_gw._chunks[0].position.z - wd_z_before) - 10.0) < 0.001, "the ground scrolls at exactly the obstacles' speed (no parallax)")
+	check(absf(fposmod((wd_gw._chunks[0].position.z - wd_z_before) - 10.0 + 30.0, 60.0) - 30.0) < 0.001, "the ground scrolls at exactly the obstacles' speed (no parallax)")
 	var wd_base := snapshot(main)
 	for i in 400:
 		wd_gw.scroll(2.0)
@@ -3872,13 +3888,24 @@ func _initialize() -> void:
 	wd_gs.scroll_speed = 7.0
 	var gentle_hard := 0
 	var gentle_calm := 0
+	var gentle_opening := 0
+	var gentle_busy_min := 99
 	for i in 300:
 		wd_gs._pat = {}
 		var gp: Dictionary = wd_gs._choose_pattern()
 		gentle_hard += int(float(gp["diff"]) > 1.0)
 		gentle_calm += int(P.has_tag(gp, "calm"))
+		gentle_opening += int(P.has_tag(gp, "opening"))
+		gentle_busy_min = mini(gentle_busy_min, (gp["items"] as Array).size() + (gp["coins"] as Array).size())
 		wd_gs._pat_last = gp["name"]
-	check(gentle_hard == 0 and gentle_calm > 100, "the first %.0f s offers only the easiest patterns, with empty stretches between (%d above difficulty 1, %d of 300 calm)" % [tuning.gentle_seconds, gentle_hard, gentle_calm])
+	check(gentle_hard == 0 and gentle_calm == 0 and gentle_opening > 200 and gentle_busy_min >= 5, "the opening is easy but busy: only easy patterns, none empty, mostly the \"opening\" ones (%d above difficulty 1, %d empty, %d of 300 opening, at least %d things in every one)" % [gentle_hard, gentle_calm, gentle_opening, gentle_busy_min])
+	var opening_names := {}
+	var opening_two_routes := 0
+	for pp in P.all():
+		if P.has_tag(pp, "opening"):
+			opening_names[pp["name"]] = true
+			opening_two_routes += int((pp["coins"] as Array).size() >= 3 and (pp["cans"] as Array).size() >= 2)
+	check(opening_names.size() >= 6 and opening_two_routes == opening_names.size(), "there are %d opening patterns, each with coin trails and can slots" % opening_names.size())
 	wd_gs.run_time = 100.0
 	wd_gs._wave_start = 100.0
 	wd_gs.wave_phase = 2
@@ -4104,6 +4131,110 @@ func _initialize() -> void:
 	main.hud.play_pressed.emit()
 	main.set_process(false)
 	sa_save.reset_all()
+
+	print("17. coin trails, the wider view and the 7-column grid")
+	var ct_save := root.get_node("Save")
+	ct_save.reset_all()
+	main.set_process(false)
+	main.restart()
+	main.spawner.kit_enabled = true
+	main.spawner.apply_map(0)
+	var ct_sp = main.spawner
+	var ct_coins = ct_sp.coins
+	check(tuning.ortho_size == 12.0 and tuning.column_count == 7 and absf(tuning.column_width() - 12.0 / 7.0) < 0.001, "the camera is zoomed out 20%% (%.1f units wide) and the hidden grid has %d columns" % [tuning.ortho_size, tuning.column_count])
+	check(ct_coins._mm.instance_count == ct_coins.POOL and ct_coins._mm.visible_instance_count == ct_coins.count, "the coin pool (%d) is one MultiMesh, built at start-up and hidden after the pre-warm" % ct_coins.POOL)
+	check(absf(main.player.position.x) <= 4.9 and tuning.ortho_size * 0.5 - tuning.plane_edge_margin == 4.9, "the plane can fly to x = +-%.1f of the +-%.1f the screen shows" % [tuning.ortho_size * 0.5 - tuning.plane_edge_margin, tuning.ortho_size * 0.5])
+	DebugFlags.parse(["tune", "pattern=meadow_weave"])
+	ct_sp.reset(-14.0)
+	ct_sp.run_time = 100.0
+	ct_sp.scroll_speed = 8.0
+	var ct_base := snapshot(main)
+	var ct_pat: Dictionary = P.find("meadow_weave")
+	var ct_expected := 0
+	for c in ct_pat["coins"]:
+		ct_expected += int(c["n"])
+	for i in int(ct_pat["rows"]):
+		ct_sp._spawn_row(-30.0 - 10.0 * i)
+	check(ct_coins.count == ct_expected and ct_coins.dropped == 0, "a pattern places its coin trails as its rows spawn (%d of %d coins)" % [ct_coins.count, ct_expected])
+	var ct_rows_ok := true
+	for ci_ in ct_coins.count:
+		var cp: Vector3 = ct_coins.position_of(ci_)
+		ct_rows_ok = ct_rows_ok and absf(cp.x) <= 4.9 and cp.z < -10.0
+	check(ct_rows_ok, "...inside the plane's reach, above the screen when they spawn")
+	# collecting
+	ct_sp.coins.sync(8.0)
+	var ct_target: Vector3 = ct_coins.position_of(0)
+	var ct_caps: PackedFloat32Array = main.player.hit_capsules()
+	var ct_far: int = ct_coins.collect(Vector2(ct_target.x + 3.5, ct_target.z), ct_caps, tuning.coin_pickup_radius)
+	check(ct_far == 0, "a coin out of reach is not collected")
+	var ct_n_before: int = ct_coins.count
+	var ct_got: int = ct_coins.collect(Vector2(ct_target.x, ct_target.z), ct_caps, tuning.coin_pickup_radius)
+	check(ct_got >= 1 and ct_coins.count == ct_n_before - ct_got, "touching a coin collects it (%d)" % ct_got)
+	check(same_world(ct_base, snapshot(main)), "spawning and collecting coins creates no nodes, materials or resources  [%s]" % describe(snapshot(main)))
+	# pay
+	main.score = 0.0
+	main.run_trail_coins = 0
+	main._coin_acc = 0.0
+	main.sfx.last_played = ""
+	main._on_coins(3, Vector3(0, 0.3, 0))
+	var ct_pay: float = 3.0 * tuning.trail_coin_value * main.earn_mult()
+	check(absf(main.score - ct_pay) < 0.001 and main.run_trail_coins == 3 and main.sfx.last_played == "coin", "coins pay %.1f each into the run score (+%.1f) with a chime" % [tuning.trail_coin_value * main.earn_mult(), ct_pay])
+	check(tuning.trail_coin_value * 8.0 < tuning.golden_can_coins, "...so a whole trail of eight is worth less than a golden can (the cans stay the bigger prize)")
+	main._coin_last_ms = Time.get_ticks_msec() - 1000
+	main._flush_coin_pop()
+	check(main._coin_acc == 0.0, "the \"+N\" pops once, when the trail is done")
+	DebugFlags.parse(["tune", "pattern=meadow_weave", "nofx=coins"])
+	ct_sp.reset(-14.0)
+	ct_sp.run_time = 100.0
+	for i in 4:
+		ct_sp._spawn_row(-30.0 - 10.0 * i)
+	check(ct_coins.count == 0, "?nofx=coins: patterns place no coin trails")
+	DebugFlags.parse(["tune", "pattern=meadow_weave"])
+	ct_sp.reset(-14.0)
+	ct_sp.run_time = 100.0
+	for i in int(ct_pat["rows"]):
+		ct_sp._spawn_row(-30.0 - 10.0 * i)
+	# rows leaving take their coins with them
+	for r in ct_sp._rows.duplicate():
+		ct_sp._release_row(r)
+	check(ct_coins.count == 0, "when their rows go back to the pool the coins are freed")
+	# pooled for good: lots of patterns, never out of coins
+	DebugFlags.parse(["tune"])
+	ct_sp.reset(-14.0)
+	ct_sp.run_time = 100.0
+	ct_coins.dropped = 0
+	var ct_peak := 0
+	for i in 400:
+		ct_sp._spawn_row(-30.0)
+		ct_peak = maxi(ct_peak, ct_coins.count)
+		if ct_sp._rows.size() > 7:   # rows scroll away as the run goes on: about seven are alive at a time
+			ct_sp._release_row(ct_sp._rows[0])
+		ct_sp.kit.update(0.0)
+	check(ct_coins.dropped == 0 and ct_peak > 20 and ct_peak <= ct_coins.POOL, "400 rows of patterns: the coin pool never ran dry (peak %d of %d)" % [ct_peak, ct_coins.POOL])
+	check(ct_sp.kit.dropped == 0, "...nor did the kit's (%d dropped)" % ct_sp.kit.dropped)
+	ct_sp.reset(-14.0)
+	# every pattern's coins sit clear of things that stand still
+	var ct_probs: Array[String] = []
+	var ct_carriers: Array = []
+	for i in 8:
+		var cn := Node3D.new()
+		main.add_child(cn)
+		ct_carriers.append(cn)
+	var ct_lim: float = tuning.ortho_size * 0.5 - tuning.plane_edge_margin
+	for cpt in P.all():
+		for cmir in [false, true]:
+			for prob in P.coin_problems(ct_sp.kit, cpt, cmir, ct_carriers, ct_lim):
+				ct_probs.append("%s: %s" % [cpt["name"], prob])
+	for cn in ct_carriers:
+		cn.queue_free()
+	check(ct_probs.is_empty(), "no pattern puts a coin inside a barn, wire, hay bale or windmill hub, or out of reach %s" % str(ct_probs.slice(0, 3)))
+	var ct_with_coins := 0
+	for cpt in P.all():
+		ct_with_coins += int((cpt["coins"] as Array).size() > 0)
+	check(ct_with_coins == P.all().size(), "every pattern has coin trails (%d of %d)" % [ct_with_coins, P.all().size()])
+	main.restart()
+	main.set_process(false)
+	ct_save.reset_all()
 
 	DirAccess.remove_absolute(ProjectSettings.globalize_path("user://smoke_test_save.json"))
 	print("")
