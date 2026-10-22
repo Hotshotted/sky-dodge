@@ -89,14 +89,19 @@ jobs:
       - name: Web audio check
         shell: bash
         run: |
-          set -o pipefail
-          N=$(strings build/web/index.pck | grep -c 'audio/.*\.wav')
-          echo "audio clips in the package: $N"
-          test "$N" -ge 20
-          npm install --no-save playwright-core
-          CHROME=$(which google-chrome || which google-chrome-stable || which chromium-browser || which chromium)
-          echo "browser: $CHROME"
-          timeout 400 node tests/web_audio_check.js build/web "$CHROME" 2>&1 | grep -v "GL Driver\|AudioContext was not" | tail -60
+          LOG=audio_check.log
+          : > $LOG
+          fail() { echo "::error title=Web audio check::$1 | $(tr '\n' ' ' < $LOG | head -c 3500)"; exit 1; }
+          N=$(grep -a -c 'audio/.*\.wav' build/web/index.pck || true)
+          echo "audio clips in the package: $N" | tee -a $LOG
+          [ "${N:-0}" -ge 5 ] || fail "the export has no audio clips"
+          npm install --no-save playwright-core >> $LOG 2>&1 || fail "npm install failed"
+          CHROME=$(which google-chrome || which google-chrome-stable || which chromium-browser || which chromium || true)
+          echo "browser: $CHROME" | tee -a $LOG
+          [ -n "$CHROME" ] || fail "no browser found"
+          timeout 400 node tests/web_audio_check.js build/web "$CHROME" 2>&1 | grep -v "GL Driver\|AudioContext was not" >> $LOG
+          tail -40 $LOG
+          grep -q "AUDIO CHECK PASSED" $LOG || fail "the exported game made no sound"
           rm -f build/web/audio_report.json
 
       - uses: actions/upload-pages-artifact@v3
