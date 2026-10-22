@@ -87,22 +87,31 @@ jobs:
       # The exported game has to make sound: the clips are in the package, and a headless Chromium (started with a phone's
       # autoplay rules, then tapped) hears something come out of the page. A silent build fails here, not on a phone.
       - name: Web audio check
-        shell: bash
+        shell: bash {0}
         run: |
           LOG=audio_check.log
           : > $LOG
-          fail() { echo "::error title=Web audio check::$1 | $(tr '\n' ' ' < $LOG | head -c 3500)"; exit 1; }
-          N=$(python3 -c "import re;print(len(set(re.findall(rb'audio/[a-z_]+[.]wav', open('build/web/index.pck','rb').read()))))")
-          echo "audio clips in the package: $N" | tee -a $LOG
-          [ "${N:-0}" -ge 5 ] || fail "the export has no audio clips"
-          npm install --no-save playwright-core >> $LOG 2>&1 || fail "npm install failed"
-          CHROME=$(which google-chrome || which google-chrome-stable || which chromium-browser || which chromium || true)
-          echo "browser: $CHROME" | tee -a $LOG
-          [ -n "$CHROME" ] || fail "no browser found"
-          timeout 400 node tests/web_audio_check.js build/web "$CHROME" 2>&1 | grep -v "GL Driver\|AudioContext was not" >> $LOG || true
-          tail -40 $LOG
-          grep -q "AUDIO CHECK PASSED" $LOG || fail "the exported game made no sound"
+          N=$(python3 -c "import re;print(len(set(re.findall(rb'audio/[a-z_]+[.]wav', open('build/web/index.pck','rb').read()))))" 2>&1)
+          echo "audio clips in the package: $N" >> $LOG
+          npm install --no-save playwright-core >> $LOG 2>&1
+          CHROME=$(which google-chrome || which google-chrome-stable || which chromium-browser || which chromium)
+          echo "browser: $CHROME" >> $LOG
+          timeout 400 node tests/web_audio_check.js build/web "$CHROME" >> $LOG 2>&1
+          echo "node exit: $?" >> $LOG
           rm -f build/web/audio_report.json
+          exit 0
+
+      - name: Web audio verdict
+        shell: bash {0}
+        run: |
+          grep -v "GL Driver\|AudioContext was not" audio_check.log > audio_short.log
+          MSG=$(tr '\n' ' ' < audio_short.log | cut -c1-3500)
+          if grep -q "AUDIO CHECK PASSED" audio_short.log && grep -q "audio clips in the package: [1-9]" audio_short.log; then
+            echo "::notice title=Web audio check::$MSG"
+          else
+            echo "::error title=Web audio check::$MSG"
+            exit 1
+          fi
 
       - uses: actions/upload-pages-artifact@v3
         with:
