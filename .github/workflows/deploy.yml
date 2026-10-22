@@ -91,7 +91,7 @@ jobs:
         run: |
           LOG=audio_check.log
           : > $LOG
-          N=$(python3 -c "import re;print(len(set(re.findall(rb'audio/[a-z_]+[.]wav', open('build/web/index.pck','rb').read()))))" 2>&1)
+          N=$(python3 -c "import re;print(len(set(re.findall(rb'audio/[a-z_]+[.]wav', open(__import__('glob').glob('build/web/*.pck')[0],'rb').read()))))" 2>&1)
           echo "audio clips in the package: $N" >> $LOG
           npm install --no-save playwright-core >> $LOG 2>&1
           CHROME=$(which google-chrome || which google-chrome-stable || which chromium-browser || which chromium)
