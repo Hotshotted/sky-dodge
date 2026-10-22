@@ -10,7 +10,7 @@ const ICONS := ["coin", "star", "star_off", "clock", "pause", "play", "back", "h
 	"bolt", "arrow_up", "wrench", "trophy", "sparkle", "close", "plus", "quest",
 	# perks
 	"glide", "cloud_diver", "lucky_whiskers", "prop_wash", "battering_ram", "fuel_miser", "hot_streak", "scavenger", "tailwind", "daredevil",
-	"second_wind", "golden_touch",
+	"second_wind", "golden_touch", "flak", "pods", "tail",
 	# boosts and supplies
 	"double_coins", "magnet_storm", "whisker_window", "fuel_freeze", "full_tank", "patch", "crate_shower", "coin_bag",
 	# upgrades and gear
@@ -217,6 +217,14 @@ static func draw(ci: CanvasItem, id: String, c: Vector2, r: float, col: Color = 
 				var ang := k * PI + 0.5
 				ci.draw_line(c, c + Vector2(cos(ang), sin(ang)) * r * 0.8, col, w * 2.0, true)
 			ci.draw_arc(c, r * 0.95, PI * 0.9, PI * 1.9, 10, col, w * 0.8, true)
+		"flak", "pods", "tail":   # a gun barrel and its burst: forward, sideways or backward
+			var dir := Vector2(0, -1) if id == "flak" else (Vector2(1, 0) if id == "pods" else Vector2(0, 1))
+			var side := Vector2(-dir.y, dir.x)
+			ci.draw_line(c - dir * r * 0.55, c + dir * r * 0.25, col, w * 2.4, true)
+			ci.draw_circle(c - dir * r * 0.6, r * 0.28, col)
+			_tri(ci, c + dir * r * 0.95, c + dir * r * 0.4 + side * r * 0.42, c + dir * r * 0.4 - side * r * 0.42, Color(1.0, 0.8, 0.25, a))
+			if id == "pods":
+				ci.draw_line(c - dir * r * 0.55 + side * r * 0.0 - Vector2(0, r * 0.5), c - dir * r * 0.55 + Vector2(0, r * 0.5), col, w * 1.2, true)
 		"battering_ram":   # a block hit by an arrow
 			ci.draw_rect(Rect2(c.x + r * 0.15, c.y - r * 0.7, r * 0.8, r * 1.4), col)
 			ci.draw_line(c + Vector2(-r * 0.95, 0), c + Vector2(r * 0.1, 0), col, w * 1.7, true)

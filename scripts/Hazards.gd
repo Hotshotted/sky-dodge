@@ -229,10 +229,11 @@ func _begin(b: Bolt, col: int) -> void:
 	b.visible = true
 
 ## The rows that will pass the plane while a strike warns and hits.
-func _rows_in_window() -> Array:
+func _rows_in_window(dur: float = -1.0) -> Array:
 	var out := []
 	var plane_z: float = spawner.plane_z
-	var reach: float = 3.0 + float(spawner.scroll_speed) * (Tuning.lightning_warn + Tuning.lightning_strike + 0.2)
+	var span := dur if dur > 0.0 else Tuning.lightning_warn + Tuning.lightning_strike + 0.2
+	var reach: float = 3.0 + float(spawner.scroll_speed) * span
 	for r in spawner._rows:
 		if r.open.is_empty():
 			continue
@@ -243,8 +244,8 @@ func _rows_in_window() -> Array:
 
 ## Is a strike on `col` allowed right now? Never on the safe path of a passing row, and every passing
 ## row keeps an open column that is not struck.
-func strike_allowed(col: int) -> bool:
-	for r in _rows_in_window():
+func strike_allowed(col: int, dur: float = -1.0) -> bool:
+	for r in _rows_in_window(dur):
 		if r.safe_col == col:
 			return false
 		var other := false
@@ -254,6 +255,29 @@ func strike_allowed(col: int) -> bool:
 		if not other:
 			return false
 	return true
+
+## The column under x (clamped to the screen).
+func col_of(x: float) -> int:
+	return clampi(roundi(x / Tuning.column_width() + (Tuning.column_count - 1) * 0.5), 0, Tuning.column_count - 1)
+
+## The allowed column nearest to `col` for a strike lasting `dur` seconds (-1 = none is allowed right now).
+func nearest_allowed(col: int, dur: float = -1.0) -> int:
+	for d in Tuning.column_count:
+		for sgn in [-1, 1]:
+			var c: int = col + sgn * d
+			if c >= 0 and c < Tuning.column_count and strike_allowed(c, dur):
+				return c
+	return -1
+
+## A boss's strike: begin a bolt on `col` if one is free and the column is allowed. Returns whether it began.
+func force_strike(col: int) -> bool:
+	if DebugFlags.off("hazards") or not strike_allowed(col):
+		return false
+	for b in _bolts:
+		if b.state == 0:
+			_begin(b, col)
+			return true
+	return false
 
 func _pick_column() -> int:
 	var n := Tuning.column_count

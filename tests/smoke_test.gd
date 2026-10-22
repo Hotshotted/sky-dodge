@@ -1664,7 +1664,7 @@ func _initialize() -> void:
 	var pr1: float = tuning.pick_price(1, 10.0, 1.0)
 	var pr_fast: float = tuning.pick_price(1, 40.0, 1.0)
 	var pr_slow: float = tuning.pick_price(1, 2.0, 1.0)
-	check(is_equal_approx(pr1, 10.0 * tuning.pick_gap_seconds) and pr_fast / 40.0 < pr_slow / 2.0 and tuning.pick_price(3, 10.0, 1.0) > tuning.pick_price(2, 10.0, 1.0),
+	check(is_equal_approx(pr1, 10.0 * tuning.pick_gap_seconds * tuning.pick_early_factor[0]) and pr_fast / 40.0 < pr_slow / 2.0 and tuning.pick_price(3, 10.0, 1.0) > tuning.pick_price(2, 10.0, 1.0),
 			"later picks cost about %.0f s of what you earn (%.0f at 10 coins/s); a slower earner waits longer (%.0f s vs %.0f s); each pick costs a bit more (x%.2f)" % [tuning.pick_gap_seconds, pr1, pr_slow / 2.0, pr_fast / 40.0, tuning.pick_growth])
 	pk.advance(100.0, 20.0)
 	check(pk.next_pick > 100.0 and is_equal_approx(pk.next_pick, 100.0 + tuning.pick_price(1, 5.0, 1.0)), "...priced from your earning rate this run (100 coins in 20 s): the next pick at %.0f" % pk.next_pick)
@@ -1751,12 +1751,12 @@ func _initialize() -> void:
 			seen_kinds[c["kind"]] = true
 			dup = dup or local.has(c["id"])
 			local[c["id"]] = true
-	var want := ["glide", "cloud_diver", "lucky_whiskers", "fuel_miser", "hot_streak", "scavenger", "tailwind", "daredevil",
+	var want := ["glide", "cloud_diver", "lucky_whiskers", "fuel_miser", "hot_streak", "scavenger", "tailwind", "daredevil", "flak", "pods", "tail",
 			"double_coins", "shield", "magnet_storm", "whisker_window", "fuel_freeze", "full_tank", "patch", "coin_bag", "crate_shower"]
 	var pool_ok := starting.size() == want.size()
 	for w in want:
 		pool_ok = pool_ok and starting.has(w)
-	check(pool_ok and not dup, "starting pool: perks 1, 2, 3, 6, 7, 8, 9, 10 + all five boosts + all four supplies; never the same card twice (%d kinds)" % starting.size())
+	check(pool_ok and not dup, "starting pool: perks 1, 2, 3, 6, 7, 8, 9, 10 + the three gun perks + all five boosts + all four supplies; never the same card twice (%d kinds)" % starting.size())
 	check(not starting.has("prop_wash") and not starting.has("battering_ram") and not starting.has("second_wind") and not starting.has("golden_touch"),
 			"Prop Wash, Battering Ram, Second Wind and Golden Touch are locked until their milestones")
 	tuning.crates_enabled = false
@@ -4451,6 +4451,393 @@ func _initialize() -> void:
 	DebugFlags.parse(["tune"])
 	tuning.hit_fuel_fraction = 100.0
 	fh_save.reset_all()
+
+
+	# ---------- 21. Hunting threats, swarm pressure, bosses ----------
+	tuning.hit_fuel_fraction = 0.25
+	main.spawner.kit_enabled = true
+	DebugFlags.parse(["tune"])
+	main.restart()
+	main.set_process(false)
+	main.picks.enabled = false
+	var th = main.spawner.threats
+	var th_dt := 1.0 / 30.0
+	var th_rate_a: float = tuning.threat_rate_start   # (the director's budget is switched off while single threats are tested)
+	var th_rate_b: float = tuning.threat_rate_end
+	tuning.threat_rate_start = 0.0
+	tuning.threat_rate_end = 0.0
+	check(th.enabled and tuning.threats_enabled, "threats are on in the Countryside")
+	th._script.clear()
+	th.elapsed = 0.0
+	main.score = 5000.0
+	main.player.position = Vector3(0.0, 1.2, 4.0)
+	var th_tick := func(sec: float) -> void:
+		for i in int(round(sec / th_dt)):
+			main.elapsed += th_dt
+			main._update_threats(th_dt)
+	var th_plane := func() -> Vector2:
+		return Vector2(main.player.position.x, main.player.position.z)
+	var th_free_group := func(kind: int):
+		for g in th._groups:
+			if g.active and g.kind == kind:
+				return g
+		return null
+	# the telegraphs: nothing is armed before its warning has played
+	check(tuning.hawk_warn >= 0.9 and tuning.geese_warn >= 1.2 and tuning.crow_warn >= 1.0 and tuning.drone_wind >= 0.8 and tuning.bomb_warn >= 1.0 and tuning.lightning_warn >= 0.9,
+			"every telegraph gives a reacting player at least ~a second (hawk %.1f, geese %.1f, crows %.1f, drone %.2f, bomb %.1f)" % [tuning.hawk_warn, tuning.geese_warn, tuning.crow_warn, tuning.drone_wind, tuning.bomb_warn])
+	# HAWK: a growing shadow, then the dive on the locked spot
+	check(th._launch(th.HAWK), "a hawk launches")
+	var th_hk = th._hawks[0]
+	th_tick.call(tuning.hawk_warn - 0.2)
+	check(th_hk.active and not th_hk.armed and th.hit(th_plane.call()) == -1 and th_hk.marker.visible and th_hk.marker.scale.x > 0.6, "the hawk's shadow grows and nothing is armed during the warning")
+	var th_got := false
+	for i in 40:
+		th_tick.call(th_dt)
+		th_got = th_got or th.hit(th_plane.call()) == th.HAWK
+	check(th_got, "a plane that stays where the shadow was is dived on")
+	th_tick.call(1.5)
+	check(not th_hk.active, "the hawk leaves afterwards (back in the pool)")
+	th._launch(th.HAWK)
+	th_tick.call(tuning.hawk_warn - 0.15)
+	main.player.position.x = th_hk.lx + 3.0   # step out of the shadow once it has locked
+	th_got = false
+	for i in 40:
+		th_tick.call(th_dt)
+		th_got = th_got or th.hit(th_plane.call()) >= 0
+	check(not th_got, "...and a plane that steps out of the shadow is never touched")
+	main.player.position.x = 0.0
+	th_tick.call(1.5)
+	# GEESE: an arrow first, then a V sweeping across the lane
+	check(th._launch(th.GOOSE, true), "a goose squadron launches")
+	var th_gq = th_free_group.call(th.GOOSE)
+	var th_lane: float = th_gq.z
+	th_tick.call(tuning.geese_warn - 0.2)
+	var th_armed := 0
+	for m in th_gq.members:
+		th_armed += int(m.armed or m.visible)
+	check(th_armed == 0 and th_gq.arrow.visible, "the lane is marked by an arrow and no goose is on screen during the warning")
+	main.player.position.z = clampf(th_lane + 6.0, main.player.z_min, main.player.z_max)   # out of the lane
+	if absf(main.player.position.z - th_lane) < 4.0:
+		main.player.position.z = main.player.z_min
+	th_got = false
+	for i in 150:
+		th_tick.call(th_dt)
+		th_got = th_got or th.hit(th_plane.call()) >= 0
+	check(not th_got or absf(main.player.position.z - th_lane) < 4.5, "a plane away from the lane is not hit by the geese")
+	th_tick.call(4.0)
+	check(th_free_group.call(th.GOOSE) == null, "the squadron flies off and is released")
+	th._launch(th.GOOSE, true)
+	th_gq = th_free_group.call(th.GOOSE)
+	main.player.position = Vector3(0.0, 1.2, clampf(th_gq.z, main.player.z_min, main.player.z_max))
+	th_got = false
+	for i in 200:
+		th_tick.call(th_dt)
+		th_got = th_got or th.hit(th_plane.call()) >= 0
+	check(th_got or absf(main.player.position.z - th_gq.z) > 3.0, "a plane that stays in the lane is hit when the V crosses")
+	th.hide_all()
+	# CROWS: warned from behind, they chase the plane's x; weaving breaks them
+	main.player.position = Vector3(0.0, 1.2, 4.0)
+	check(th._launch(th.CROW, false), "a crow flock launches")
+	var th_cr = th_free_group.call(th.CROW)
+	th_tick.call(tuning.crow_warn - 0.2)
+	check(th_cr.state == 1 and not th_cr.members[0].visible and th_cr.arrow.visible, "the crows are announced at the bottom edge first")
+	th_got = false
+	for i in 300:
+		th_tick.call(th_dt)
+		th_got = th_got or th.hit(th_plane.call()) == th.CROW
+	check(th_got, "a plane that sits still is caught by the crows")
+	th.hide_all()
+	th._launch(th.CROW, false)
+	th_cr = th_free_group.call(th.CROW)
+	th_got = false
+	var th_jumped := false
+	for i in 400:
+		if not th_jumped and th_cr.state == 2 and th_cr.z - main.player.position.z < 1.6:
+			th_jumped = true
+			main.player.position.x = 4.6 if main.player.position.x < 1.0 else -4.6   # a late dash sideways
+		th_tick.call(th_dt)
+		th_got = th_got or th.hit(th_plane.call()) == th.CROW
+	check(th_jumped and not th_got, "...but a late dash sideways leaves the flock behind (the weave works; jumped %s, hit %s)" % [str(th_jumped), str(th_got)])
+	th.hide_all()
+	# DRONE: tracks, winds up (the lane glows), darts down the locked lane
+	main.player.position = Vector3(0.0, 1.2, 4.0)
+	check(th._launch(th.DRONE), "a drone launches")
+	var th_dr = th._drones[0]
+	var th_t0 := 0.0
+	while th_dr.state < 2 and th_t0 < 6.0:
+		th_tick.call(th_dt)
+		th_t0 += th_dt
+	var th_wind := 0.0
+	var th_lane_ok: bool = main.spawner.hazards.strike_allowed(main.spawner.hazards.col_of(th_dr.lx), tuning.drone_wind + tuning.drone_dart + 0.3) if th_dr.state == 2 else true
+	while th_dr.state == 2 and th_wind < 3.0:
+		th_tick.call(th_dt)
+		th_wind += th_dt
+	check(th_wind >= tuning.drone_wind - 0.1 and th_lane_ok, "the drone winds up for %.2f s on an allowed lane before it darts (fairness rule of the lightning)" % th_wind)
+	th.hide_all()
+	# FAIRNESS: over many random launches nothing is ever armed before its telegraph time has passed
+	var th_fair := true
+	var th_fair_min := {}
+	var th_rng := RandomNumberGenerator.new()
+	th_rng.seed = 7
+	for kind in [th.HAWK, th.GOOSE, th.CROW, th.DRONE]:
+		var min_armed := 99.0
+		for trial in 14:
+			th.hide_all()
+			main.player.position = Vector3(th_rng.randf_range(-5.0, 5.0), 1.2, th_rng.randf_range(main.player.z_min, main.player.z_max))
+			if not th._launch(kind):
+				continue
+			var t_armed := -1.0
+			var t_run := 0.0
+			while t_armed < 0.0 and t_run < 12.0:
+				th_tick.call(th_dt)
+				t_run += th_dt
+				for e in th._all:
+					if e.active and e.armed and e.kind != th.BOMB:
+						t_armed = t_run
+			min_armed = minf(min_armed, t_armed if t_armed >= 0.0 else 99.0)
+		th_fair_min[kind] = min_armed
+	th.hide_all()
+	th_fair = th_fair_min[th.HAWK] >= tuning.hawk_warn - 0.1 and th_fair_min[th.GOOSE] >= tuning.geese_warn - 0.1 and th_fair_min[th.CROW] >= tuning.crow_warn - 0.1 and th_fair_min[th.DRONE] >= tuning.drone_track + tuning.drone_wind - 0.1
+	check(th_fair, "nothing is armed before its telegraph has played, over 56 random launches (earliest: hawk %.2f s, geese %.2f s, crows %.2f s, drone %.2f s)" % [th_fair_min[th.HAWK], th_fair_min[th.GOOSE], th_fair_min[th.CROW], th_fair_min[th.DRONE]])
+	# the guns: they cost coins, shoot in their own sector, and pay for kills
+	main.picks.set_perk("flak", 1)
+	main.score = 500.0
+	main.elapsed = 30.0
+	main.player.position = Vector3(0.0, 1.2, 4.0)
+	var th_cost: float = main.gun_cost()
+	var th_score0: float = main.score
+	th._launch(th.HAWK)
+	th_tick.call(0.5)
+	check(th.shots == 1 and th.kills == 1 and absf(th.coins_spent_total - th_cost) < 1.0, "the Flak Cannon shoots the hawk (a shot costs %.1f coins; shots %d kills %d spent %.1f)" % [th_cost, th.shots, th.kills, th.coins_spent_total])
+	check(main.threat_coins > 0.0, "...and a kill pays coins (%.0f)" % main.threat_coins)
+	th_tick.call(0.5)
+	check(not th._hawks[0].active, "the downed hawk is gone")
+	th._launch(th.HAWK)
+	th_tick.call(0.5)
+	check(th.shots == 1, "the gun's cooldown holds the next shot (%.1f s)" % float(tuning.gun_cooldown["flak"][0]))
+	th.hide_all()
+	th_tick.call(3.0)
+	main.score = 1.0
+	th._launch(th.HAWK)
+	th_tick.call(0.6)
+	check(th.shots == 1, "with no coins to pay for it the gun does not fire")
+	th.hide_all()
+	main.picks.set_perk("flak", 0)
+	main.picks.set_perk("tail", 1)
+	main.score = 500.0
+	th_tick.call(3.0)
+	th._launch(th.HAWK)
+	th_tick.call(0.6)
+	check(th.shots == 1, "the Tail Gun does not shoot threats ahead of the plane")
+	th.hide_all()
+	th._launch(th.CROW, false)
+	th_tick.call(tuning.crow_warn + 2.5)
+	check(th.shots >= 2, "...but shoots the crows behind it")
+	th.hide_all()
+	main.picks.set_perk("tail", 0)
+	# BOSSES: banner first, then the fight; defeat or survive pays and grants a rare pick
+	main.restart()
+	main.set_process(false)
+	main.picks.enabled = false
+	th = main.spawner.threats
+	th._script.clear()
+	main.score = 2000.0
+	main.player.position = Vector3(0.0, 1.2, 4.0)
+	th._start_boss(0, false)
+	th_tick.call(tuning.boss_warn_time - 0.3)
+	var th_bombs := 0
+	for b in th._bombs:
+		th_bombs += int(b.active)
+	check(th.boss_active and th_bombs == 0 and not th._falcon.active and main.last_cue.contains("Falcon"), "the boss warning shows first and nothing hostile exists yet (\"%s\")" % main.last_cue)
+	th_bombs = 0
+	var th_bomb = null
+	for i in int(5.0 / th_dt):
+		th_tick.call(th_dt)
+		for b in th._bombs:
+			if b.active and b.state == 1 and th_bomb == null:
+				th_bomb = b
+				th_bombs += 1
+		if th_bomb != null:
+			break
+	check(th._falcon.active and th_bombs >= 1 and main.hud.boss_bar_visible(), "(falcon %s, bombs %d, bar %s) Flash the Falcon flies alongside and drops bombs; his hit points show" % [str(th._falcon.active), th_bombs, str(main.hud.boss_bar_visible())])
+	if th_bomb != null and th_bomb.state == 1:
+		check(th.hit(Vector2(th_bomb.lx, th_bomb.lz)) == -1, "a bomb in the air is only a marker: nothing is armed until it lands")
+	var th_c0: float = main.score
+	var th_rare0: int = main._rare_picks
+	var th_np0: float = main.picks.next_pick
+	th.damage_boss(100.0)
+	th_tick.call(2.0)
+	check(not th.boss_active and not th._falcon.active and main.boss_coins > 0.0 and main._rare_picks == th_rare0 + 1 and not main.hud.boss_bar_visible(), "driving the boss off pays coins (%.0f) and grants a rare pick" % main.boss_coins)
+	check(main.picks.next_pick >= th_np0 + main.boss_coins - 1.0, "...without bringing the next pick any sooner")
+	var th_defeat_pay: float = main.boss_coins
+	main._rare_picks = 0
+	main.boss_coins = 0.0
+	th._boss_gap_t = 0.0
+	th._start_boss(1, false)
+	th_tick.call(tuning.boss_warn_time + tuning.boss_time + 3.0)
+	check(not th.boss_active and main.boss_coins > 0.0 and main.boss_coins < th_defeat_pay * 1.2 and main._rare_picks == 1, "surviving a boss pays too (%.0f, less than defeating one: %.0f) and grants a rare pick" % [main.boss_coins, th_defeat_pay])
+	# the rare pick: three perks
+	main._rare_picks = 1
+	main.picks.enabled = true
+	main._begin_pick(true, true)
+	var th_all_perks: bool = main._pick_cards.size() == 3
+	for c in main._pick_cards:
+		th_all_perks = th_all_perks and c["kind"] == "perk" and c["rare"]
+	check(th_all_perks, "a rare pick offers three perks")
+	main._on_pick_chosen(0)
+	# the Goose General: a wall with a gap; the gap is the way through
+	th.hide_all()
+	th._boss_gap_t = 0.0
+	main.player.position = Vector3(0.0, 1.2, 4.0)
+	th._start_boss(2, false)
+	th_tick.call(tuning.boss_warn_time + 0.2)
+	var th_gen = th_free_group.call(th.GENERAL)
+	check(th_gen != null and absf(th_gen.gap) >= 3.0, "the Goose General's wall comes with a gap (at x %.1f)" % (th_gen.gap if th_gen != null else 0.0))
+	var th_wall_hit := false
+	for i in 400:
+		if th_gen != null and th_gen.active:
+			main.player.position.x = move_toward(main.player.position.x, th_gen.gap, 14.0 * th_dt)
+		th_tick.call(th_dt)
+		th_wall_hit = th_wall_hit or th.hit(th_plane.call()) >= 0
+		th_gen = th_free_group.call(th.GENERAL)
+	check(not th_wall_hit, "a plane that flies through the gap is never touched by the wall")
+	th.hide_all()
+	th._boss_stage = 0
+	th.boss_active = false
+	th.reset()
+	tuning.threat_rate_start = th_rate_a
+	tuning.threat_rate_end = th_rate_b
+	# the opening script: one new thing at a time, in the promised order
+	main.restart()
+	main.set_process(false)
+	main.picks.enabled = false
+	th = main.spawner.threats
+	th.reset()
+	main.player.position = Vector3(0.0, 1.2, 4.0)
+	main.score = 0.0
+	var th_max_active := 0
+	main.elapsed = 0.0
+	for i in int(150.0 / th_dt):
+		main.elapsed += th_dt
+		main._update_threats(th_dt)
+		th_max_active = maxi(th_max_active, th.active_count())
+	var th_when := {}
+	for e in th.timeline:
+		if not th_when.has(e[1]):
+			th_when[e[1]] = e[0]
+	check(absf(float(th_when.get("Hawk circles", -99.0)) - tuning.first_hawk_time) < 1.0, "the first hawk at ~%.0f s alone (%.1f)" % [tuning.first_hawk_time, float(th_when.get("Hawk circles", -1.0))])
+	check(absf(float(th_when.get("Geese squadron incoming", -99.0)) - tuning.first_geese_time) < 6.0, "the first geese at ~%.0f s (%.1f)" % [tuning.first_geese_time, float(th_when.get("Geese squadron incoming", -1.0))])
+	check(th_when.has("Rival Crop Duster: warning") and absf(float(th_when["Rival Crop Duster: warning"]) - tuning.mini_boss_time) < 6.0 and th_when.has("Rival Crop Duster survived"), "the rival crop duster mini-boss at ~%.0f s" % tuning.mini_boss_time)
+	check(th_when.has("Crows close in from behind") and th_when.has("Drone hovers") and float(th_when["Crows close in from behind"]) < float(th_when["Drone hovers"]), "crows, then the drone, each introduced on its own")
+	check(th_max_active <= 1, "no two threats ever overlap during the opening (%d at most)" % th_max_active)
+	check(th_when.has("Golden cans drop ahead (0)") or th_when.has("Golden cans drop ahead (1)") or th_when.has("Golden cans drop ahead (2)") or th_when.has("Golden cans drop ahead (3)"), "a reward burst (golden cans) falls in between")
+	# swarm pressure: the budget grows with time and follows the intensity waves
+	check(th.threat_rate() > 0.0 and tuning.threat_rate_end > tuning.threat_rate_start * 3.0 and tuning.threat_max_active_end > tuning.threat_max_active_start, "threat density climbs with the run (rate %.2f -> %.2f, up to %d at once)" % [tuning.threat_rate_start, tuning.threat_rate_end, tuning.threat_max_active_end])
+	check(tuning.threat_wave_factor[3] <= 0.15 and tuning.threat_wave_factor[2] > tuning.threat_wave_factor[1] and tuning.threat_wave_factor[1] > tuning.threat_wave_factor[0], "...CALM and BREATHER are quiet, PEAK is busiest")
+	th.hide_all()
+	th._script.clear()
+	th._script_i = 0
+	th.elapsed = 200.0
+	th.wave_phase = 3
+	th._budget = 0.0
+	var th_l0 := 0
+	for lk in th.launched:
+		th_l0 += int(th.launched[lk])
+	for i in 300:
+		th._director(th_dt)
+	var th_l1 := 0
+	for lk in th.launched:
+		th_l1 += int(th.launched[lk])
+	check(th_l1 == th_l0 and th._budget < 1.0, "a BREATHER launches nothing and barely saves (%.2f)" % th._budget)
+	th.wave_phase = 2
+	for i in 600:
+		th.elapsed += th_dt
+		th._director(th_dt)
+		th.update(th_dt)
+	var th_l2 := 0
+	for lk in th.launched:
+		th_l2 += int(th.launched[lk])
+	check(th_l2 > th_l1, "...while a PEAK launches threats (%d in 20 s)" % (th_l2 - th_l1))
+	# the pick pacing: guns first, then their level-up; rare picks favour what you hold
+	main.restart()
+	main.set_process(false)
+	main.picks.enabled = true
+	main.picks.start_run(1.0)
+	var th_first_ok := true
+	for i in 30:
+		var fc: Array[Dictionary] = main.picks.roll(1.0, 3, "first")
+		th_first_ok = th_first_ok and fc.size() == 3
+		for c in fc:
+			th_first_ok = th_first_ok and (c["id"] == "flak" or c["id"] == "pods" or c["id"] == "tail")
+	check(th_first_ok, "the first pick offers only the three gun perks (active, visible on the plane)")
+	main.picks.set_perk("pods", 1)
+	var th_second_ok := true
+	for i in 40:
+		var sc: Array[Dictionary] = main.picks.roll(1.0, 3, "second")
+		var has_up := false
+		for c in sc:
+			has_up = has_up or (c["id"] == "pods" and c["level"] == 2)
+		th_second_ok = th_second_ok and has_up
+	check(th_second_ok, "the second pick always offers a level-up of the gun you took")
+	check(tuning.pick_min_gap(0) >= 20.0 and tuning.pick_min_gap(0) < tuning.pick_min_gap(3) and tuning.pick_early_factor[0] < 1.0, "picks come quickly early (min gaps %s s) and slow down later" % str(tuning.pick_min_gap_seconds))
+	# the real pick flow: the first pick, then the second after the minimum gap
+	main.restart()
+	main.set_process(false)
+	main.picks.enabled = true
+	main.picks.start_run(1.0)
+	main.elapsed = tuning.first_pick_max_seconds + 0.1
+	main._begin_pick(false)
+	var th_ids := []
+	for c in main._pick_cards:
+		th_ids.append(c["id"])
+	check(th_ids.size() == 3 and th_ids.all(func(i): return i == "flak" or i == "pods" or i == "tail"), "the first pick of a run is dealt from the gun perks (%s)" % str(th_ids))
+	main._on_pick_chosen(0)
+	var th_gun: String = th_ids[0]
+	main._begin_pick(false)
+	var th_up := false
+	for c in main._pick_cards:
+		th_up = th_up or (c["id"] == th_gun and c["level"] == 2)
+	check(th_up, "...and the second offers %s level 2" % th_gun)
+	main._on_pick_chosen(0)
+	main.score = 1.0e9
+	main.elapsed = main._last_pick_time + 5.0
+	check(main.picks.picks_taken == 2 and main.elapsed - main._last_pick_time < tuning.pick_min_gap(1), "a pick never follows the last by less than its minimum gap")
+	# no allocation: a long fight with every kind and a boss leaves the node, material and resource counts exactly as they were
+	main.restart()
+	main.set_process(false)
+	main.picks.enabled = false
+	main.picks.set_perk("flak", 3)
+	main.picks.set_perk("pods", 2)
+	main.score = 1.0e6
+	th = main.spawner.threats
+	th._script.clear()
+	main.player.position = Vector3(0.0, 1.2, 4.0)
+	var th_snap_a := snapshot(main)
+	for kind in [th.HAWK, th.GOOSE, th.CROW, th.DRONE]:
+		th._launch(kind)
+		th_tick.call(6.0)
+		th.hide_all()
+	for boss_i in 3:
+		th._boss_gap_t = 0.0
+		th._start_boss(boss_i, false)
+		th_tick.call(tuning.boss_warn_time + tuning.boss_time + 4.0)
+		th.hide_all()
+		th._boss_stage = 0
+		th.boss_active = false
+	th._start_boss(0, true)
+	th_tick.call(tuning.boss_warn_time + tuning.mini_boss_time_limit + 4.0)
+	th.hide_all()
+	th._boss_stage = 0
+	th.boss_active = false
+	check(same_world(th_snap_a, snapshot(main)), "threats and bosses allocate nothing during a run: " + describe(snapshot(main)))
+	# the HUD and the results
+	check(not main.hud.boss_bar_visible() and main.spawner.threats.kills >= 0, "the boss bar is hidden when no boss is up")
+	main.picks.set_perk("flak", 0)
+	main.picks.set_perk("pods", 0)
+	main.picks.enabled = true
+	main.restart()
+	DebugFlags.parse(["tune"])
+	tuning.hit_fuel_fraction = 100.0
 
 	DirAccess.remove_absolute(ProjectSettings.globalize_path("user://smoke_test_save.json"))
 	print("")

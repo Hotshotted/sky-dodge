@@ -133,7 +133,9 @@ var map := 0                       # the map being played (see Tuning.maps)
 var plane_x := 0.0                 # set by Main each frame (lightning likes to aim at the plane)
 var hazards := Hazards.new()       # wind gusts and lightning
 var kit := Kit.new()               # the Countryside obstacle kit (barns, windmills, crows ...), pooled
+var threats := Threats.new()       # the Countryside's hunting threats and bosses, pooled (see Threats.gd)
 var kit_on := false                # this run uses the kit instead of cubes (Countryside only)
+var obstacles_solid := true         # false: nothing collides (the balance sim isolates the threats with it)
 var kit_enabled := true            # (tests switch the kit off to count cubes)
 var _gull_mat := StandardMaterial3D.new()   # gulls are white (the cubes' material is swapped at spawn, both pre-built)
 var coins := Coins.new()           # the pattern coin trails
@@ -208,6 +210,8 @@ func _ready() -> void:
 	kit.ghost_mesh = _ghost_mesh
 	kit.ghost_mat = _ghost_mat
 	add_child(kit)
+	threats.spawner = self
+	add_child(threats)
 	add_child(coins)
 	for i in POOL_ROWS:  # everything is created now, so nothing is allocated while playing
 		_make_row()
@@ -233,6 +237,7 @@ func apply_map(index: int) -> void:
 	_ground_mat.albedo_color = m["ground"]
 	hazards.configure(float(m["gust_chance"]), float(m["lightning_interval"]))
 	kit_on = kit_enabled and map == 0 and not DebugFlags.off("kit")
+	threats.enabled = kit_on and Tuning.threats_enabled
 	_update_look()
 
 ## Put every row back in the pool and start the obstacle stream over (restart in place). The first
@@ -247,6 +252,7 @@ func reset(first_row_z: float = -12.0) -> void:
 	for c in _clouds.duplicate():
 		_release_cloud(c)
 	hazards.reset()
+	threats.reset()
 	kit.release_all()
 	coins.release_all()
 	_pat = {}
@@ -307,6 +313,10 @@ func _gap(p: Vector2, caps: PackedFloat32Array, o: int, ox: float, oz: float, ha
 
 ## True if any plane shape (see Player.hit_capsules) overlaps an obstacle.
 func hits(p: Vector2, caps: PackedFloat32Array) -> bool:
+	return obstacles_solid and probe(p, caps)
+
+## Would a plane with these shapes at p touch an obstacle? (hits() is this, unless the sim switched obstacles off.)
+func probe(p: Vector2, caps: PackedFloat32Array) -> bool:
 	var half := _obstacle_half()
 	for r in _rows:
 		if absf(r.position.z - p.y) > NEAR_RANGE:
@@ -462,10 +472,12 @@ func prewarm_show(with_flash: bool, with_clouds: bool = true) -> void:
 	hazards.prewarm_show()   # every pooled wind gust and lightning strip too
 	kit.prewarm_show()       # ...and one of each kit thing
 	coins.prewarm_show()     # ...and a screenful of coins
+	threats.prewarm_show()   # ...and every hunting threat, its marker and the guns' tracers
 
 ## End of the pre-warm: hide the pooled rows again.
 func prewarm_hide() -> void:
 	hazards.prewarm_hide()
+	threats.prewarm_hide()
 	kit.release_all()
 	coins.prewarm_hide()
 	for row in _all_rows:

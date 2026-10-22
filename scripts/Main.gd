@@ -99,6 +99,12 @@ var _pick_is_extra := false
 var _last_pick_time := 0.0             # run time of the latest pick (?perf shows the time since)
 var _pick_gap_sum := 0.0               # ...and the sum of the gaps (run start -> first pick -> ...) for the average
 var _pick_count := 0               # crates broken this run (Cat's Cradle counts them)
+var _last_any_pick := -100.0       # run time of the latest pick of any kind
+var _rare_picks := 0               # boss rewards waiting: each is a pick of three perks, level-ups favoured
+var _pick_rare := false
+var _gun_lv := {"flak": 0, "pods": 0, "tail": 0}   # the gun perks' levels (reused every frame)
+var threat_coins := 0.0            # coins shooting threats down paid this run
+var boss_coins := 0.0              # ...and the bosses' rewards
 
 func _ready() -> void:
 	Engine.max_physics_steps_per_frame = 1   # no physics here: make sure a stall can never trigger catch-up steps
@@ -130,6 +136,13 @@ func _ready() -> void:
 		_refresh_plane_items())
 	Save.changed.connect(_refresh_plane_items)
 	spawner.bump.connect(_on_bump)
+	spawner.threats.telegraph.connect(_on_threat_telegraph)
+	spawner.threats.killed.connect(_on_threat_killed)
+	spawner.threats.shot.connect(_on_gun_shot)
+	spawner.threats.blast.connect(_on_threat_blast)
+	spawner.threats.boss_warning.connect(_on_boss_warning)
+	spawner.threats.boss_started.connect(_on_boss_started)
+	spawner.threats.boss_ended.connect(_on_boss_ended)
 	if DebugFlags.tune_enabled():
 		tune_panel = TunePanel.new()
 		add_child(tune_panel)
@@ -301,6 +314,12 @@ func restart() -> void:
 	_last_pick_time = 0.0
 	_pick_gap_sum = 0.0
 	_pick_count = 0
+	_rare_picks = 0
+	_pick_rare = false
+	_last_any_pick = -100.0
+	threat_coins = 0.0
+	boss_coins = 0.0
+	hud.hide_boss()
 	spawner.chain_nudges = false
 	spawner.crate_shower_rows = 0
 	_reset_bonus()
@@ -490,6 +509,7 @@ func _process(raw_delta: float) -> void:
 	_pf("spawner.advance (rows, clouds)", t_pf)
 	t_pf = Time.get_ticks_usec()
 	spawner.update_hazards(delta)
+	_update_threats(delta)
 	spawner.coins.sync(player.position.z)
 	shadows.update_from(spawner, _tod_dark, true)
 	_pf("spawner.update_hazards (kit motion, colliders)", t_pf)
@@ -538,6 +558,14 @@ func _process(raw_delta: float) -> void:
 			_fatal_hit(REASON_STRUCK)
 			return
 		_take_hit(plane, caps, REASON_STRUCK)
+	if _invuln <= 0.0 and not DebugFlags.god:
+		var tk: int = spawner.threats.hit(plane)
+		if tk >= 0:
+			var why: String = Threats.CAUSES[tk]
+			if _hit_is_fatal():
+				_fatal_hit(why)
+				return
+			_take_hit(plane, caps, why)
 	var battering: bool = picks.level("battering_ram") > 0                          # Battering Ram: any touch breaks a crate
 	var ram_ok: bool = Tuning.ram_speed <= 0.0 or player.velocity.y < -Tuning.ram_speed   # (optional extra: moving up fast enough)
 	var from: Vector2 = player.prev_xz
@@ -588,9 +616,14 @@ func _process(raw_delta: float) -> void:
 		var due := score >= picks.next_pick
 		if picks.picks_taken == 0 and picks.enabled:   # the first pick lives in a time window
 			due = (due and elapsed >= Tuning.first_pick_min_seconds) or elapsed >= Tuning.first_pick_max_seconds
-		if due:
+		elif due and elapsed - _last_pick_time < Tuning.pick_min_gap(picks.picks_taken - 1):   # ...and later ones keep a minimum spacing
+			due = false
+		var spaced := picks.picks_taken == 0 or elapsed - _last_any_pick >= Tuning.pick_spacing   # (two picks never come back to back)
+		if _rare_picks > 0 and spaced:
+			_begin_pick(true, true)   # a boss's reward: three perks
+		elif due and spaced:
 			_begin_pick(false)
-		elif _extra_picks > 0:
+		elif _extra_picks > 0 and spaced:
 			_begin_pick(true)   # (a purple crate's pick is extra: it does not use up the score)
 
 ## Empty tank: Reserve Tank refills it; Glide (a perk) keeps you flying for a few seconds; else the run ends.
@@ -649,7 +682,8 @@ func earn_mult() -> float:
 # ---------- In-run picks ----------
 
 ## The score reached the next pick: pause the game completely, deal three cards.
-func _begin_pick(extra: bool = false) -> void:
+func _begin_pick(extra: bool = false, rare: bool = false) -> void:
+	_pick_rare = rare
 	_picking = true
 	sfx.play("pick_open")
 	sfx.duck(true)
@@ -657,9 +691,12 @@ func _begin_pick(extra: bool = false) -> void:
 	_paused_since_ms = Time.get_ticks_msec()
 	_note_event("pick screen opened")
 	_pick_is_extra = extra
-	if extra:
+	if rare:
+		_rare_picks = maxi(_rare_picks - 1, 0)
+	elif extra:
 		_extra_picks = maxi(_extra_picks - 1, 0)
-	_pick_cards = picks.roll(fuel / Tuning.fuel_max(), Tuning.pick_cards)
+	var mode := "rare" if rare else ("first" if (picks.picks_taken == 0 and not extra) else ("second" if (picks.picks_taken == 1 and not extra) else ""))
+	_pick_cards = picks.roll(fuel / Tuning.fuel_max(), Tuning.pick_cards, mode)
 	if tune_panel:
 		tune_panel.set_available(false)
 	var hints: Array = []
@@ -683,7 +720,9 @@ func _on_pick_chosen(i: int) -> void:
 	if tune_panel:
 		tune_panel.set_available(true)
 	_pick_gap_sum += elapsed - _last_pick_time
-	_last_pick_time = elapsed
+	_last_any_pick = elapsed
+	if not _pick_is_extra:
+		_last_pick_time = elapsed
 	_pick_count += 1
 	_apply_card(card)
 	if not _pick_is_extra:
@@ -746,6 +785,109 @@ func _apply_card(card: Dictionary) -> void:
 			hud.coin_pop("+" + Tuning.fmt(amount), camera.unproject_position(player.position + Vector3(0, 0, -2.0)))
 		"crate_shower":
 			spawner.crate_shower_rows = Tuning.crate_shower_rows
+
+# ---------- Threats: hunting enemies, guns, bosses ----------
+
+## What the earning rate is right now (coins per second this run, at least a little): guns and kills are priced in it.
+func earn_rate() -> float:
+	return maxf(score / maxf(elapsed, 10.0), 0.5)
+
+func gun_cost() -> float:
+	return maxf(Tuning.gun_cost_min, Tuning.gun_cost_seconds * earn_rate())
+
+func _update_threats(delta: float) -> void:
+	var th = spawner.threats
+	th.plane_x = player.position.x
+	th.plane_z = player.position.z
+	th.half_h = _half_height()
+	th.z_min = player.z_min
+	th.z_max = player.z_max
+	th.elapsed = elapsed
+	th.meters = Tuning.meters(run_distance)
+	th.wave_phase = spawner.wave_phase
+	for id in _gun_lv:
+		_gun_lv[id] = picks.level(id)
+	th.gun_levels = _gun_lv
+	th.coins_available = score
+	th.gun_cost = gun_cost()
+	th.update(delta)
+	if th.spent > 0.0:
+		score = maxf(score - th.spent, 0.0)
+		th.spent = 0.0
+	if th.boss_active:
+		hud.set_boss(th.boss_name, th.boss_hp / maxf(th.boss_hp_max, 0.001), Threats.BOSS_COLORS[clampi(th.boss_kind, 0, 2)] if not th.boss_mini else Color(1.0, 0.8, 0.25))
+	elif hud.boss_bar_visible():
+		hud.hide_boss()
+
+const THREAT_HINTS := ["HAWK! Watch its shadow", "GEESE! Slip over or under them", "CROWS behind you! Weave", "DRONE! Leave its lane", "", "", "", "", "THE GOOSE GENERAL!", ""]
+
+func _on_threat_telegraph(kind: int) -> void:
+	match kind:
+		Threats.HAWK:
+			sfx.play("screech", 0.9)
+		Threats.GOOSE, Threats.GENERAL:
+			sfx.play("honk", 0.9)
+		Threats.CROW:
+			sfx.play("caw", 0.9)
+		Threats.DRONE:
+			sfx.play("whine", 0.8)
+	if kind < THREAT_HINTS.size() and THREAT_HINTS[kind] != "" and not spawner.threats.intro_shown.has(kind + 100) and not DebugFlags.off("popup"):
+		spawner.threats.intro_shown[kind + 100] = true
+		hud.popup(THREAT_HINTS[kind], 52, Color(1.0, 0.45, 0.3), camera.unproject_position(player.position + Vector3(0, 0, -6.0)))
+
+func _on_gun_shot(gun: String, _cost: float) -> void:
+	sfx.play("flak", 0.8, 1.0 + 0.1 * float(["flak", "pods", "tail"].find(gun)))
+	if not DebugFlags.off("haptic"):
+		Input.vibrate_handheld(Tuning.haptic_ms)
+	hud.pulse_perk(gun)
+
+func _on_threat_killed(kind: int, pos: Vector3, by_gun: bool) -> void:
+	if not DebugFlags.off("sparks"):
+		fx.crate_burst(pos, 0 if kind != Threats.DRONE else 1)
+	if by_gun:
+		sfx.play("boom", 0.6, 1.3)
+		var secs: float = Tuning.kill_pay_seconds[clampi(kind, 0, 3)] if kind <= Threats.DRONE else 0.0
+		if secs > 0.0:
+			var pay := maxf(Tuning.kill_pay_min, secs * earn_rate()) * 1.0
+			score += pay
+			threat_coins += pay
+			if not DebugFlags.off("popup"):
+				hud.coin_pop("+" + Tuning.fmt(floorf(pay)), camera.unproject_position(pos))
+
+func _on_threat_blast(pos: Vector3, big: bool) -> void:
+	if big:
+		sfx.play("boom", 0.8)
+		var d := Vector2(pos.x - player.position.x, pos.z - player.position.z).length()
+		if d < 7.0 and not DebugFlags.off("shake"):
+			_shake_t = maxf(_shake_t, Tuning.hit_shake_time * 0.45)
+
+func _on_boss_warning(boss_name: String) -> void:
+	sfx.play("alarm", 0.9)
+	last_cue = "BOSS: " + boss_name
+	var th = spawner.threats
+	var col: Color = Color(1.0, 0.8, 0.25) if th.boss_mini else Threats.BOSS_COLORS[clampi(th.boss_kind, 0, 2)]
+	hud.show_combo(boss_name, col, "RIVAL INCOMING!" if th.boss_mini else "BOSS INCOMING!")
+
+func _on_boss_started(_boss_name: String) -> void:
+	sfx.play("whoosh_big", 0.9)
+
+func _on_boss_ended(boss_name: String, defeated: bool, mini: bool) -> void:
+	var gap := picks.pick_gap()
+	var frac: float = Tuning.mini_boss_reward if mini else (Tuning.boss_reward_defeat if defeated else Tuning.boss_reward_survive)
+	var amount := floorf(gap * frac)
+	score += amount
+	boss_coins += amount
+	picks.next_pick += amount   # (a boss's coins never bring the next pick sooner)
+	if Tuning.boss_rare_pick:
+		_rare_picks += 1
+	sfx.play("ding", 1.0)
+	last_cue = ("%s beaten! +%s" if defeated else "%s survived! +%s") % [boss_name, Tuning.fmt(amount)]
+	if not DebugFlags.off("popup"):
+		hud.show_combo("DRIVEN OFF!" if defeated else "SURVIVED!", Color(1.0, 0.85, 0.3), "+%s coins and a rare pick" % Tuning.fmt(amount))
+		hud.coin_pop("+" + Tuning.fmt(amount), camera.unproject_position(player.position + Vector3(0, 0, -2.0)))
+	if not DebugFlags.off("sparks"):
+		fx.coins(player.position + Vector3(0, 0, -1.0))
+	hud.hide_boss()
 
 ## Prop Wash: a shoved obstacle bumped another one: coins (each link of a Wingwalker chain pays one more time).
 func _on_bump(pos: Vector3, depth: int) -> void:
@@ -978,6 +1120,9 @@ func _result_extra() -> String:
 	var lines: Array[String] = []
 	if last_hit_name != "":
 		lines.append("Last hit: %s" % last_hit_name)
+	var th = spawner.threats
+	if th.kills > 0 or th.bosses_done > 0:
+		lines.append("Shot down %d (+%s coins), guns spent %s, bosses faced %d" % [th.kills, Tuning.fmt(threat_coins), Tuning.fmt(th.coins_spent_total), th.bosses_done])
 	for k in last_result.get("medals", []):
 		lines.append("%s medal!  +%s coins" % [MEDAL_NAMES[k], Tuning.fmt(Tuning.map_def(map)["medals"][k][1])])
 	for j in last_result.get("unlocked", []):

@@ -84,6 +84,10 @@ var _fuel_icon: IconView
 var _fuel_label: Control
 var _fuel_hit: Label                # the big "-25" that slams onto the gauge when the plane is hit
 var _fuel_hit_ms := -100000
+var _boss_bg: UiPanel               # the boss's hit points: a trough under the distance pill, with its name on it
+var _boss_fill: Panel
+var _boss_sb: StyleBoxFlat
+var _boss_label: Label
 var _fuel_jx := 0.0                 # the gauge shakes sideways for a moment after a hit
 var _fuel_frac := 1.0
 var _fuel_pulse_ms := -10000        # when a pickup last made the gauge flash
@@ -206,6 +210,7 @@ func _ready() -> void:
 	_combo_label.add_theme_constant_override("outline_size", 22)
 	_combo_label.visible = false
 	_build_fuel_gauge()
+	_build_boss_bar()
 	for i in POPUP_POOL:
 		var l := _make_label(64, true)
 		l.visible = false
@@ -817,6 +822,7 @@ func reset_transients() -> void:
 	_combo_sub.visible = false
 	_fuel_hit.visible = false
 	_fuel_hit_ms = -100000
+	hide_boss()
 	_flash_rect.color.a = 0.0
 
 func hide_menus() -> void:
@@ -1000,6 +1006,58 @@ func _build_fuel_gauge() -> void:
 	_fuel_hit.pivot_offset = Vector2(150, 65)
 	_fuel_hit.visible = false
 	set_fuel(1.0)
+
+func _build_boss_bar() -> void:
+	_boss_bg = UiPanel.new()
+	_boss_bg.fill = Color(Style.INK, 0.78)
+	_boss_bg.border = Color(Style.LINE, 0.5)
+	_boss_bg.radius = 17
+	_boss_bg.border_w = 3
+	_boss_bg.shadow = false
+	_boss_bg.sheen_alpha = 0.0
+	_boss_bg.visible = false
+	add_child(_boss_bg)
+	_boss_sb = Style.box(Style.DANGER, Color(1, 1, 1, 0.0), 12, 0, false)
+	_boss_fill = Panel.new()
+	_boss_fill.add_theme_stylebox_override("panel", _boss_sb)
+	_boss_fill.mouse_filter = Control.MOUSE_FILTER_IGNORE
+	_boss_fill.visible = false
+	add_child(_boss_fill)
+	_boss_label = _make_label(22, false)
+	_boss_label.add_theme_color_override("font_color", Color.WHITE)
+	_boss_label.add_theme_constant_override("outline_size", 6)
+	_boss_label.add_theme_color_override("font_outline_color", Color(Style.INK, 0.9))
+	_boss_label.horizontal_alignment = HORIZONTAL_ALIGNMENT_CENTER
+	_boss_label.vertical_alignment = VERTICAL_ALIGNMENT_CENTER
+	_boss_label.visible = false
+
+const BOSS_BAR_W := 380.0
+const BOSS_BAR_H := 36.0
+var _boss_frac := 1.0
+
+## A boss fight's hit points: the bar under the distance pill (hide_boss() takes it away).
+func set_boss(boss_name: String, frac: float, color: Color) -> void:
+	_boss_frac = clampf(frac, 0.0, 1.0)
+	var p := Vector2(24.0 + Style.safe_left, 122.0 + Style.safe_top)
+	_boss_bg.position = p
+	_boss_bg.size = Vector2(BOSS_BAR_W, BOSS_BAR_H)
+	_boss_fill.position = p + Vector2(5, 5)
+	_boss_fill.size = Vector2(maxf((BOSS_BAR_W - 10.0) * _boss_frac, 10.0 if _boss_frac > 0.0 else 0.0), BOSS_BAR_H - 10.0)
+	_boss_sb.bg_color = color
+	_boss_label.position = p
+	_boss_label.size = Vector2(BOSS_BAR_W, BOSS_BAR_H)
+	_boss_label.text = boss_name
+	_boss_bg.visible = true
+	_boss_fill.visible = true
+	_boss_label.visible = true
+
+func hide_boss() -> void:
+	_boss_bg.visible = false
+	_boss_fill.visible = false
+	_boss_label.visible = false
+
+func boss_bar_visible() -> bool:
+	return _boss_bg.visible
 
 func _layout_fuel() -> void:
 	var x0 := (_vp.x - FUEL_BAR_W) * 0.5

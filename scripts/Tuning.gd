@@ -278,6 +278,93 @@ var lightning_start := 6.0
 var lightning_ramp := 1.0
 var lightning_aim := 0.6     # chance a strike is aimed at the plane's own column
 
+# ---------- Hunting threats, swarm pressure, bosses (Threats.gd) ----------
+## The Countryside's active enemies. All of them warn before they can hurt (the telegraph times below), all can be shot
+## down by the gun perks (each shot costs coins) or dodged. Times are seconds into the run, distances in world units.
+var threats_enabled := true
+## The opening script: each threat meets the player alone, sized for a fresh build.
+var first_hawk_time := 20.0
+var first_golden_time := 35.0        # a reward burst: golden cans drop ahead
+var first_geese_time := 60.0
+var mini_boss_time := 90.0           # the rival crop duster
+var first_crows_time := 110.0
+var first_drone_time := 135.0
+## After the script the director spends a threat "budget": it fills at threat_rate(t) per second (times the wave's factor)
+## and each launch costs its kind's price. Rate climbs from threat_rate_start at threat_ramp_start to threat_rate_end at threat_ramp_end.
+var threat_ramp_start := 60.0
+var threat_ramp_end := 300.0
+var threat_rate_start := 0.15
+var threat_rate_end := 1.1
+var threat_wave_factor: Array[float] = [0.5, 1.0, 1.7, 0.1]    # CALM, BUILD, PEAK, BREATHER
+var threat_cost: Array[float] = [1.4, 2.0, 3.0, 2.0]            # hawk, geese, crows, drone
+var threat_max_active_start := 1
+var threat_max_active_end := 5
+var threat_hp_growth := 2.0          # once the ramp has ended, each further ramp length adds this to a threat's hit points (guns need more shots)
+var threat_min_gap := 1.8            # seconds between two launches at least
+## HAWK: its shadow grows for hawk_warn seconds (the aim follows the plane, then locks hawk_lock seconds before the dive).
+var hawk_warn := 1.1
+var hawk_lock := 0.45
+var hawk_dive := 0.34
+var hawk_radius := Vector2(1.5, 1.2)          # half size of what the hawk touches (x, z) around its centre
+## GEESE: a V of geese_count crosses the screen. The lane is shown by an arrow at the edge for geese_warn seconds.
+var geese_count := 5
+var geese_warn := 1.5
+var geese_speed := 7.5
+var geese_steer := 1.4               # units/second the formation drifts toward the plane's z while crossing
+var geese_radius := Vector2(1.45, 1.05)
+## CROWS: a flock of crow_count closes from behind; it follows the plane's x at crow_follow units/second, closes at crow_close.
+var crow_count := 5
+var crow_warn := 1.3
+var crow_close := 3.4
+var crow_follow := 2.3
+var crow_radius := Vector2(1.3, 0.95)
+## DRONE: hovers at the top tracking the plane (drone_track seconds), winds up for drone_wind (locks the lane), then darts down.
+var drone_track := 2.4
+var drone_wind := 0.95
+var drone_dart := 0.55
+var drone_radius := Vector2(1.3, 1.3)
+## BOSSES: the first full boss comes at boss_first_meters, then one every boss_every_meters (rotating Falcon, Thunderhead,
+## Goose General). A fight lasts boss_time seconds; surviving pays boss_reward_survive of a pick's price in coins, driving the boss off
+## boss_reward_defeat; both grant a rare pick.
+var boss_first_meters := 5000.0
+var boss_every_meters := 2500.0
+var boss_time := 20.0
+var boss_hp_growth := 0.3            # each boss faced earlier in the run adds this share to the next one's hit points (up to x3)
+var boss_warn_time := 2.4
+var boss_hp: Array[float] = [6.0, 12.0, 9.0]       # Falcon, Thunderhead, Goose General
+var boss_reward_survive := 0.9
+var boss_rare_pick := true            # a boss fight (or the opening mini-boss) ends with a rare pick
+var boss_reward_defeat := 1.6
+var mini_boss_time_limit := 14.0
+var mini_boss_hp := 3.0
+var mini_boss_reward := 1.2
+var bomb_warn := 1.1                 # a dropped bomb's marker shows this long before it lands
+var bomb_radius := 1.7               # ...and the blast's reach
+var bomb_blast := 0.4
+var falcon_drop_every := 1.9
+var duster_drop_every := 2.4
+var storm_strike_every := 1.7
+var storm_aim := 0.45                # chance a Thunderhead bolt is aimed at the plane's column
+var general_waves := 3
+var general_gap := 4.6               # the gap in the formation (units)
+## GUN PERKS (Flak Cannon, Wing Pods, Tail Gun): each shot costs gun_cost_seconds of your current earning rate (at least gun_cost_min).
+var gun_cost_seconds := 0.7
+var gun_cost_min := 2.0
+var gun_cooldown := {"flak": [2.2, 1.4, 0.8], "pods": [2.6, 1.7, 1.0], "tail": [2.4, 1.6, 0.9]}
+var gun_range := {"flak": [11.0, 14.0, 18.0], "pods": [7.0, 9.0, 12.0], "tail": [9.0, 12.0, 16.0]}
+var gun_blast := {"flak": [1.3, 1.8, 2.5], "pods": [1.2, 1.6, 2.2], "tail": [1.2, 1.7, 2.3]}
+var gun_damage := [1.0, 1.0, 2.0]    # per shot at levels 1-3 (bosses have hit points)
+## Picks: the first pick offers only gun perks; the second always offers a level-up of the gun you took; the early gaps are
+## shorter (x pick_early_factor for picks 1, 2, ...).
+var pick_early_factor: Array[float] = [0.65, 0.65, 0.8, 0.92]
+## ...and a pick never comes sooner than this many seconds after the one before it (picks 2, 3, 4, then the last entry): about 45 s, 75 s, 115 s.
+var pick_min_gap_seconds: Array[float] = [26.0, 28.0, 38.0, 46.0]
+var pick_spacing := 6.0              # ...and no two picks of any kind (a boss's rare pick included) come within this many seconds
+## Shooting a threat down pays kill_pay_seconds of your current earning rate (at least kill_pay_min coins): hawk, goose, crow, drone.
+var kill_pay_seconds: Array[float] = [5.0, 2.0, 2.0, 4.0]
+var kill_pay_min := 8.0
+
+
 func map_def(i: int) -> Dictionary:
 	return maps[clampi(i, 0, maps.size() - 1)]
 
@@ -364,6 +451,12 @@ var perks: Array[Dictionary] = [
 			"line": "Close calls count from {v}% farther away."},
 	{"id": "second_wind", "name": "Second Wind", "glyph": "second_wind", "color": Color(0.5, 1.0, 0.8), "unlock": "second_wind", "vals": [40, 70, 100],
 			"line": "Once a run, refill {v}% of the tank when it runs low."},
+	{"id": "flak", "name": "Flak Cannon", "glyph": "flak", "color": Color(1.0, 0.7, 0.25), "unlock": "", "active": true, "vals": [2.2, 1.4, 0.8],
+			"line": "Shoots down threats ahead, one shot every {v} s. Each shot costs coins."},
+	{"id": "pods", "name": "Wing Pods", "glyph": "pods", "color": Color(0.55, 0.9, 1.0), "unlock": "", "active": true, "vals": [2.6, 1.7, 1.0],
+			"line": "Shoots down threats at your sides, one shot every {v} s. Each shot costs coins."},
+	{"id": "tail", "name": "Tail Gun", "glyph": "tail", "color": Color(1.0, 0.45, 0.45), "unlock": "", "active": true, "vals": [2.4, 1.6, 0.9],
+			"line": "Shoots down threats behind you, one shot every {v} s. Each shot costs coins."},
 	{"id": "golden_touch", "name": "Golden Touch", "glyph": "golden_touch", "color": Color(1.0, 0.8, 0.1), "unlock": "golden_touch", "needs": "crates", "vals": [3, 5, 8],
 			"line": "Crates pay x{v}."},
 ]
@@ -454,6 +547,7 @@ var milestones: Array[Dictionary] = [
 var tailwind_speed_pct: Array[float] = [0.0, 10.0, 20.0, 30.0]
 ## Level 3 changes how a perk behaves, not just its numbers. The pick card shows this line at level 3 instead of the usual one.
 var pick_l3 := {
+	"flak": "Rapid fire, wide blast, 2 damage a shot", "pods": "Rapid fire, wide blast, 2 damage a shot", "tail": "Rapid fire, wide blast, 2 damage a shot",
 	"glide": "Glide {v} s, then refill 20% of the tank",
 	"cloud_diver": "+{v} fuel/s; close calls under clouds are Whiskers",
 	"lucky_whiskers": "Every Whisker close drops a can",
@@ -468,6 +562,7 @@ var pick_l3 := {
 	"golden_touch": "Crates pay x{v} and drop a can",
 }
 var pick_short := {
+	"flak": "Auto-shoots ahead, every {v} s", "pods": "Auto-shoots to the sides, every {v} s", "tail": "Auto-shoots behind, every {v} s",
 	"glide": "Glide {v} s when empty", "cloud_diver": "+{v} fuel/s under clouds", "lucky_whiskers": "{v}% can on Whisker closes",
 	"prop_wash": "Bumped obstacles pay {v}", "battering_ram": "Crates break on touch", "fuel_miser": "{v}% less fuel burn",
 	"hot_streak": "Bonus fades {v}% slower", "scavenger": "+{v} coins per can", "tailwind": "Fly faster, earn more",
@@ -721,10 +816,15 @@ func refill_amount() -> float:
 func bonus_cap_now() -> float:
 	return upgrade_value("bonus_cap", Save.level("bonus_cap"))
 
+## The least time between pick number k (0 = the second pick) and the one before it.
+func pick_min_gap(k: int) -> float:
+	return pick_min_gap_seconds[clampi(k, 0, pick_min_gap_seconds.size() - 1)]
+
 ## What pick number k (1 = the second pick of the run) costs, given the coins per second made so far this run.
 func pick_price(k: int, rate: float, perm: float) -> float:
 	var r := clampf(rate / (pick_rate_ref * maxf(perm, 0.0001)), 0.05, 50.0)
-	return pick_gap_seconds * pow(pick_growth, k - 1) * pow(r, -pick_rate_exponent) * rate
+	var early := pick_early_factor[k - 1] if k >= 1 and k <= pick_early_factor.size() else 1.0
+	return pick_gap_seconds * early * pow(pick_growth, k - 1) * pow(r, -pick_rate_exponent) * rate
 
 ## What the pick prices are multiplied by: the permanent multiplier (map x Coin Value), with the flat upgrades' share.
 func pick_scale(map: int) -> float:

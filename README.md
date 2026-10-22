@@ -6,6 +6,7 @@ countryside, weave through barns, windmills and power lines, grab fuel cans and 
 * Controls: drag anywhere; the plane follows your finger 1:1.
 * Built with GDScript, GL Compatibility renderer, everything procedural (shapes, sounds, icons).
 * Style guide: [docs/style.md](docs/style.md). Tests: `godot --headless --script tests/smoke_test.gd`.
+* Threats, guns and bosses: [docs/threats.md](docs/threats.md). Balance tools: `tests/threat_sim.gd` (autopilot), `tests/economy_sim.gd`.
 * Debug URL flags: `?debug` (build stamp), `?tune` (tuning panel), `?perf` (frame times), `?nofx=...`, `?god`.
 
 Fonts: Fredoka and Nunito (SIL Open Font License 1.1, see `assets/fonts/`).

@@ -161,7 +161,7 @@ func show_cards(cards: Array[Dictionary], combos: Array = [], remember: bool = t
 		(p["line"] as Label).text = c["line"]
 		# the kind, readable at a glance: frame, banner and its facts
 		(p["bsb"] as StyleBoxFlat).bg_color = kc.darkened(0.15)
-		(p["kind"] as Label).text = KIND_NAMES[kind]
+		(p["kind"] as Label).text = "RARE PERK" if c.get("rare", false) else KIND_NAMES[kind]
 		var is_combo: bool = i < combos.size() and combos[i] != ""
 		for state in ["normal", "hover", "pressed", "disabled", "focus"]:
 			var sb := b.get_theme_stylebox(state) as StyleBoxFlat

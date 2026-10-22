@@ -80,7 +80,18 @@ func perk_offered(d: Dictionary) -> bool:
 
 ## Build the cards for a pick: `count` different ones, drawn by weight. Owned perks are offered more often; Full
 ## Tank and Patch Kit more often the emptier the tank is. Each card is a Dictionary (kind, id, name, glyph, color, line, level, owned).
-func roll(fuel_frac: float, count: int = 3) -> Array[Dictionary]:
+func roll(fuel_frac: float, count: int = 3, mode: String = "") -> Array[Dictionary]:
+	if mode == "first":   # the very first pick: the three gun perks, so the player starts with something that answers the hawks
+		var guns: Array[Dictionary] = []
+		for id in GUN_IDS:
+			var gd := Tuning.perk_def(id)
+			if perk_offered(gd):
+				guns.append(perk_card(gd, level(id) + 1, level(id) > 0))
+		if not guns.is_empty():
+			guns.shuffle()
+			return guns.slice(0, count)
+	if mode == "rare":
+		return _roll_rare(count)
 	var pool: Array[Dictionary] = []
 	var weights: Array[float] = []
 	for d in Tuning.perks:
@@ -139,11 +150,67 @@ func roll(fuel_frac: float, count: int = 3) -> Array[Dictionary]:
 					pick = i
 					break
 			out[out.size() - 1] = perks_pool[pick]
+	if mode == "second":   # the second pick always offers a level-up of the gun taken first
+		var up := gun_level_up_card()
+		if not up.is_empty():
+			var seen := false
+			for c in out:
+				seen = seen or c["id"] == up["id"]
+			if not seen and not out.is_empty():
+				out[0] = up
+	return out
+
+const GUN_IDS := ["flak", "pods", "tail"]
+
+## The level-up card of the best gun held (empty when none is held or it is maxed).
+func gun_level_up_card() -> Dictionary:
+	var best := ""
+	for id in GUN_IDS:
+		if level(id) > 0 and level(id) < 3 and (best == "" or level(id) > level(best)):
+			best = id
+	if best == "":
+		return {}
+	return perk_card(Tuning.perk_def(best), level(best) + 1, true)
+
+## A rare pick (a boss's reward): three PERK cards, level-ups of what you hold favoured, a gun among them if you carry one.
+func _roll_rare(count: int) -> Array[Dictionary]:
+	var pool: Array[Dictionary] = []
+	var weights: Array[float] = []
+	for d in Tuning.perks:
+		if not perk_offered(d):
+			continue
+		var lvl := level(d["id"])
+		pool.append(perk_card(d, lvl + 1, lvl > 0))
+		weights.append(1.0 + (Tuning.perk_owned_weight * 2.0 if lvl > 0 else 0.0) + (1.5 if d.get("active", false) else 0.0))
+	var out: Array[Dictionary] = []
+	for n in mini(count, pool.size()):
+		var total := 0.0
+		for w in weights:
+			total += w
+		var rv := randf() * total
+		var idx := pool.size() - 1
+		for i in pool.size():
+			rv -= weights[i]
+			if rv <= 0.0:
+				idx = i
+				break
+		var card: Dictionary = pool[idx]
+		card["rare"] = true
+		out.append(card)
+		pool.remove_at(idx)
+		weights.remove_at(idx)
 	return out
 
 func perk_card(d: Dictionary, new_level: int, owned: bool) -> Dictionary:
 	return {"kind": "perk", "id": d["id"], "name": d["name"], "glyph": d["glyph"], "color": d["color"],
 			"line": String(Tuning.pick_l3[d["id"]] if (new_level >= 3 and Tuning.pick_l3.has(d["id"])) else Tuning.pick_short[d["id"]]).replace("{v}", _num(Tuning.perk_value(d["id"], new_level))), "level": new_level, "owned": owned}
+
+## What the next pick costs, in coins (the gap between the last pick and the next).
+func pick_gap() -> float:
+	var gap := next_pick - _bag_score
+	if gap <= 0.0 or gap > 1.0e30:
+		gap = price(picks_taken + 1)
+	return gap
 
 ## The Coin Bag: a share of what the next pick costs.
 func coin_bag_amount() -> float:

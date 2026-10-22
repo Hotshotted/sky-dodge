@@ -13,7 +13,7 @@ extends RefCounted
 ## Combine with "&", e.g.  ?nofx=sparks&noprewarm&perf
 ## The build stamp and the active flags are only shown to players who ask for them (?debug, ?tune or ?perf).
 
-const EFFECTS := ["sparks", "streaks", "flash", "popup", "trail", "haptic", "punch", "pickup", "clouds", "hazards", "crates", "kit", "sound", "music", "ground", "shadows", "coins", "shake"]
+const EFFECTS := ["sparks", "streaks", "flash", "popup", "trail", "haptic", "punch", "pickup", "clouds", "hazards", "crates", "kit", "sound", "music", "ground", "shadows", "coins", "shake", "threats"]
 
 static var _loaded := false
 static var _off := {}                  # effect name -> true

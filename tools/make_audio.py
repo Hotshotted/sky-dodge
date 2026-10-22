@@ -119,3 +119,33 @@ save("music_base", base, 0.55)
 save("music_rhythm", rhythm, 0.55)
 save("music_full", full, 0.5)
 print("audio written to", os.path.abspath(OUT))
+
+# ---- threat sounds (added after everything else so the older files keep their exact noise)
+t = t_(0.6); f = 2200 + 1400 * (t / 0.6) + 120 * sine(28, t)       # hawk: a rising, shaky scream
+ph = 2 * np.pi * np.cumsum(f) / SR
+save("screech", (np.sin(ph) + 0.5 * np.sin(2 * ph)) * env(len(t), 0.02, 0.2) * decay(t, 2.0))
+x = np.zeros(int(SR * 0.75))
+for st in (0.0, 0.34):      # goose: two honks
+    d = t_(0.3); fq = 430 - 80 * d / 0.3
+    seg = lowpass(np.sign(np.sin(2 * np.pi * np.cumsum(fq) / SR)) * 0.6 + saw(fq * 0.5, d) * 0.4, 1800) * env(len(d), 0.02, 0.1)
+    k = int(st * SR); x[k:k + len(seg)] += seg
+save("honk", x)
+x = np.zeros(int(SR * 0.7))
+for st in (0.0, 0.26, 0.46):  # crow: caws
+    d = t_(0.2); fq = 640 - 220 * d / 0.2
+    seg = lowpass(saw(fq, d) * 0.7 + noise(len(d)) * 0.25, 2600) * env(len(d), 0.01, 0.07) * decay(d, 6)
+    k = int(st * SR); x[k:k + len(seg)] += seg
+save("caw", x)
+t = t_(0.95); fq = 380 + 1500 * (t / 0.95) ** 1.5                       # drone: a climbing whine
+save("whine", (np.sin(2 * np.pi * np.cumsum(fq) / SR) + 0.35 * tri(fq * 0.5, t)) * (0.25 + 0.75 * t / 0.95) * env(len(t), 0.03, 0.05))
+t = t_(1.2); fq = np.where((t % 0.4) < 0.2, 660.0, 880.0)                # boss warning siren
+save("alarm", lowpass(np.sign(np.sin(2 * np.pi * np.cumsum(fq) / SR)), 2400) * env(len(t), 0.02, 0.15))
+n = int(SR * 0.22); t = t_(0.22)
+save("flak", lowpass(noise(n), 3200) * decay(t, 22) + 0.9 * sine(210 * np.exp(-t * 14) + 70, t) * decay(t, 18))
+n = int(SR * 0.6); t = t_(0.6)
+save("boom", lowpass(noise(n), 700 * decay(t, 4) + 90) * decay(t, 5.0) + 1.0 * sine(90 * decay(t, 3) + 38, t) * decay(t, 5))
+x = np.zeros(int(SR * 0.9))
+for i, fq2 in enumerate([523.3, 659.3, 784.0, 1046.5, 1318.5]):         # reward: a bright rising arpeggio
+    seg = bell(fq2, 0.5, 4.0) * 0.8; k = int(0.07 * SR) * i; x[k:k + len(seg)] += seg[: len(x) - k]
+save("ding", x)
+print("threat sounds written")
