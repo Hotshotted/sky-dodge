@@ -84,6 +84,21 @@ jobs:
           grep -c "version.txt" build/web/index.html
           ls -la build/web
 
+      # The exported game has to make sound: the clips are in the package, and a headless Chromium (started with a phone's
+      # autoplay rules, then tapped) hears something come out of the page. A silent build fails here, not on a phone.
+      - name: Web audio check
+        shell: bash
+        run: |
+          set -o pipefail
+          N=$(strings build/web/index.pck | grep -c 'audio/.*\.wav')
+          echo "audio clips in the package: $N"
+          test "$N" -ge 20
+          npm install --no-save playwright-core
+          CHROME=$(which google-chrome || which google-chrome-stable || which chromium-browser || which chromium)
+          echo "browser: $CHROME"
+          timeout 400 node tests/web_audio_check.js build/web "$CHROME" 2>&1 | grep -v "GL Driver\|AudioContext was not" | tail -60
+          rm -f build/web/audio_report.json
+
       - uses: actions/upload-pages-artifact@v3
         with:
           path: build/web

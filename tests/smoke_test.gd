@@ -4307,6 +4307,34 @@ func _initialize() -> void:
 	check(st_stamps == 1, "?tune: the stamp is on screen once")
 	st_save.reset_all()
 
+	print("19. sound on the web: sample clips played as streams, unlocked by the first tap, volumes never silent by default")
+	var au_sfx = main.sfx
+	var au_ok: bool = au_sfx._engine.playback_type == AudioServer.PLAYBACK_TYPE_STREAM and au_sfx._wind.playback_type == AudioServer.PLAYBACK_TYPE_STREAM
+	for p_ in au_sfx._pool:
+		au_ok = au_ok and p_.playback_type == AudioServer.PLAYBACK_TYPE_STREAM
+	for p_ in au_sfx._music:
+		au_ok = au_ok and p_.playback_type == AudioServer.PLAYBACK_TYPE_STREAM
+	check(au_ok, "every player plays its clip as a stream (the browser's sample path stayed silent in the single-threaded web build)")
+	check(int(ProjectSettings.get_setting("audio/general/default_playback_type.web", 1)) == 0, "...and the project asks for stream playback on the web")
+	var au_streams: bool = true
+	for au_n in au_sfx.ONE_SHOTS:
+		au_streams = au_streams and au_sfx._streams[au_n] is AudioStreamWAV and (au_sfx._streams[au_n] as AudioStreamWAV).data.size() > 100
+	for p_ in au_sfx._music:
+		au_streams = au_streams and p_.stream is AudioStreamWAV and (p_.stream as AudioStreamWAV).data.size() > 1000
+	check(au_streams, "every sound and music layer is a pre-rendered AudioStreamWAV clip from res://audio (nothing generated at run time)")
+	var au_save := root.get_node("Save")
+	au_save.reset_all()
+	check(au_save.audio_music > 0.3 and au_save.audio_sound > 0.3, "the saved volumes default to audible (%.1f music, %.1f sound)" % [au_save.audio_music, au_save.audio_sound])
+	au_sfx.unlocked = false
+	au_sfx.music_started = true
+	au_sfx.plays = 0
+	au_sfx.unlock()
+	check(au_sfx.unlocked and au_sfx.plays == 1 and au_sfx.last_played == "tap", "the first tap unlocks the sound: the music is started again and a soft click plays")
+	var au_before: int = au_sfx.plays
+	au_sfx.unlock()
+	check(au_sfx.plays == au_before, "...once")
+	au_sfx.stop_music()
+
 	DirAccess.remove_absolute(ProjectSettings.globalize_path("user://smoke_test_save.json"))
 	print("")
 	if failures.is_empty():

@@ -1286,6 +1286,8 @@ func _input(event: InputEvent) -> void:
 		_haptic_warmed = true
 		if not DebugFlags.off("haptic"):
 			Input.vibrate_handheld(1)
+	if not sfx.unlocked and ((event is InputEventScreenTouch and event.pressed) or (event is InputEventMouseButton and event.pressed)):
+		sfx.unlock()
 	# A tap on the results screen skips its build-up (PLAY AGAIN restarts).
 	if screen == SCREEN_OVER and event is InputEventScreenTouch and event.pressed and hud.results_visible():
 		hud.skip_results()

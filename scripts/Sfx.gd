@@ -30,6 +30,7 @@ var _duck := 1.0                   # the music steps back while the pick screen 
 var _duck_goal := 1.0
 var _flight_now := 0.0             # how much of the engine / wind is faded in (0..1)
 var music_started := false
+var unlocked := false             # the first tap has happened (browsers keep the sound off until one)
 
 func _init() -> void:
 	process_mode = Node.PROCESS_MODE_ALWAYS   # keeps fading while the game is paused (the pick screen)
@@ -46,6 +47,7 @@ func _ready() -> void:
 	for i in POOL:
 		var p := AudioStreamPlayer.new()
 		p.bus = "SFX"
+		p.playback_type = AudioServer.PLAYBACK_TYPE_STREAM
 		add_child(p)
 		_pool.append(p)
 	_engine = _loop_player("engine", "SFX")
@@ -62,6 +64,7 @@ func _loop_player(stream_name: String, bus: String) -> AudioStreamPlayer:
 	var p := AudioStreamPlayer.new()
 	p.stream = s
 	p.bus = bus
+	p.playback_type = AudioServer.PLAYBACK_TYPE_STREAM
 	p.volume_db = -80.0
 	add_child(p)
 	return p
@@ -83,6 +86,19 @@ func play(sound: String, volume: float = 1.0, pitch: float = 1.0) -> void:
 	p.play()
 	plays += 1
 	last_played = sound
+
+## The first tap of the session: browsers only let a page make sound after one. The audio context wakes up with it, so the
+## music that was started behind the start-up screen is started again here (in sync), with a soft click.
+func unlock() -> void:
+	if unlocked:
+		return
+	unlocked = true
+	if music_started and not DebugFlags.off("music"):
+		for p in _music:
+			p.stop()
+		for p in _music:
+			p.play()
+	play("tap", 0.5)
 
 ## The flight sounds: the engine and the wind follow the speed (`speed_frac` 0 = start speed, 1 = top speed).
 func set_flight(flying: bool, speed_frac: float = 0.0) -> void:
