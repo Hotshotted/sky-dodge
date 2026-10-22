@@ -44,6 +44,15 @@ var speed_step := 3.2
 ## The Countryside's steps are small at first and grow: step n adds speed_step_table[n-1] (then the last entry), up to max_speed.
 var speed_step_table: Array[float] = [2.0, 2.5, 3.0, 3.5, 4.0, 4.5]
 var speed_step_rate := 2.0
+## Past the table the Countryside keeps stepping up by this much per wave cycle, with no ceiling; the other maps creep up at this share of their ramp.
+var speed_step_late := 3.0
+var speed_overdrive := 0.3
+## SNIPES: a row may put a barn in the column the plane is flying in (see Spawner.snipe_chance). From snipe_after seconds, snipe_start
+## of the rows, + snipe_per_min per minute more, up to snipe_max.
+var snipe_after := 12.0
+var snipe_start := 0.4
+var snipe_per_min := 0.25
+var snipe_max := 0.9
 
 # ---------- Obstacle spawning ----------
 ## Distance between spawn rows (units). Bigger = more time to react.
@@ -76,7 +85,7 @@ var fuel_start := 100.0
 ## Balance check (tests/fuel_balance_sim.gd, autopilots, 12 runs each): a player who only flies the
 ## widest gaps ran dry at 29 s every time; random gaps median 41 s; a can-chasing player's lowest fuel
 ## averaged ~38 and 9 of 12 runs ended on an obstacle, 3 on fuel (can chance 0.18: 1 of 12).
-var fuel_drain := 3.2
+var fuel_drain := 4.0
 ## FUEL IS HEALTH. Hitting something costs this share of the STARTING tank (25 of 100: the Fuel Tank upgrade makes the tank
 ## bigger, not the hits dearer, so it is more health) instead of ending the run; the run ends when
 ## the tank is empty, from the drain or from hits. A hit also costs hit_bonus_steps steps of the close-call bonus (Steady
@@ -88,6 +97,10 @@ var hit_shake_time := 0.4
 var hit_shake_amount := 0.5
 ## Fuel one can gives back.
 var fuel_refill := 20.0
+## The tank burns faster the longer the run: x(1 + drain_growth_per_min x minutes). Cans do not grow with it, so every run ends.
+var drain_growth_per_min := 0.38
+## ...and with speed (cans come per distance, so a faster world would otherwise feed you more): x (speed / base_speed) ^ drain_speed_exp.
+var drain_speed_exp := 1.35
 ## Chance (0-1) that a new row gets a fuel can (rows with no risky spot get none).
 var fuel_can_chance := 0.18
 ## How strongly cans prefer RISKY spots (0-1). A can is placed in a risky spot with this
@@ -332,19 +345,19 @@ var boss_time := 20.0
 var boss_hp_growth := 0.3            # each boss faced earlier in the run adds this share to the next one's hit points (up to x3)
 var boss_warn_time := 2.4
 var boss_hp: Array[float] = [6.0, 12.0, 9.0]       # Falcon, Thunderhead, Goose General
-var boss_reward_survive := 0.9
+var boss_reward_survive := 0.35
 var boss_rare_pick := true            # a boss fight (or the opening mini-boss) ends with a rare pick
-var boss_reward_defeat := 1.6
+var boss_reward_defeat := 0.6
 var mini_boss_time_limit := 14.0
 var mini_boss_hp := 3.0
-var mini_boss_reward := 1.2
+var mini_boss_reward := 0.5
 var bomb_warn := 1.1                 # a dropped bomb's marker shows this long before it lands
 var bomb_radius := 1.7               # ...and the blast's reach
 var bomb_blast := 0.4
 var falcon_drop_every := 1.9
 var duster_drop_every := 2.4
 var storm_strike_every := 1.7
-var storm_aim := 0.45                # chance a Thunderhead bolt is aimed at the plane's column
+var storm_aim := 0.8                # chance a Thunderhead bolt is aimed at the plane's column
 var general_waves := 3
 var general_gap := 4.6               # the gap in the formation (units)
 ## GUN PERKS (Flak Cannon, Wing Pods, Tail Gun): they fire by themselves and cost nothing; kills pay.
@@ -369,7 +382,9 @@ func map_def(i: int) -> Dictionary:
 ## Scroll speed on a map `t` seconds into a run.
 func map_speed(map: int, t: float) -> float:
 	var m := map_def(map)
-	return minf(base_speed * m["speed_mult"] + speed_ramp * m["ramp_mult"] * t, max_speed * m["speed_mult"])
+	var raw: float = base_speed * m["speed_mult"] + speed_ramp * m["ramp_mult"] * t
+	var cap: float = max_speed * m["speed_mult"]
+	return raw if raw <= cap else cap + (raw - cap) * speed_overdrive   # (past the old top speed it keeps creeping up)
 
 ## Meters shown to the player for a distance in world units.
 func meters(units: float) -> float:
@@ -455,11 +470,11 @@ var perks: Array[Dictionary] = [
 			"line": "Close calls shove obstacles aside. Ones that bump others pay {v} coins."},
 	{"id": "battering_ram", "name": "Battering Ram", "glyph": "battering_ram", "color": Color(0.85, 0.6, 0.35), "unlock": "battering_ram", "needs": "crates", "vals": [1.5, 2.5, 4.0],
 			"line": "Crates break on any touch, not just rams. Crate coins x{v}."},
-	{"id": "fuel_miser", "name": "Fuel Miser", "glyph": "fuel_miser", "color": Color(0.4, 0.9, 0.5), "unlock": "", "vals": [25, 45, 65],
+	{"id": "fuel_miser", "name": "Fuel Miser", "glyph": "fuel_miser", "color": Color(0.4, 0.9, 0.5), "unlock": "", "vals": [15, 28, 40],
 			"line": "Burn {v}% less fuel."},
 	{"id": "hot_streak", "name": "Hot Streak", "glyph": "hot_streak", "color": Color(1.0, 0.55, 0.2), "unlock": "", "vals": [60, 150, 300],
 			"line": "Your close-call bonus fades {v}% slower."},
-	{"id": "scavenger", "name": "Scavenger", "glyph": "scavenger", "color": Color(1.0, 0.85, 0.3), "unlock": "", "vals": [30, 90, 250],
+	{"id": "scavenger", "name": "Scavenger", "glyph": "scavenger", "color": Color(1.0, 0.85, 0.3), "unlock": "", "vals": [10, 30, 70],
 			"line": "Each fuel can pays {v} extra coins."},
 	{"id": "tailwind", "name": "Tailwind", "glyph": "tailwind", "color": Color(0.5, 0.8, 1.0), "unlock": "", "vals": [30, 60, 90],
 			"line": "Fly faster, earn more: +{v}% coins (and a little speed)."},
@@ -467,16 +482,16 @@ var perks: Array[Dictionary] = [
 			"line": "Close calls count from {v}% farther away."},
 	{"id": "second_wind", "name": "Second Wind", "glyph": "second_wind", "color": Color(0.5, 1.0, 0.8), "unlock": "second_wind", "vals": [40, 70, 100],
 			"line": "Once a run, refill {v}% of the tank when it runs low."},
-	{"id": "wingman", "name": "Wingman", "glyph": "wingman", "color": Color(0.55, 0.85, 1.0), "unlock": "wingman", "active": true, "vals": [22.0, 15.0, 10.0],
-			"line": "A wingman collects coins and cans and takes a hit for you, then recharges ({v} s). Level 3: two."},
+	{"id": "wingman", "name": "Wingman", "glyph": "wingman", "color": Color(0.55, 0.85, 1.0), "unlock": "wingman", "active": true, "vals": [75.0, 58.0, 42.0],
+			"line": "A wingman collects coins and takes a hit for you, then needs {v} s to recharge. Level 3: two."},
 	{"id": "shockwave", "name": "Prop Wash", "glyph": "shockwave", "color": Color(0.6, 0.95, 0.75), "unlock": "", "active": true, "vals": [8.0, 5.5, 3.5],
-			"line": "A shockwave every {v} s shoves obstacles and threats aside."},
+			"line": "A shockwave every {v} s shoves small obstacles and threats aside (not barns, wires or windmills)."},
 	{"id": "banner", "name": "Tow Banner", "glyph": "banner", "color": Color(1.0, 0.6, 0.3), "unlock": "banner", "active": true, "vals": [3.5, 6.0, 9.0],
 			"line": "A banner {v} units long trails you and collects the coins it sweeps."},
 	{"id": "skywriter", "name": "Skywriter", "glyph": "skywriter", "color": Color(0.85, 0.85, 1.0), "unlock": "skywriter", "active": true, "vals": [4.0, 7.0, 11.0],
 			"line": "A smoke trail {v} units long scatters birds and kites that fly into it."},
 	{"id": "magnet_field", "name": "Magnet Field", "glyph": "magnet_field", "color": Color(0.8, 0.5, 1.0), "unlock": "", "active": true, "vals": [3.0, 4.5, 6.5],
-			"line": "An aura {v} units wide pulls coins and cans to you."},
+			"line": "An aura {v} units wide pulls coins to you (fuel cans you still have to fly to)."},
 	{"id": "roll", "name": "Barrel Roll", "glyph": "roll", "color": Color(1.0, 0.85, 0.3), "unlock": "roll", "active": true, "vals": [8.0, 5.5, 3.5],
 			"line": "Double-tap to roll: invulnerable for a moment. Ready every {v} s."},
 	{"id": "flak", "name": "Flak Cannon", "glyph": "flak", "color": Color(1.0, 0.7, 0.25), "unlock": "", "active": true, "vals": [2.2, 1.4, 0.8],
@@ -594,14 +609,14 @@ var milestones: Array[Dictionary] = [
 var tailwind_speed_pct: Array[float] = [0.0, 10.0, 20.0, 30.0]
 ## Level 3 changes how a perk behaves, not just its numbers. The pick card shows this line at level 3 instead of the usual one.
 var pick_l3 := {
-	"wingman": "Two wingmen, each takes a hit ({v} s)", "shockwave": "Shockwave every {v} s, wide", "banner": "Banner {v} long: a coin net", "skywriter": "Smoke {v} long, thick", "magnet_field": "Pull aura {v} wide: coins fly in", "roll": "Roll ready every {v} s",
+	"wingman": "Two wingmen, each takes a hit ({v} s)", "shockwave": "Shockwave every {v} s, wide", "banner": "Banner {v} long: a coin net", "skywriter": "Smoke {v} long, thick", "magnet_field": "Coin aura {v} wide: coins fly in", "roll": "Roll ready every {v} s",
 	"flak": "Rapid fire, wide blast, 2 damage a shot", "pods": "Rapid fire, wide blast, 2 damage a shot", "tail": "Rapid fire, wide blast, 2 damage a shot",
 	"glide": "Glide {v} s, then refill 20% of the tank",
 	"cloud_diver": "+{v} fuel/s; close calls under clouds are Whiskers",
 	"lucky_whiskers": "Every Whisker close drops a can",
 	"prop_wash": "Bumped obstacles pay {v}, and bump chains pay more",
 	"battering_ram": "Crates break on touch, +15% fuel each",
-	"fuel_miser": "{v}% less burn; none at bonus x3+",
+	"fuel_miser": "{v}% less fuel burn",
 	"hot_streak": "Bonus never drops below x2",
 	"scavenger": "Cans pay {v} and add a bonus step",
 	"tailwind": "Fly faster, earn more; Whiskers refuel",
@@ -610,7 +625,7 @@ var pick_l3 := {
 	"golden_touch": "Crates pay x{v} and drop a can",
 }
 var pick_short := {
-	"wingman": "A wingman: collects, takes a hit ({v} s)", "shockwave": "Shockwave every {v} s", "banner": "Banner {v} long collects coins", "skywriter": "Smoke {v} long scatters birds", "magnet_field": "Pull aura {v} wide", "roll": "Double-tap roll, ready every {v} s",
+	"wingman": "A wingman: coins, one hit per {v} s", "shockwave": "Shockwave every {v} s", "banner": "Banner {v} long collects coins", "skywriter": "Smoke {v} long scatters birds", "magnet_field": "Coin aura {v} wide", "roll": "Double-tap roll, ready every {v} s",
 	"flak": "Shoots ahead, every {v} s", "pods": "Shoots to the sides, every {v} s", "tail": "Shoots behind, every {v} s",
 	"glide": "Glide {v} s when empty", "cloud_diver": "+{v} fuel/s under clouds", "lucky_whiskers": "{v}% can on Whisker closes",
 	"prop_wash": "Bumped obstacles pay {v}", "battering_ram": "Crates break on touch", "fuel_miser": "{v}% less fuel burn",
@@ -662,7 +677,7 @@ var meters_per_unit := 5.0
 ## EARNINGS upgrades have no cap and double their effect at every Nth level (25, 50, 75 ...).
 var double_every := 25
 ## Costs: EARNINGS cost base * earn_cost_growth^level, PLANE upgrades base * plane_cost_growth^level.
-var earn_cost_growth := 1.12
+var earn_cost_growth := 1.2
 var plane_cost_growth := 1.5
 ## Gear slots: the first is free; buying the others is a milestone. Cost of slot 2 and slot 3.
 var gear_slot_costs: Array[float] = [0.0, 28000.0, 1750000.0]
@@ -689,11 +704,11 @@ var upgrades: Array[Dictionary] = [
 	{"id": "bonus_cap", "tab": "earnings", "name": "Bonus Cap", "glyph": "bonus_cap", "color": Color(1.0, 0.4, 0.6),
 			"line": "Close-call bonus can reach {a} -> {b}", "fmt": "x1", "max": -1, "cost_base": 840.0, "per": 0.5, "front": [2.0, 1.6, 1.3, 1.1, 1.0], "notice": "Long streaks keep climbing."},
 	{"id": "fuel_tank", "tab": "plane", "name": "Fuel Tank", "glyph": "fuel_tank", "color": Color(0.3, 0.7, 1.0),
-			"line": "Hold {d} more fuel ({a} -> {b})", "fmt": "int", "max": 12, "cost_base": 80.0, "per": 30.0, "falloff": 0.9, "notice": "You fly longer between cans."},
+			"line": "Hold {d} more fuel ({a} -> {b})", "fmt": "int", "max": 12, "cost_base": 80.0, "per": 20.0, "falloff": 0.9, "notice": "You fly longer between cans."},
 	{"id": "efficiency", "tab": "plane", "name": "Efficiency", "glyph": "efficiency", "color": Color(0.4, 0.9, 0.8),
-			"line": "Burn fuel slower: {a}/s -> {b}/s", "fmt": "dec1", "max": 10, "cost_base": 100.0, "per": 0.09, "falloff": 0.88, "notice": "The tank lasts noticeably longer."},
+			"line": "Burn fuel slower: {a}/s -> {b}/s", "fmt": "dec1", "max": 10, "cost_base": 100.0, "per": 0.06, "falloff": 0.88, "notice": "The tank lasts noticeably longer."},
 	{"id": "refill", "tab": "plane", "name": "Refill", "glyph": "refill", "color": Color(0.6, 0.8, 0.3),
-			"line": "Each can gives {d} more fuel ({a} -> {b})", "fmt": "dec1", "max": 12, "cost_base": 120.0, "per": 7.0, "falloff": 0.9, "notice": "Each can buys more time in the air."},
+			"line": "Each can gives {d} more fuel ({a} -> {b})", "fmt": "dec1", "max": 12, "cost_base": 120.0, "per": 4.0, "falloff": 0.9, "notice": "Each can buys more time in the air."},
 	{"id": "nine_lives", "tab": "gear", "name": "Nine Lives", "glyph": "nine_lives", "color": Color(1.0, 0.35, 0.35),
 			"line": "Ignore the next hit: {a} -> {b} per run", "fmt": "int", "max": 3, "costs": [1400.0, 42000.0, 1680000.0], "steps": [0, 1, 2, 3], "notice": "A hit bounces off: no fuel lost."},
 	{"id": "reserve_tank", "tab": "gear", "name": "Reserve Tank", "glyph": "reserve_tank", "color": Color(0.5, 0.6, 1.0),
@@ -863,7 +878,7 @@ func upgrade_notice(id: String, level: int) -> String:
 ## What the game uses, upgrades included (the plain tuning values are the level-0 numbers).
 ## What one hit costs in fuel.
 func hit_cost() -> float:
-	return fuel_start * hit_fuel_fraction
+	return fuel_max() * hit_fuel_fraction   # (a share of the CURRENT tank: a bigger tank lasts longer but never makes hits cheaper)
 
 func fuel_max() -> float:
 	return upgrade_value("fuel_tank", Save.level("fuel_tank"))

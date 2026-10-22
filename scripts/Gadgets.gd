@@ -1,12 +1,12 @@
 class_name Gadgets
 extends Node3D
 ## The ACTIVE, visible perks that are not guns: the gear on and around the plane. Each level changes what you see.
-##   WINGMAN       a small drone beside the plane (two at level 3): it collects nearby coins and cans, takes one hit for you,
+##   WINGMAN       a small drone beside the plane (two at level 3): it collects nearby coins (never fuel cans), takes one hit for you,
 ##                 then recharges (dimmed while it does)
 ##   PROP WASH     a shockwave ring every few seconds that shoves obstacles and threats aside (bigger and sooner per level)
 ##   TOW BANNER    a banner trailing the plane that collects the coins along its length
 ##   SKYWRITER     a smoke trail that scatters birds and kites flying into it (longer, thicker per level)
-##   MAGNET FIELD  an aura that pulls coins and cans in (wider per level)
+##   MAGNET FIELD  an aura that pulls coins in (wider per level; fuel cans you fly to yourself)
 ##   BARREL ROLL   double-tap for a short invulnerable roll (the cooldown shortens per level)
 ## Pooled like everything else: every node is built once in _ready and only shown / moved. Main does the collecting and the
 ## paying (so the score and the sounds stay in one place); this class owns the state and the visuals.

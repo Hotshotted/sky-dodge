@@ -378,9 +378,9 @@ func _initialize() -> void:
 	var score_open: float = main.score
 	await real_wait(0.3)
 	check(main.score == score_open, "the game is really paused while the panel is open")
-	panel._sliders["fuel_drain"].value = 4.0
-	check(is_equal_approx(tuning.fuel_drain, 4.0) and events.has("fuel_drain"), "dragging a slider edits Tuning live (fuel_drain = %.1f)" % tuning.fuel_drain)
-	check(panel._value_labels["fuel_drain"].text.contains("4.0") and panel._value_labels["fuel_drain"].text.contains("default"), "the label shows the value and the default (\"%s\")" % panel._value_labels["fuel_drain"].text)
+	panel._sliders["fuel_drain"].value = 5.0
+	check(is_equal_approx(tuning.fuel_drain, 5.0) and events.has("fuel_drain"), "dragging a slider edits Tuning live (fuel_drain = %.1f)" % tuning.fuel_drain)
+	check(panel._value_labels["fuel_drain"].text.contains("5.0") and panel._value_labels["fuel_drain"].text.contains("default"), "the label shows the value and the default (\"%s\")" % panel._value_labels["fuel_drain"].text)
 	var live_row = main.spawner._rows_make_for_test(-5.0, [1.0])
 	panel._sliders["obstacle_scale"].value = 0.5
 	check(absf(live_row.obs[0].scale.x - tuning.column_width() * 0.5) < 0.001, "obstacle scale applies to rows already on screen")
@@ -391,7 +391,7 @@ func _initialize() -> void:
 	check(tuning.snap_enabled and events.has("snap_enabled") and is_equal_approx(tuning.sensitivity, 1.5), "the sensitivity slider and the snap switch edit Tuning live")
 	panel.copy_values()
 	var copied: String = panel.last_copied_text
-	check(copied.contains("fuel_drain = 4.0") and copied.contains("obstacle_scale = 0.50") and copied.contains("plane_tip_radius = 0.30")
+	check(copied.contains("fuel_drain = 5.0") and copied.contains("obstacle_scale = 0.50") and copied.contains("plane_tip_radius = 0.30")
 			and copied.contains("base_speed = 9.0") and copied.contains("sensitivity = 1.50") and copied.contains("snap_enabled = true")
 			and not copied.contains("fuel_refill"),
 			"Copy values lists only what changed  (\"%s\")" % copied.replace("\n", "; "))
@@ -1158,7 +1158,7 @@ func _initialize() -> void:
 	check(tuning.upgrades_in_tab("earnings").size() == 4 and tuning.upgrades_in_tab("plane").size() == 3 and tuning.upgrades_in_tab("gear").size() == 6, "EARNINGS (4), PLANE (3) and GEAR (6) upgrades")
 	var cost_ok := true
 	for u in tuning.upgrades_in_tab("earnings"):
-		cost_ok = cost_ok and tuning.max_level(u["id"]) == -1 and absf(tuning.upgrade_cost(u["id"], 10) / tuning.upgrade_cost(u["id"], 9) - 1.12) < 0.01
+		cost_ok = cost_ok and tuning.max_level(u["id"]) == -1 and absf(tuning.upgrade_cost(u["id"], 10) / tuning.upgrade_cost(u["id"], 9) - tuning.earn_cost_growth) < 0.01
 	for u in tuning.upgrades_in_tab("plane"):
 		cost_ok = cost_ok and tuning.max_level(u["id"]) >= 10 and tuning.max_level(u["id"]) <= 15 and absf(tuning.upgrade_cost(u["id"], 5) / tuning.upgrade_cost(u["id"], 4) - 1.5) < 0.01
 	for u in tuning.upgrades_in_tab("gear"):
@@ -1166,7 +1166,7 @@ func _initialize() -> void:
 		cost_ok = cost_ok and cs.size() == tuning.max_level(u["id"]) and tuning.max_level(u["id"]) <= 3
 		for i in range(1, cs.size()):
 			cost_ok = cost_ok and cs[i] / cs[i - 1] >= 20.0 and cs[i] / cs[i - 1] <= 50.0
-	check(cost_ok, "EARNINGS endless at x1.12 per level; PLANE 10-15 levels at x1.5; GEAR 1-3 levels, each 20-50x the last")
+	check(cost_ok, "EARNINGS endless at x%.2f per level; PLANE 10-15 levels at x1.5; GEAR 1-3 levels, each 20-50x the last" % tuning.earn_cost_growth)
 	check(is_equal_approx(tuning.upgrade_value("coin_value", 1), 1.3) and is_equal_approx(tuning.upgrade_value("coin_value", 2), 1.54) and is_equal_approx(tuning.upgrade_value("coin_value", 24), 1.0 + 0.1 * 29.05)
 			and is_equal_approx(tuning.upgrade_value("coin_value", 25), 1.0 + 0.1 * 30.05 * 2.0) and is_equal_approx(tuning.upgrade_value("coin_value", 50), 1.0 + 0.1 * 55.05 * 4.0),
 			"Coin Value: the first levels are big (+30%%, +24%% ...), then +10%% each; the effect doubles at level 25 and again at 50 (x%.1f at 24, x%.1f at 25)" % [tuning.upgrade_value("coin_value", 24), tuning.upgrade_value("coin_value", 25)])
@@ -1177,7 +1177,7 @@ func _initialize() -> void:
 		var g9: float = absf(tuning.upgrade_value(id, 10) - tuning.upgrade_value(id, 9))
 		dim_ok = dim_ok and g9 < g1
 	check(dim_ok, "PLANE gains diminish with level")
-	check(tuning.upgrade_line("fuel_tank", 0).begins_with("Hold 30 more fuel (100 -> 130)") and tuning.upgrade_line("fuel_tank", 0).contains("You'll notice: +"), "plain-language line with a before -> after and a \"you'll notice\": \"%s\"" % tuning.upgrade_line("fuel_tank", 0).replace("\n", " | "))
+	check(tuning.upgrade_line("fuel_tank", 0).begins_with("Hold 20 more fuel (100 -> 120)") and tuning.upgrade_line("fuel_tank", 0).contains("You'll notice: +"), "plain-language line with a before -> after and a \"you'll notice\": \"%s\"" % tuning.upgrade_line("fuel_tank", 0).replace("\n", " | "))
 	var first_gain_ok := true
 	for id in ["fuel_tank", "efficiency", "refill"]:
 		first_gain_ok = first_gain_ok and absf(tuning.upgrade_value(id, 1) - tuning.upgrade_value(id, 0)) > 1.8 * absf(tuning.upgrade_value(id, 8) - tuning.upgrade_value(id, 7))
@@ -1211,7 +1211,7 @@ func _initialize() -> void:
 	for id in ["can_bounty", "close_call_pay", "bonus_cap", "fuel_tank", "efficiency", "refill"]:
 		tsave.buy(id)
 	check(is_equal_approx(tuning.can_bounty_pay(), 24.0) and is_equal_approx(tuning.close_call_pay(), 12.0) and is_equal_approx(tuning.bonus_cap_now(), 4.0)
-			and is_equal_approx(tuning.fuel_max(), 130.0) and is_equal_approx(tuning.drain_rate(), tuning.fuel_drain * 0.91) and is_equal_approx(tuning.refill_amount(), 27.0), "each upgrade applies its effect at level 1")
+			and is_equal_approx(tuning.fuel_max(), 120.0) and is_equal_approx(tuning.drain_rate(), tuning.fuel_drain * 0.94) and is_equal_approx(tuning.refill_amount(), 24.0), "each upgrade applies its effect at level 1")
 	tsave.levels["fuel_tank"] = 11
 	tsave.add_coins(1e9)
 	check(tsave.buy("fuel_tank") and tsave.is_maxed("fuel_tank") and not tsave.buy("fuel_tank") and (main.hud._upg_rows[4]["buy"] as Button).text == "MAX", "a PLANE upgrade stops at its last level and shows MAX")
@@ -1383,7 +1383,7 @@ func _initialize() -> void:
 		pal_ok = pal_ok and mm[i]["medals"].size() == 3 and mm[i]["medals"][0][0] < mm[i]["medals"][1][0] and mm[i]["medals"][1][0] < mm[i]["medals"][2][0] and mm[i]["medals"][0][1] < mm[i]["medals"][2][1]
 	check(pal_ok, "every map has its own palette and three medal goals with rising rewards")
 	check(tuning.meters(100.0) == 100.0 * tuning.meters_per_unit and tuning.fmt_m(3120.0) == "3,120 m" and tuning.fmt_m(999.0) == "999 m" and tuning.fmt_m(1234567.0) == "1,234,567 m", "meters are a Tuning conversion of world units (%.1f m per unit); 3,120 m formatting" % tuning.meters_per_unit)
-	check(is_equal_approx(tuning.map_speed(1, 0.0), tuning.base_speed * 1.1) and tuning.map_speed(3, 1000.0) <= tuning.max_speed * 1.3 + 0.001 and tuning.map_speed(3, 0.0) > tuning.map_speed(0, 0.0), "harder maps start faster")
+	check(is_equal_approx(tuning.map_speed(1, 0.0), tuning.base_speed * 1.1) and tuning.map_speed(3, 0.0) > tuning.map_speed(0, 0.0), "harder maps start faster")
 	# (b) saves: per-map bests, medals (paid once), unlocks, migration from v2
 	var r1: Dictionary = tsave.record_map_run(0, 2600.0, 500.0)
 	check(r1["medals"] == [0] and r1["reward"] == mm[0]["medals"][0][1] and r1["unlocked"].is_empty() and r1["new_best_distance"], "2,600 m on Countryside: bronze medal and its coins, no unlock yet")
@@ -1806,7 +1806,7 @@ func _initialize() -> void:
 	var pips_lit := 0
 	for pip in main.pick_screen._parts[0]["pips"]:
 		pips_lit += int((pip.get_theme_stylebox("panel") as StyleBoxFlat).bg_color.is_equal_approx(Style.ACCENT))
-	check(pips_lit == 3 and main.pick_screen._parts[0]["line"].text == "Cans pay 250 and add a bonus step" and main.pick_screen._parts[0]["combo"].visible and not main.pick_screen._parts[1]["combo"].visible,
+	check(pips_lit == 3 and main.pick_screen._parts[0]["line"].text == "Cans pay 70 and add a bonus step" and main.pick_screen._parts[0]["combo"].visible and not main.pick_screen._parts[1]["combo"].visible,
 			"a card is a big icon, a name, ONE short line (\"%s\") and level pips; a combo card is highlighted" % main.pick_screen._parts[0]["line"].text)
 	main.pick_screen.hide_cards()
 	pk.start_run(1.0)
@@ -1886,7 +1886,7 @@ func _initialize() -> void:
 	pk.set_perk("fuel_miser", 3)
 	main.fuel = 100.0
 	main._process(0.05)
-	check(is_equal_approx(main.fuel, 100.0 - tuning.drain_rate() * 0.35 * 0.05), "Fuel Miser level 3: 65%% less fuel burned (%.3f in 0.05 s)" % (100.0 - main.fuel))
+	check(absf(main.fuel - (100.0 - tuning.drain_rate() * (1.0 - tuning.perk_value("fuel_miser", 3) * 0.01) * 0.05)) < 0.02, "Fuel Miser level 3: %.0f%% less fuel burned (%.3f in 0.05 s)" % [tuning.perk_value("fuel_miser", 3), 100.0 - main.fuel])
 	main._steps.append(0.5)
 	main._refresh_bonus()
 	main._bonus_timer = 0.0
@@ -1899,7 +1899,7 @@ func _initialize() -> void:
 	main.coin_mult = 2.0
 	main.score = 0.0
 	main._on_pickup(Vector3(0, 0.4, -3))
-	check(is_equal_approx(main.score, 90.0 * 2.0), "Scavenger level 2: each can pays 90 extra coins (x the multiplier)")
+	check(is_equal_approx(main.score, 30.0 * 2.0), "Scavenger level 2: each can pays 30 extra coins (x the multiplier)")
 	fresh.call()
 	pk.set_perk("tailwind", 3)
 	main.coin_mult = 1.0
@@ -3171,7 +3171,7 @@ func _initialize() -> void:
 			st_last_pat = pz_gsp.pattern_name
 			var sp_pat: Dictionary = P.find(st_last_pat)
 			var planned: float = maxf(st_speed, pz_gsp.stepped_speed(pz_gsp.speed_steps_planned))
-			st_band_ok = st_band_ok and planned >= float(sp_pat["speed"][0]) - 0.01 and planned <= float(sp_pat["speed"][1])
+			st_band_ok = st_band_ok and (planned >= tuning.max_speed or (planned >= float(sp_pat["speed"][0]) - 0.01 and planned <= float(sp_pat["speed"][1])))
 		if st_top_t < 0.0 and st_speed >= tuning.max_speed - 0.001:
 			st_top_t = st_t
 		st_t += 0.05
@@ -3739,7 +3739,7 @@ func _initialize() -> void:
 	main._refresh_bonus()
 	main.fuel = 100.0
 	main._process(0.05)
-	check(is_equal_approx(main.fuel, 100.0), "Fuel Miser 3: nothing burns at bonus x3 or more (%.2f)" % main.fuel)
+	check(main.fuel < 100.0, "Fuel Miser 3 no longer stops the burn at a high bonus: fuel always has to be flown for (%.2f)" % main.fuel)
 	pf.set_perk("fuel_miser", 0)
 	main._steps.clear()
 	main._refresh_bonus()
@@ -3921,7 +3921,7 @@ func _initialize() -> void:
 	var wd_steps_ok := true
 	for i in range(1, 7):
 		wd_steps_ok = wd_steps_ok and wd_gs.stepped_speed(i) > wd_gs.stepped_speed(i - 1)
-	check(is_equal_approx(wd_gs.stepped_speed(1) - wd_gs.stepped_speed(0), 2.0) and is_equal_approx(wd_gs.stepped_speed(2) - wd_gs.stepped_speed(1), 2.5) and wd_steps_ok and wd_gs.stepped_speed(6) == tuning.max_speed, "speed steps start small and grow: +2, +2.5, +3 ... to the top in 6 steps (%.1f, %.1f, %.1f)" % [wd_gs.stepped_speed(1), wd_gs.stepped_speed(2), wd_gs.stepped_speed(3)])
+	check(is_equal_approx(wd_gs.stepped_speed(1) - wd_gs.stepped_speed(0), 2.0) and is_equal_approx(wd_gs.stepped_speed(2) - wd_gs.stepped_speed(1), 2.5) and wd_steps_ok and absf(wd_gs.stepped_speed(6) - tuning.max_speed) < 1.0 and wd_gs.stepped_speed(12) > wd_gs.stepped_speed(6) + 15.0, "speed steps start small and grow: +2, +2.5, +3 ... to the old top speed in 6 steps, and on past it with no ceiling (%.1f, %.1f, %.1f)" % [wd_gs.stepped_speed(1), wd_gs.stepped_speed(2), wd_gs.stepped_speed(3)])
 	wd_gs.reset()
 	wd_gs.kit_enabled = false
 	wd_gs.apply_map(0)
@@ -4206,7 +4206,10 @@ func _initialize() -> void:
 	ct_sp.reset(-14.0)
 	ct_sp.run_time = 100.0
 	ct_coins.dropped = 0
+	ct_sp.kit.dropped = 0
 	seed(4242)   # (a fixed sequence of patterns: the pool check must not depend on luck)
+	var ct_snipe_max: float = tuning.snipe_max
+	tuning.snipe_max = 0.0   # (the snipe barns are extra: this checks the patterns alone)
 	var ct_peak := 0
 	for i in 400:
 		ct_sp._spawn_row(-30.0)
@@ -4215,6 +4218,7 @@ func _initialize() -> void:
 			ct_sp._release_row(ct_sp._rows[0])
 		ct_sp.kit.update(0.0)
 	check(ct_coins.dropped == 0 and ct_peak > 20 and ct_peak <= ct_coins.POOL, "400 rows of patterns: the coin pool never ran dry (peak %d of %d)" % [ct_peak, ct_coins.POOL])
+	tuning.snipe_max = ct_snipe_max
 	check(ct_sp.kit.dropped == 0, "...nor did the kit's (%d dropped)" % ct_sp.kit.dropped)
 	ct_sp.reset(-14.0)
 	# every pattern's coins sit clear of things that stand still
@@ -4921,15 +4925,18 @@ func _initialize() -> void:
 	gd_kit.release_all()
 	gd_carrier.position.z = main.player.position.z - 1.0
 	var gd_barn = gd_kit.spawn(0, gd_carrier, 1.4, 0.0, 1.0)
+	var gd_kite2 = gd_kit.spawn(7, gd_carrier, 1.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0)
 	gd_kit.update(0.0)
 	var gd_x0: float = gd_barn.px
+	var gd_k0: float = gd_kite2.x0
 	gp.set_perk("shockwave", 1)
 	gd._wash_cd = 0.0
 	gd._wash_t = -1.0
 	gd_tick.call(0.1)
 	for i in 20:
 		gd_kit.update(gd_dt)
-	check(gd.washes >= 1 and gd_barn.px > gd_x0 + 0.8 and gd._wash_ring.visible, "Prop Wash: a ring goes out and shoves a barn aside (%.1f -> %.1f)" % [gd_x0, gd_barn.px])
+	check(gd.washes >= 1 and gd_kite2.x0 > gd_k0 + 0.8 and gd._wash_ring.visible, "Prop Wash: a ring goes out and shoves a small kite aside (%.1f -> %.1f)" % [gd_k0, gd_kite2.x0])
+	check(absf(gd_barn.px - gd_x0) < 0.01, "...but not a barn (%.1f -> %.1f)" % [gd_x0, gd_barn.px])
 	gd_tick.call(0.7)
 	check(not gd._wash_ring.visible, "...and the ring fades")
 	var gd_r1: float = gd._wash_radius
@@ -5129,6 +5136,155 @@ func _initialize() -> void:
 	for id in gd_actives:
 		gp.set_perk(id, 0)
 	tsave.reset_all()
+	tuning.hit_fuel_fraction = 100.0
+
+
+	# ---------- 23. The game does not play itself: bots with a maxed build and maxed upgrades ----------
+	# A bot with zero input, a bot that only grabs cans, and a skilled bot, each with every active perk at level 3 and every
+	# permanent upgrade maxed, flying the real loop with solid obstacles. Standing still has to be fatal within seconds.
+	var Bots = load("res://tests/bots.gd")
+	var bot_save: Node = root.get_node("Save")
+	var bot_run := func(mode: String, limit: float) -> float:
+		Bots.apply_upgrades(bot_save, tuning, "max")
+		var bot = Bots.new()
+		bot.root = root
+		bot.mode = mode
+		bot.build = "mixed"
+		main.restart()
+		main.set_process(false)
+		main.spawner.obstacles_solid = true
+		main.picks.enabled = false
+		main.picks.next_pick = INF
+		for id in ["flak", "pods", "tail", "wingman", "shockwave", "banner", "skywriter", "magnet_field", "roll", "fuel_miser", "hot_streak", "lucky_whiskers", "scavenger"]:
+			main.picks.set_perk(id, 3)
+		bot.start(main)
+		var bt := 0.0
+		while main.alive and bt < limit:
+			bot.drive(main, bt)
+			main._process(1.0 / 30.0)
+			bt += 1.0 / 30.0
+		return bt if not main.alive else limit
+	DebugFlags.parse(["tune"])
+	tuning.hit_fuel_fraction = 0.25
+	tuning.threat_rate_start = th_rate_a
+	tuning.threat_rate_end = th_rate_b
+	var bot_afk: float = bot_run.call("afk", 90.0)
+	check(bot_afk < 45.0, "AFK GUARD: a bot with zero input, a maxed perk build and maxed upgrades dies within 45 s (%.1f s: %s)" % [bot_afk, main.hud._over.text.replace("\n", " / ")])
+	var bot_lazy: float = bot_run.call("lazy", 120.0)
+	var bot_skilled: float = bot_run.call("skilled", 120.0)
+	check(bot_lazy < 100.0 and bot_lazy < bot_skilled * 0.7, "a bot that only grabs fuel cans dies well before a skilled one (%.1f s vs %.1f s)" % [bot_lazy, bot_skilled])
+	check(bot_afk <= bot_lazy + 10.0 or bot_lazy < 45.0, "(and neither of the lazy bots gets anywhere: afk %.1f s, lazy %.1f s)" % [bot_afk, bot_lazy])
+	bot_save.reset_all()
+	main.spawner.obstacles_solid = true
+	tuning.hit_fuel_fraction = 100.0
+
+
+	# ---------- 24. Hard rules: fuel is flown for, standing still is fatal, defenses buy time, no ceiling ----------
+	tuning.hit_fuel_fraction = 0.25
+	tuning.threat_rate_start = 0.0
+	tuning.threat_rate_end = 0.0
+	main.restart()
+	main.set_process(false)
+	main.picks.enabled = false
+	tuning.fuel_start = 100.0
+	main.player.position = Vector3(0.0, 1.2, 4.0)
+	# cans refuel only when the plane itself touches them: wingmen, the aura and the banner never take them
+	var hr_sp = main.spawner
+	hr_sp.reset(-14.0)
+	hr_sp.run_time = 100.0
+	var hr_row = hr_sp._acquire_row()
+	hr_row.position = Vector3(0.0, 0.0, 3.0)
+	hr_row.visible = true
+	hr_sp._place_can_for_test(hr_row, 1.9)
+	hr_sp._rows.append(hr_row)
+	main.picks.set_perk("wingman", 3)
+	main.picks.set_perk("magnet_field", 3)
+	main.picks.set_perk("banner", 3)
+	main.fuel = 50.0
+	for i in 40:
+		main.elapsed += 1.0 / 30.0
+		main._update_gadgets(1.0 / 30.0, 0.0)
+	var hr_can_kept: bool = hr_row.has_can
+	main.fuel = 50.0
+	main._process(0.0)
+	check(hr_can_kept and main.fuel <= 50.0, "Wingmen, the Magnet Field and the banner never take a fuel can: it is still there and the tank did not move")
+	main.player.position = Vector3(1.9, 1.2, 3.0)
+	main.player.prev_xz = Vector2(1.9, 3.0)
+	var hr_fuel: float = main.fuel
+	main._process(1.0 / 30.0)
+	check(not hr_row.has_can and main.fuel > hr_fuel + 5.0, "...but the plane touching it refuels (%.1f -> %.1f)" % [hr_fuel, main.fuel])
+	for id in ["wingman", "magnet_field", "banner"]:
+		main.picks.set_perk(id, 0)
+	# the defenses buy time, not immunity
+	check(tuning.perk_value("wingman", 3) >= 40.0, "a wingman's recharge is long (%.0f / %.0f / %.0f s)" % [tuning.perk_value("wingman", 1), tuning.perk_value("wingman", 2), tuning.perk_value("wingman", 3)])
+	# standing still: the hunters aim at where the plane is, and rows block its column
+	main.restart()
+	main.set_process(false)
+	main.picks.enabled = false
+	hr_sp = main.spawner
+	hr_sp.reset(-14.0)
+	hr_sp.run_time = 60.0
+	hr_sp.plane_x = 0.0
+	check(hr_sp.snipe_chance() >= tuning.snipe_start and hr_sp.snipe_chance() <= tuning.snipe_max, "after the opening, %.0f%% of rows snipe the plane's column" % (hr_sp.snipe_chance() * 100.0))
+	hr_sp.run_time = 5.0
+	check(hr_sp.snipe_chance() == 0.0, "(none in the very first seconds)")
+	hr_sp.run_time = 60.0
+	var hr_snipes0: int = hr_sp.snipes
+	var hr_blocked := 0
+	for i in 60:
+		hr_sp._spawn_kit_row(-30.0)
+		hr_blocked += int(not hr_sp._rows[-1].open[3])   # (the plane flies in column 3 at x = 0)
+		if hr_sp._rows.size() > 6:
+			hr_sp._release_row(hr_sp._rows[0])
+		hr_sp.kit.update(0.0)
+	check(hr_sp.snipes - hr_snipes0 >= 6 and hr_blocked >= 24, "over 60 rows the generator put %d snipe barns in the plane's column and blocked it in %d rows (a plane that stands still is hit within seconds)" % [hr_sp.snipes - hr_snipes0, hr_blocked])
+	var hr_two := true
+	for r in hr_sp._rows:
+		var n_open := 0
+		for o in r.open:
+			n_open += 1 if o else 0
+		hr_two = hr_two and n_open >= 2
+	check(hr_two, "...no row is ever closed")
+	# no ceiling
+	var hr_th = hr_sp.threats
+	tuning.threat_rate_start = th_rate_a
+	tuning.threat_rate_end = th_rate_b
+	hr_th.elapsed = 300.0
+	var hr_rate_a: float = hr_th.threat_rate()
+	var hr_hp_a: float = hr_th.hp_scale()
+	hr_th.elapsed = 1200.0
+	check(hr_th.threat_rate() > hr_rate_a * 2.0 and hr_th.hp_scale() > hr_hp_a * 2.0 and hr_th.max_active() > 8, "threat density and hit points keep climbing with no ceiling (rate %.1f -> %.1f, hp x%.1f -> x%.1f at 20 min)" % [hr_rate_a, hr_th.threat_rate(), hr_hp_a, hr_th.hp_scale()])
+	check(hr_sp.stepped_speed(20) > hr_sp.stepped_speed(10) + 20.0, "the world keeps speeding up: step 10 %.0f, step 20 %.0f" % [hr_sp.stepped_speed(10), hr_sp.stepped_speed(20)])
+	# the tank burns faster with time and with speed (so more speed never means more fuel)
+	main.restart()
+	main.set_process(false)
+	main.picks.enabled = false
+	hr_sp = main.spawner
+	main.elapsed = 0.0
+	main.fuel = 100.0
+	main._process(0.1)
+	var hr_burn0: float = 100.0 - main.fuel
+	main.restart()
+	main.set_process(false)
+	main.picks.enabled = false
+	main.elapsed = 480.0
+	main.fuel = 100.0
+	main._process(0.1)
+	check(100.0 - main.fuel > hr_burn0 * 2.5, "the tank burns far faster late in a run (%.2f vs %.2f per 0.1 s)" % [100.0 - main.fuel, hr_burn0])
+	# the economy: rewards cannot feed back on themselves
+	main.restart()
+	main.set_process(false)
+	main.score = 1000.0
+	main.elapsed = 100.0
+	var hr_rate1: float = main.earn_rate()
+	main.threat_coins = 50000.0
+	main.boss_coins = 50000.0
+	main.score += 100000.0
+	check(absf(main.earn_rate() - hr_rate1) < 0.01, "rewards (kills, bosses, bursts) never raise the earning rate the prices follow (%.1f)" % main.earn_rate())
+	main.threat_coins = 0.0
+	main.boss_coins = 0.0
+	tuning.threat_rate_start = th_rate_a
+	tuning.threat_rate_end = th_rate_b
 	tuning.hit_fuel_fraction = 100.0
 
 	DirAccess.remove_absolute(ProjectSettings.globalize_path("user://smoke_test_save.json"))

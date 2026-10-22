@@ -244,9 +244,9 @@ func _rows_in_window(dur: float = -1.0) -> Array:
 
 ## Is a strike on `col` allowed right now? Never on the safe path of a passing row, and every passing
 ## row keeps an open column that is not struck.
-func strike_allowed(col: int, dur: float = -1.0) -> bool:
+func strike_allowed(col: int, dur: float = -1.0, allow_safe: bool = false) -> bool:
 	for r in _rows_in_window(dur):
-		if r.safe_col == col:
+		if r.safe_col == col and not allow_safe:   # (hunters may aim at the safe path: the plane that stands still on it is theirs)
 			return false
 		var other := false
 		for c in r.open.size():
@@ -261,11 +261,11 @@ func col_of(x: float) -> int:
 	return clampi(roundi(x / Tuning.column_width() + (Tuning.column_count - 1) * 0.5), 0, Tuning.column_count - 1)
 
 ## The allowed column nearest to `col` for a strike lasting `dur` seconds (-1 = none is allowed right now).
-func nearest_allowed(col: int, dur: float = -1.0) -> int:
+func nearest_allowed(col: int, dur: float = -1.0, allow_safe: bool = false) -> int:
 	for d in Tuning.column_count:
 		for sgn in [-1, 1]:
 			var c: int = col + sgn * d
-			if c >= 0 and c < Tuning.column_count and strike_allowed(c, dur):
+			if c >= 0 and c < Tuning.column_count and strike_allowed(c, dur, allow_safe):
 				return c
 	return -1
 

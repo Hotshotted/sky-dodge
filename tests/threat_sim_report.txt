@@ -1,17 +1,60 @@
-# tests/threat_sim.gd with the active perk pool (perfect obstacle pilot, cap 420 s, 6 runs; ramp capped at x2.5, hp growth 2.0)
-NOPERK   survival s: min 80  median 173  max 295 | hits/run 3.2 | shots/run 0.0 kills/run 0.0 | wingman hits 0.0, waves 0, rolls 0.0, smoke scatters 0.0 | bosses/run 2.0 | m/run 10032
-       ended by { "Dived on by a hawk": 2, "Clipped by a goose squadron": 4 } | hits by { "hawk": 8, "goose": 8, "drone": 2 } | launched (all runs) { "hawk": 62, "goose": 12, "crow": 5, "drone": 14 }
-GUNS     survival s: min 129  median 420  max 420 | hits/run 0.8 | shots/run 132.8 kills/run 151.7 | wingman hits 2.0, waves 6, rolls 0.3, smoke scatters 2.3 | bosses/run 5.2 | m/run 27809
-       ended by { "Clipped by a goose squadron": 2, "The tank ran dry": 1, "Hit by lightning": 3 } | hits by { "goose": 8, "hawk": 2, "general goose": 2 } | launched (all runs) { "hawk": 216, "goose": 64, "crow": 47, "drone": 55 }
-UTILITY  survival s: min 178  median 420  max 420 | hits/run 1.3 | shots/run 47.5 kills/run 38.2 | wingman hits 10.2, waves 16, rolls 2.3, smoke scatters 11.0 | bosses/run 5.3 | m/run 33191
-       ended by { "Clipped by a goose squadron": 3, "Smashed by the Goose General\'s flock": 1, "Dived on by a hawk": 2 } | hits by { "goose": 35, "hawk": 22, "crow": 2, "general goose": 4, "bomb": 1 } | launched (all runs) { "hawk": 235, "goose": 73, "crow": 34, "drone": 75 }
-MIXED    survival s: min 420  median 420  max 420 | hits/run 0.8 | shots/run 167.2 kills/run 193.8 | wingman hits 5.2, waves 52, rolls 3.3, smoke scatters 7.8 | bosses/run 7.0 | m/run 37990
-       ended by { "Clipped by a goose squadron": 3, "Hit by lightning": 2, "Caught by the crow flock": 1 } | hits by { "goose": 17, "hawk": 5, "general goose": 2, "crow": 1 } | launched (all runs) { "hawk": 308, "goose": 91, "crow": 45, "drone": 91 }
+# tests/threat_sim.gd, 5 runs per spec, 900 s cap. Skilled bot = perfect obstacle pilot (obstacles cannot hurt it); ':solid' = obstacles hurt.
+skilled:none:none            survival s: min 44  median 62  max 78 | hits 1.4  kills 0.0  cans 15.2 | 2225 m | coins 1049
+       ended by { "Dived on by a hawk": 3, "Clipped by a goose squadron": 2 }
+skilled:none:none:solid      survival s: min 27  median 32  max 40 | hits 4.0  kills 0.0  cans 8.4 | 1125 m | coins 286
+       ended by { "Caught by windmill blades": 2, "Smashed into a barn": 2, "Tangled in a kite": 1 }
+skilled:full:none            survival s: min 91  median 130  max 161 | hits 0.0  kills 14.8  cans 44.6 | 5783 m | coins 9212
+       ended by { "The tank ran dry": 5 }
+skilled:none:mid             survival s: min 111  median 123  max 133 | hits 1.0  kills 0.0  cans 25.0 | 5359 m | coins 17584
+       ended by { "Dived on by a hawk": 2, "Clipped by a goose squadron": 3 }
+skilled:none:max             survival s: min 172  median 203  max 209 | hits 2.0  kills 0.0  cans 41.6 | 10813 m | coins 75162
+       ended by { "Hit by lightning": 2, "Dived on by a hawk": 2, "Clipped by a goose squadron": 1 }
+skilled:mixed:none           survival s: min 54  median 64  max 79 | hits 0.4  kills 1.4  cans 15.8 | 2374 m | coins 1156
+       ended by { "Dived on by a hawk": 2, "The tank ran dry": 2, "Clipped by a goose squadron": 1 }
+skilled:mixed:mid            survival s: min 116  median 126  max 154 | hits 0.2  kills 5.0  cans 29.0 | 5933 m | coins 22699
+       ended by { "Dived on by a hawk": 1, "The tank ran dry": 2, "Clipped by a goose squadron": 2 }
+skilled:full:mid             survival s: min 271  median 302  max 305 | hits 0.0  kills 100.8  cans 142.0 | 21617 m | coins 219082
+       ended by { "Clipped by a goose squadron": 1, "The tank ran dry": 4 }
+skilled:full:max             survival s: min 423  median 465  max 476 | hits 0.0  kills 254.0  cans 292.2 | 47656 m | coins 1572375
+       ended by { "Dived on by a hawk": 1, "Clipped by a goose squadron": 4 }
+afk:full:max:solid           survival s: min 20  median 24  max 27 | hits 10.6  kills 1.0  cans 1.0 | 816 m | coins 3225
+       ended by { "Smashed into a barn": 4, "Caught by windmill blades": 1 }
+lazy:full:max:solid          survival s: min 53  median 59  max 71 | hits 23.8  kills 7.2  cans 27.0 | 2274 m | coins 30848
+       ended by { "Smashed into a barn": 4, "Popped into a balloon": 1 }
+skilled:single:flak:none     survival s: min 55  median 65  max 69 | hits 0.8  kills 2.0  cans 15.2 | 2379 m | coins 1263
+       ended by { "Clipped by a goose squadron": 3, "The tank ran dry": 1, "Dived on by a hawk": 1 }
 
-# after the late escalation (ramp to x4, hp growth 3.5), cap 540 s, 5 runs
-GUNS     survival s: min 129  median 540  max 540 | hits/run 2.4 | shots/run 219.0 kills/run 190.8 | wingman hits 6.2, waves 12, rolls 3.4, smoke scatters 15.8 | bosses/run 6.2 | m/run 35102
-       ended by { "Hit by lightning": 2, "Clipped by a goose squadron": 1, "The tank ran dry": 1, "Smashed by the Goose General\'s flock": 1 } | hits by { "goose": 31, "hawk": 2, "general goose": 3 } | launched (all runs) { "hawk": 200, "goose": 86, "crow": 58, "drone": 72 }
-UTILITY  survival s: min 540  median 540  max 540 | hits/run 1.6 | shots/run 91.0 kills/run 44.4 | wingman hits 15.6, waves 42, rolls 12.4, smoke scatters 34.2 | bosses/run 8.2 | m/run 53543
-       ended by { "Clipped by a goose squadron": 3, "Dived on by a hawk": 2 } | hits by { "goose": 45, "hawk": 27, "crow": 2, "general goose": 6, "bomb": 1 } | launched (all runs) { "hawk": 298, "goose": 121, "crow": 56, "drone": 118 }
-MIXED    survival s: min 540  median 540  max 540 | hits/run 0.6 | shots/run 314.0 kills/run 272.2 | wingman hits 8.8, waves 76, rolls 8.6, smoke scatters 39.0 | bosses/run 9.0 | m/run 53547
-       ended by { "Clipped by a goose squadron": 1, "Smashed by the Goose General\'s flock": 2, "Hit by lightning": 2 } | hits by { "goose": 23, "hawk": 6, "general goose": 4, "general": 1, "crow": 1 } | launched (all runs) { "hawk": 322, "goose": 116, "crow": 75, "drone": 122 }
+# single perk at level 3 from the start (skilled, no upgrades, 5 runs; baseline none = 62 s median)
+skilled:only:flak:none       survival s: min 64  median 71  max 77 | hits 0.4  kills 6.4  cans 18.4 | 2700 m | coins 1655
+skilled:only:pods:none       survival s: min 68  median 75  max 76 | hits 0.0  kills 8.4  cans 19.2 | 2816 m | coins 1684
+skilled:only:tail:none       survival s: min 63  median 65  max 71 | hits 1.0  kills 9.0  cans 16.4 | 2461 m | coins 1571
+skilled:only:wingman:none    survival s: min 54  median 65  max 81 | hits 0.0  kills 0.0  cans 16.6 | 2519 m | coins 1384
+skilled:only:shockwave:none  survival s: min 53  median 65  max 74 | hits 0.8  kills 0.0  cans 15.6 | 2349 m | coins 1077
+skilled:only:banner:none     survival s: min 44  median 62  max 78 | hits 1.4  kills 0.0  cans 15.2 | 2225 m | coins 1202
+skilled:only:skywriter:none  survival s: min 58  median 72  max 75 | hits 1.0  kills 1.0  cans 19.2 | 2570 m | coins 1057
+skilled:only:magnet_field:none survival s: min 44  median 62  max 78 | hits 1.4  kills 0.0  cans 15.2 | 2225 m | coins 1408
+skilled:only:roll:none       survival s: min 57  median 63  max 81 | hits 0.6  kills 0.0  cans 17.0 | 2518 m | coins 1182
+skilled:only:fuel_miser:none survival s: min 62  median 80  max 111 | hits 2.2  kills 0.0  cans 19.8 | 3282 m | coins 1542
+skilled:only:hot_streak:none survival s: min 44  median 62  max 78 | hits 1.4  kills 0.0  cans 15.2 | 2225 m | coins 1131
+skilled:only:lucky_whiskers:none survival s: min 63  median 67  max 79 | hits 1.8  kills 0.0  cans 25.4 | 2642 m | coins 1266
+skilled:only:scavenger:none  survival s: min 44  median 62  max 78 | hits 1.4  kills 0.0  cans 15.2 | 2225 m | coins 4947
+
+# tests/campaign_sim.gd (skilled bot, real picks, auto-buying upgrades)
+  1 |   62 s |  1.0 min |  2299 |           1267 |                   37 | magnet, fuel_tank, efficiency | Out of fuel after 2 hits
+  2 |   50 s |  1.9 min |  1737 |            674 |                  141 | fuel_tank, refill, efficiency, fuel_tank | The tank ran dry
+  3 |  110 s |  3.7 min |  4668 |           2620 |                  106 | nine_lives, reserve_tank, head_start, refill, efficiency | Out of fuel after 1 hit
+  4 |   81 s |  5.1 min |  3191 |           1420 |                   32 | fuel_tank, refill, coin_value, coin_value, efficiency | Out of fuel after 1 hit
+  5 |   88 s |  6.5 min |  3494 |           2271 |                  185 | coin_value, fuel_tank, refill, can_bounty, coin_value | Out of fuel after 1 hit
+  6 |   86 s |  8.0 min |  3367 |           4059 |                  433 | steady_nerves, can_bounty, efficiency | The tank ran dry
+  7 |  115 s |  9.9 min |  4991 |           8582 |                  458 | cloud_eye, close_call_pay, coin_value, can_bounty, fuel_tank, refill, close_call_pay, coin_value
+  8 |  107 s | 11.7 min |  4584 |          10717 |                   70 | efficiency, close_call_pay, coin_value, bonus_cap, can_bounty, fuel_tank, refill, close_call_pay
+  9 |   92 s | 13.2 min |  3624 |          10289 |                 1400 | close_call_pay, coin_value, bonus_cap, can_bounty, fuel_tank, refill, close_call_pay | Out of fu
+ 10 |  127 s | 15.3 min |  5649 |          29811 |                 1955 | slot, coin_value, bonus_cap, can_bounty, close_call_pay, efficiency, coin_value, bonus_cap, can_
+ 11 |  128 s | 17.4 min |  5678 |          42289 |                 2175 | bonus_cap, can_bounty, close_call_pay, coin_value, bonus_cap, efficiency, can_bounty, close_call
+ 12 |  153 s | 20.0 min |  7420 |          74206 |                 5676 | bonus_cap, can_bounty, efficiency, close_call_pay, coin_value, bonus_cap, can_bounty, fuel_tank,
+ 13 |  173 s | 22.9 min |  8784 |          74621 |                 6269 | bonus_cap, can_bounty, fuel_tank, refill, close_call_pay, coin_value, bonus_cap, can_bounty, clo
+first upgrade bought: run 1, after 1.0 min of play
+first gear piece: run 1, after 1.0 min
+first extra gear slot: run 10, after 15.3 min
+Coast unlock (5000 m): run 10, after 15.3 min (best distance so far 8784 m)
+done

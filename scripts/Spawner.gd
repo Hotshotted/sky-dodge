@@ -267,6 +267,7 @@ func reset(first_row_z: float = -12.0) -> void:
 	_step_marked_cycle = -1
 	_wave_start = 0.0
 	_wave_apply()
+	snipes = 0
 	_safe_col = Tuning.column_count / 2
 	for i in Tuning.column_count:
 		_prev_open.append(true)  # first row may use any column
@@ -680,6 +681,8 @@ func _spawn_kit_row(z: float) -> void:
 	for c in Tuning.column_count:
 		open.append(true)
 	_kit_open_flags(row, open)
+	if not DebugFlags.off("snipe"):
+		_snipe_row(row, open)
 	for c in open.size():
 		row.open.append(open[c])
 	_safe_col = _pick_safe_col(open, _safe_col)
@@ -703,6 +706,45 @@ func _spawn_kit_row(z: float) -> void:
 		if randf() < chance:
 			_place_can(row, x)
 	_pat_row += 1
+
+## The chance a new row gets a "snipe": a barn in the column the plane is flying in right now. A plane that stands still is hit
+## within seconds, whatever it carries; a moving one just keeps moving (the row always keeps two or more open columns, and the
+## barn is visible from the top of the screen for well over a second). It rises with the run, with no ceiling but snipe_max.
+func snipe_chance() -> float:
+	if not kit_on or run_time < Tuning.snipe_after:
+		return 0.0
+	return clampf(Tuning.snipe_start + Tuning.snipe_per_min * (run_time - Tuning.snipe_after) / 60.0, 0.0, Tuning.snipe_max)
+
+var snipes := 0                    # snipe barns placed this run (the tests and the sim read it)
+
+func _snipe_row(row: Row, open: Array[bool]) -> void:
+	if randf() >= snipe_chance():
+		return
+	var n := Tuning.column_count
+	var col := clampi(roundi(plane_x / Tuning.column_width() + (n - 1) * 0.5), 0, n - 1)
+	if not open[col]:
+		return   # (the pattern already blocks it)
+	var free := 0
+	for o in open:
+		free += 1 if o else 0
+	if free < 3:
+		return
+	var e = kit.spawn(Kit.BARN, row, Tuning.column_center(col), 0.0, 0.9)
+	if e == null:
+		return
+	var again: Array[bool] = []
+	for c in n:
+		again.append(true)
+	_kit_open_flags(row, again)
+	var left := 0
+	for o in again:
+		left += 1 if o else 0
+	if left < 2:   # it would leave no room: not this row
+		kit.release(e)
+		return
+	snipes += 1
+	for c in n:
+		open[c] = again[c]
 
 func _can_probability() -> float:
 	return clampf(Tuning.pattern_can_chance * wave_can_mult, 0.0, 1.0)
@@ -732,8 +774,8 @@ var _wave_start := 0.0              # run_time when the current phase began
 func stepped_speed(steps: int) -> float:
 	var v := Tuning.base_speed
 	for i in steps:
-		v += Tuning.speed_step_table[mini(i, Tuning.speed_step_table.size() - 1)]
-	return minf(v, Tuning.max_speed)
+		v += Tuning.speed_step_table[i] if i < Tuning.speed_step_table.size() else Tuning.speed_step_late   # (no ceiling: the world keeps getting faster)
+	return v
 
 func wave_name() -> String:
 	return "%s #%d" % [WAVE_NAMES[wave_phase], wave_cycle + 1]
@@ -1107,7 +1149,7 @@ func _make_gulls(row: Row, width: float) -> void:
 ## Prop Wash on the cube rows (the other maps): the cubes within the ring are nudged away from its centre.
 func shove_rows(centre: Vector2, radius: float) -> void:
 	if kit_on:
-		return
+		return   # (the Countryside's obstacles are the kit's; the cube rows of the other maps are all "small": cubes)
 	for r in _rows:
 		if absf(r.position.z - centre.y) > radius:
 			continue

@@ -29,14 +29,14 @@ const CAUSES := ["Dived on by a hawk", "Clipped by a goose squadron", "Caught by
 const BOSS_NAMES := ["Flash the Falcon", "The Thunderhead", "The Goose General"]
 const BOSS_COLORS := [Color(0.35, 0.65, 1.0), Color(0.75, 0.6, 1.0), Color(1.0, 0.8, 0.3)]
 const MINI_NAME := "Rival Crop Duster"
-const HAWK_POOL := 2
-const GOOSE_POOL := 14
-const CROW_POOL := 6
-const DRONE_POOL := 2
-const BOMB_POOL := 6
+const HAWK_POOL := 6
+const GOOSE_POOL := 40
+const CROW_POOL := 18
+const DRONE_POOL := 5
+const BOMB_POOL := 10
 const BLAST_POOL := 6
 const TRACER_POOL := 3
-const GROUPS := 4                    # two goose squads, the crow flock, the General's formation
+const GROUPS := 9                    # two goose squads, the crow flock, the General's formation
 const FLY_Y := 1.0
 const MARK_Y := 0.07
 const HAWK_START := 4.5              # a diving hawk starts this far above its target
@@ -574,7 +574,7 @@ func _unlocked(kind: int) -> bool:
 
 ## How far into the ramp the run is: 0 before it starts, 1 at threat_ramp_end, and on past that (up to 4) so the pressure keeps rising.
 func _ramp() -> float:
-	return clampf((elapsed - Tuning.threat_ramp_start) / maxf(Tuning.threat_ramp_end - Tuning.threat_ramp_start, 1.0), 0.0, 4.0)
+	return clampf((elapsed - Tuning.threat_ramp_start) / maxf(Tuning.threat_ramp_end - Tuning.threat_ramp_start, 1.0), 0.0, 1.0e6)
 
 ## Hit points of a regular threat launched now: 1 until the ramp ends, then growing, so a gun build is not endless.
 func hp_scale() -> float:
@@ -585,7 +585,7 @@ func threat_rate() -> float:
 
 func max_active() -> int:
 	var k := _ramp()
-	return roundi(lerpf(Tuning.threat_max_active_start, Tuning.threat_max_active_end, minf(k, 1.0)) + maxf(k - 1.0, 0.0) * 1.5)
+	return roundi(lerpf(Tuning.threat_max_active_start, Tuning.threat_max_active_end, minf(k, 1.0)) + maxf(k - 1.0, 0.0) * 2.5)
 
 func _director(delta: float) -> void:
 	if _boss_stage == 0 and _boss_gap_t > 0.0:
@@ -759,13 +759,7 @@ func _launch_squad(gentle: bool) -> bool:
 	g.state = 1
 	g.t = 0.0
 	g.dir = 1.0 if randf() < 0.5 else -1.0
-	var bottom := z_max
-	var lane := plane_z - 0.3 + randf_range(-0.8, 0.8)
-	if randf() > Tuning.lightning_aim and not gentle:
-		lane = randf_range(-half_h + 5.0, plane_z - 3.0)
-	if plane_z > bottom - 3.4:
-		lane = plane_z - 3.6   # a plane against the bottom edge gets its lane above it: it can stay put
-	g.z = _clamp_z(lane)
+	g.z = _clamp_z(plane_z - 0.3 + randf_range(-0.8, 0.8))   # always aimed at where the plane is: standing still is fatal
 	g.x = -g.dir * (Tuning.ortho_size * 0.5 + 3.4)
 	g.members = mem
 	for i in mem.size():
@@ -974,8 +968,8 @@ func _update_drone(d: Th, delta: float) -> void:
 				d.lx = d.x
 				var col: int = spawner.hazards.col_of(d.lx)
 				var dur := Tuning.drone_wind + Tuning.drone_dart + 0.3
-				if not spawner.hazards.strike_allowed(col, dur):
-					var alt: int = spawner.hazards.nearest_allowed(col, dur)
+				if not spawner.hazards.strike_allowed(col, dur, true):   # (the plane's own column, safe path or not: standing still is fatal)
+					var alt: int = spawner.hazards.nearest_allowed(col, dur, true)
 					if alt < 0:
 						d.state = 5   # no safe lane right now: it gives up and leaves
 						return
@@ -1079,7 +1073,7 @@ func _start_boss(which: int, mini: bool) -> void:
 	_boss_defeated = false
 	_boss_drop_t = 1.4
 	_boss_strike_t = 1.6
-	var hp_max: float = Tuning.mini_boss_hp if mini else float(Tuning.boss_hp[which]) * minf(1.0 + Tuning.boss_hp_growth * float(bosses_done), 3.0)   # later bosses are tougher
+	var hp_max: float = Tuning.mini_boss_hp if mini else float(Tuning.boss_hp[which]) * (1.0 + Tuning.boss_hp_growth * float(bosses_done))   # later bosses are tougher
 	boss_hp = hp_max
 	boss_hp_max = hp_max
 	_log("%s: warning" % boss_name)

@@ -24,11 +24,11 @@ the old perks are defined but no longer offered (`Tuning.perk_pool`).
 | Perk | Unlock | What it does |
 | --- | --- | --- |
 | Flak Cannon / Wing Pods / Tail Gun | start | fire by themselves at the nearest threat ahead / at the sides / behind; **free**; a kill pays 2-5 s of earnings; cooldown 2.2/1.4/0.8 s, level 3 does double damage |
-| Wingman | 60 cans | a drone beside you collects nearby coins and cans and takes one hit, then recharges (22/15/10 s); level 3 has two |
-| Prop Wash | start | a shockwave ring every 8/5.5/3.5 s (radius 4/5.5/7) shoves obstacles and threats aside |
+| Wingman | 60 cans | a drone beside you collects nearby coins (never fuel cans) and takes one hit, then needs 75/58/42 s to recharge; level 3 has two |
+| Prop Wash | start | a shockwave ring every 8/5.5/3.5 s (radius 4/5.5/7) shoves small obstacles (kites, balloons, hay) and threats aside, never barns, wires or windmills |
 | Tow Banner | 25 close calls | a banner 3.5/6/9 units long collects the coins it sweeps |
 | Skywriter | 6 Whisker closes | a smoke trail 4/7/11 long scatters birds and kites (and crows / geese threats) that fly into it |
-| Magnet Field | start | an aura 3/4.5/6.5 wide pulls coins and cans in |
+| Magnet Field | start | an aura 3/4.5/6.5 wide pulls coins in (fuel cans you fly to yourself) |
 | Barrel Roll | 20 crates | double-tap for a 0.7 s invulnerable roll; ready every 8/5.5/3.5 s |
 
 The second pick always offers a level-up of the best active perk you hold. A build bar under the fuel gauge shows every perk held with level
@@ -69,3 +69,18 @@ level-ups favoured). The opening mini-boss at ~90 s is a **rival crop duster** (
 `SIM_FORCE=hawk|goose|crow|drone`, `SIM_BOSS=0|1|2|mini`, `SIM_SOLID=1` to make obstacles lethal too). The autopilot reacts after
 0.2 s, flies at 15 units/s and plans around rows and telegraphs; by default it is a *perfect obstacle pilot* (obstacles cannot hurt it) so
 that survival measures the threats. `tests/threat_shots.gd` takes screenshots of each threat and boss (`docs/screens/threats/`).
+
+## Hard rules (no AFK, no immortality)
+
+* **Fuel is flown for.** Only the plane touching a can refuels it (Wingman, Banner and Magnet Field handle coins only). The tank burns faster with
+  time (x(1 + 0.38 per minute)) and with speed (x(speed / base speed)^1.35), so a faster world never means more fuel per second. Fuel Miser is a plain
+  15/28/40% less burn.
+* **Standing still is fatal.** Hawks, geese and crows aim at the plane's current position; the drone may take the plane's column even on the safe
+  path; the Thunderhead aims 80% of its bolts at the plane; and from 12 s on, 40% (rising 25% per minute, up to 90%) of the rows put a barn in the
+  column the plane is flying in (`Spawner.snipe_chance`), always leaving two or more open columns.
+* **No ceiling.** Speed steps never stop (+3 per wave cycle past the table), threat rate, concurrent threats, threat hit points and boss hit points
+  keep rising with the run. A hit costs a quarter of the CURRENT tank.
+* **Rewards cannot feed back.** Kill, boss and Wing Roll coins are excluded from the earning rate that prices picks, guns' payouts and boss rewards,
+  and never bring the next pick sooner.
+* **CI guard.** The smoke test flies a zero-input bot, a lazy can-only bot and a skilled bot with every active perk at level 3 and every permanent
+  upgrade maxed (`tests/bots.gd`): the AFK bot must die within 45 s, the lazy bot well before the skilled one.

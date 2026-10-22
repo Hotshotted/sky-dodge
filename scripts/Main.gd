@@ -108,6 +108,7 @@ var _last_tap_pos := Vector2.ZERO
 var _gun_lv := {"flak": 0, "pods": 0, "tail": 0}   # the gun perks' levels (reused every frame)
 var threat_coins := 0.0            # coins shooting threats down paid this run
 var boss_coins := 0.0              # ...and the bosses' rewards
+var burst_coins := 0.0             # ...and Wing Roll's bursts
 
 func _ready() -> void:
 	Engine.max_physics_steps_per_frame = 1   # no physics here: make sure a stall can never trigger catch-up steps
@@ -337,6 +338,7 @@ func restart() -> void:
 	_last_any_pick = -100.0
 	threat_coins = 0.0
 	boss_coins = 0.0
+	burst_coins = 0.0
 	hud.hide_boss()
 	spawner.chain_nudges = false
 	spawner.crate_shower_rows = 0
@@ -502,7 +504,7 @@ func _process(raw_delta: float) -> void:
 	var speed := Tuning.map_speed(map, elapsed) * tail
 	if spawner.kit_on:   # Countryside: no ramp, only the steps a BREATHER brings (eased in)
 		_kit_speed = move_toward(_kit_speed, spawner.stepped_speed(spawner.speed_steps), Tuning.speed_step_rate * delta)
-		speed = minf(_kit_speed * tail, Tuning.max_speed)   # (the patterns are built for speeds up to the top speed)
+		speed = _kit_speed * tail   # (no ceiling: the patterns hold up as well as they can, the world keeps speeding up)
 	if spawner.kit_on:
 		spawner.base_speed_now = _kit_speed
 	var step := speed * delta
@@ -546,10 +548,7 @@ func _process(raw_delta: float) -> void:
 	_decay_bonus(delta)
 	hud.refresh_effects(picks.boosts, _glide_left)
 	if not picks.has_boost("fuel_freeze"):   # Fuel Freeze: nothing burns
-		var burn := Tuning.drain_rate() * (1.0 - picks.value("fuel_miser") * 0.01)
-		if picks.level("fuel_miser") >= 3 and bonus >= 3.0:   # Fuel Miser 3: nothing burns while your bonus is x3 or more
-			burn = 0.0
-			_callout("fuel_miser", "Fuel Miser: free flying!")
+		var burn := Tuning.drain_rate() * (1.0 + Tuning.drain_growth_per_min * elapsed / 60.0) * pow(maxf(speed / Tuning.base_speed, 1.0), Tuning.drain_speed_exp) * (1.0 - picks.value("fuel_miser") * 0.01)
 		fuel = maxf(fuel - burn * delta, 0.0)
 	_pf("hud, trail, fuel", t_pf)
 	var cd := picks.value("cloud_diver")      # Cloud Diver: fuel back while under a cloud
@@ -567,9 +566,8 @@ func _process(raw_delta: float) -> void:
 		reach = maxf(reach, Tuning.storm_radius)
 	if combo_on("deadstick") and _gliding:   # Deadstick: while gliding, cans come from anywhere on screen
 		reach = 60.0
-	var aura := gadgets.aura_radius()   # Magnet Field: coins and cans inside the aura are pulled in
+	var aura := gadgets.aura_radius()   # Magnet Field: coins (never fuel cans: those you fly to) inside the aura are pulled in
 	if aura > 0.0:
-		reach = maxf(reach, aura)
 		spawner.coins.pull(plane, aura, Tuning.magnet_pull_speed * delta)
 	spawner.chain_nudges = combo_on("wingwalker") or picks.level("prop_wash") >= 3   # (Prop Wash 3: bumps chain)
 	if reach > 0.0 and spawner.pull_cans(plane, reach, Tuning.magnet_pull_speed * delta) and Tuning.gear_value("magnet") > 0.0:
@@ -752,7 +750,7 @@ func _on_pick_chosen(i: int) -> void:
 	_apply_card(card)
 	if not _pick_is_extra:
 		picks._bag_score = score
-		picks.advance(score, elapsed)
+		picks.advance(score, elapsed, base_score())
 	_pick_is_extra = false
 	hud.set_next(picks.next_pick)
 	_check_combos()
@@ -827,9 +825,6 @@ func _update_gadgets(delta: float, step_dist: float) -> void:
 	var wcaps := PackedFloat32Array([0.0, 0.0, 0.0, 0.0, Tuning.wingman_collect])
 	for i in gadgets.wingman_count():
 		var wp := gadgets.wingman_pos(i)
-		var cans: Array[Vector3] = spawner.collect_cans(wp, wcaps)
-		for ci in cans.size():
-			_on_pickup(cans[ci], spawner.picked_golden[ci])
 		var got: int = spawner.coins.collect(wp, wcaps, Tuning.coin_pickup_radius)
 		if got > 0:
 			_on_coins(got, spawner.coins.last_pos)
@@ -854,6 +849,8 @@ func _on_roll_ended() -> void:
 	if combo_on("wing_roll"):   # Wing Roll: the roll ends in a burst of coins from you and your wingmen
 		var burst := maxf(10.0, Tuning.combo_wingroll_burst * earn_rate()) * earn_mult() / maxf(coin_mult, 0.001)
 		score += burst
+		burst_coins += burst
+		picks.next_pick += burst
 		if not DebugFlags.off("popup"):
 			hud.coin_pop("+" + Tuning.fmt(floorf(burst)), camera.unproject_position(player.position + Vector3(0, 0, -1.5)))
 		if not DebugFlags.off("sparks"):
@@ -872,8 +869,13 @@ func _on_wingman_absorbed(pos: Vector3) -> void:
 # ---------- Threats: hunting enemies, guns, bosses ----------
 
 ## What the earning rate is right now (coins per second this run, at least a little): guns and kills are priced in it.
+## The run's coins without the rewards (kills, bosses, roll bursts): what the earning rate, the pick prices and the rewards are measured in,
+## so that rewards can never feed back on themselves.
+func base_score() -> float:
+	return maxf(score - threat_coins - boss_coins - burst_coins, 0.0)
+
 func earn_rate() -> float:
-	return maxf(score / maxf(elapsed, 10.0), 0.5)
+	return maxf(base_score() / maxf(elapsed, 10.0), 0.5)
 
 func _update_threats(delta: float) -> void:
 	var th = spawner.threats
@@ -928,6 +930,7 @@ func _on_threat_killed(kind: int, pos: Vector3, by_gun: bool) -> void:
 			var pay := maxf(Tuning.kill_pay_min, secs * earn_rate()) * (Tuning.combo_goldrush_mult if combo_on("goldrush") else 1.0)
 			score += pay
 			threat_coins += pay
+			picks.next_pick += pay   # (a reward never brings the next pick sooner)
 			if not DebugFlags.off("popup"):
 				hud.coin_pop("+" + Tuning.fmt(floorf(pay)), camera.unproject_position(pos))
 

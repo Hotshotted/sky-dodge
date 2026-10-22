@@ -17,7 +17,7 @@ extends Node3D
 
 enum { BARN, TRACTOR, WINDMILL, CROW, BALLOON, POWERLINE, DUSTER, KITE, HAY }
 const NAMES := ["barn", "tractor", "windmill", "crow", "balloon", "powerline", "duster", "kite", "hay"]
-const POOL := [18, 4, 8, 14, 8, 12, 3, 10, 20]
+const POOL := [28, 4, 8, 14, 8, 12, 3, 10, 20]
 const STRIDE := 10           # collider floats: type, cx, cz, hx (radius for circles), hz, cos, sin, owner, flags, bounding radius
 const MAX_COLLIDERS := 96
 const T_RECT := 0.0
@@ -786,12 +786,12 @@ func update(delta: float) -> void:
 
 # ---------- Prop Wash / Skywriter ----------
 
-## A shockwave from `centre` shoves every fixed obstacle (not the crows, tractors and dusters that fly on their own) within `radius`
+## A shockwave from `centre` shoves the small obstacles (kites, balloons, hay bales; never barns, power lines or windmills) within `radius`
 ## away from it, sideways, at `speed` (it slows quickly). Returns how many were shoved.
 func shove(centre: Vector2, radius: float, speed: float) -> int:
 	var n := 0
 	for e in active:
-		if e.kind == CROW or e.kind == DUSTER or e.kind == TRACTOR:
+		if e.kind != KITE and e.kind != BALLOON and e.kind != HAY:   # only the small, light things move; barns, wires and windmills stay put
 			continue
 		if Vector2(e.px - centre.x, e.pz - centre.y).length() - e.reach.x * 0.5 < radius:
 			e.shove_v = speed * (1.0 if e.px >= centre.x else -1.0)

@@ -31,9 +31,9 @@ func price(k: int) -> float:
 
 ## A pick was taken: the next one is priced in seconds of what you are earning this run (Tuning.pick_price), and is
 ## that far beyond the higher of the old threshold and the score you have now.
-func advance(score_now: float = 0.0, elapsed: float = 1.0) -> void:
+func advance(score_now: float = 0.0, elapsed: float = 1.0, rate_score: float = -1.0) -> void:
 	picks_taken += 1
-	var rate := maxf(score_now / maxf(elapsed, 5.0), 0.01)
+	var rate := maxf((rate_score if rate_score >= 0.0 else score_now) / maxf(elapsed, 5.0), 0.01)   # (rewards never inflate the rate the prices follow)
 	next_pick = maxf(next_pick, score_now) + Tuning.pick_price(picks_taken, rate, perm_mult)
 
 func level(id: String) -> int:
