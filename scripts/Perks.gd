@@ -79,7 +79,7 @@ func perk_offered(d: Dictionary) -> bool:
 	return level(d["id"]) < 3
 
 ## Build the cards for a pick: `count` different ones, drawn by weight. Owned perks are offered more often; Full
-## Tank more often when the tank is low. Each card is a Dictionary (kind, id, name, glyph, color, line, level, owned).
+## Tank and Patch Kit more often the emptier the tank is. Each card is a Dictionary (kind, id, name, glyph, color, line, level, owned).
 func roll(fuel_frac: float, count: int = 3) -> Array[Dictionary]:
 	var pool: Array[Dictionary] = []
 	var weights: Array[float] = []
@@ -99,7 +99,7 @@ func roll(fuel_frac: float, count: int = 3) -> Array[Dictionary]:
 		if d["id"] == "coin_bag":
 			line = line.replace("{v}", Tuning.fmt(coin_bag_amount()))
 		pool.append({"kind": "supply", "id": d["id"], "name": d["name"], "glyph": d["glyph"], "color": d["color"], "line": line, "level": 0, "owned": false})
-		weights.append(Tuning.supply_weight * (Tuning.full_tank_low_weight if (d["id"] == "full_tank" and fuel_frac < 0.4) else 1.0))
+		weights.append(Tuning.supply_weight * (1.0 + Tuning.fuel_supply_missing_weight * (1.0 - clampf(fuel_frac, 0.0, 1.0)) if (d["id"] == "full_tank" or d["id"] == "patch") else 1.0))
 	var out: Array[Dictionary] = []
 	for n in mini(count, pool.size()):
 		var total := 0.0

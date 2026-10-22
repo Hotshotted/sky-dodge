@@ -195,6 +195,7 @@ func _initialize() -> void:
 	current_scene = main
 	main.picks.enabled = false   # (the tests set scores by hand; the pick tests switch it back on)
 	tuning.crate_chance = 0.0    # (no random crates in the older tests; the crate tests switch them on)
+	tuning.hit_fuel_fraction = 100.0   # (the older tests play with one-hit deaths: a hit takes more than any tank. Section 20 plays the real fuel-is-health rules)
 	await process_frame
 	await process_frame
 	main.spawner.kit_enabled = false   # (the older tests count cubes on the Countryside; the kit tests switch the kit back on)
@@ -320,8 +321,8 @@ func _initialize() -> void:
 		check(same_world(base, snap), "near misses created nothing new  [%s]" % describe(snap))
 		if run == 3:
 			break
-		var header: String = main.HEADER_CRASH
-		var reason: String = main.REASON_OBSTACLE
+		var header: String = main.HEADER_FUEL
+		var reason: String = "Out of fuel after 1 hit"
 		if run == 2:   # this run ends by running dry instead
 			header = main.HEADER_FUEL
 			reason = main.REASON_FUEL
@@ -334,7 +335,7 @@ func _initialize() -> void:
 		check(not main.alive, "run %d ends (%s)" % [run, header])
 		check(main.hud._over.visible, "game-over UI is visible")
 		var shown: String = main.hud._over.text
-		var other_header: String = main.HEADER_FUEL if run != 2 else main.HEADER_CRASH
+		var other_header: String = main.HEADER_CRASH
 		check(shown.begins_with(header + "\n") and shown.contains(reason) and shown.contains("+1.2K coins") and not shown.contains(other_header),
 				"game-over header is \"%s\" with \"%s\" and the score, not \"%s\"  (\"%s\")" % [header, reason, other_header, shown.replace("\n", " | ")])
 		check(run != 2 or main.fuel <= 0.0, "out-of-fuel run ended with an empty tank")
@@ -571,7 +572,7 @@ func _initialize() -> void:
 	drag_by(pc, Vector2((end_x - pc.position.x) / wpp, 0.0))
 	main._process(dt)
 	check(end_clear, "(setup) the flick's END point alone is clear of the cube, so only a swept test can see it")
-	check(not main.alive and main.hud._over.text.contains(main.HEADER_CRASH), "a fast flick through a cube crashes")
+	check(not main.alive and main.hud._over.text.contains(main.HEADER_FUEL), "a fast flick through a cube ends the run (a hit takes the whole tank in these older tests)")
 	var touch_x: float = -(spc._obstacle_half().x + pc.collision_half_span())   # wingtip meets the cube's left edge
 	check(absf(pc.position.x - touch_x) < 0.02, "...stopping exactly where it first touched, not inside it or on the far side (x = %.3f, touch at %.3f)" % [pc.position.x, touch_x])
 	main.restart()
@@ -1210,7 +1211,7 @@ func _initialize() -> void:
 	for id in ["can_bounty", "close_call_pay", "bonus_cap", "fuel_tank", "efficiency", "refill"]:
 		tsave.buy(id)
 	check(is_equal_approx(tuning.can_bounty_pay(), 24.0) and is_equal_approx(tuning.close_call_pay(), 12.0) and is_equal_approx(tuning.bonus_cap_now(), 4.0)
-			and is_equal_approx(tuning.fuel_max(), 130.0) and is_equal_approx(tuning.drain_rate(), 6.5 * 0.91) and is_equal_approx(tuning.refill_amount(), 27.0), "each upgrade applies its effect at level 1")
+			and is_equal_approx(tuning.fuel_max(), 130.0) and is_equal_approx(tuning.drain_rate(), tuning.fuel_drain * 0.91) and is_equal_approx(tuning.refill_amount(), 27.0), "each upgrade applies its effect at level 1")
 	tsave.levels["fuel_tank"] = 11
 	tsave.add_coins(1e9)
 	check(tsave.buy("fuel_tank") and tsave.is_maxed("fuel_tank") and not tsave.buy("fuel_tank") and (main.hud._upg_rows[4]["buy"] as Button).text == "MAX", "a PLANE upgrade stops at its last level and shows MAX")
@@ -1317,11 +1318,11 @@ func _initialize() -> void:
 	for i in 4:
 		main._steps.append(0.2)
 	main._refresh_bonus()
-	main._absorb_hit(Vector2.ZERO, main.player.hit_capsules())
+	main._take_hit(Vector2.ZERO, main.player.hit_capsules())
 	check(main.streak == 2, "Steady Nerves level 1: a hit keeps half of the close-call streak (4 -> %d)" % main.streak)
 	tsave.levels["steady_nerves"] = 2
 	main.lives = 2
-	main._absorb_hit(Vector2.ZERO, main.player.hit_capsules())
+	main._take_hit(Vector2.ZERO, main.player.hit_capsules())
 	check(main.streak == 2, "...level 2 keeps all of it")
 	# Close Call Pay and Can Bounty pay coins (times the multiplier)
 	tsave.loadout = ["", "", ""]
@@ -1371,8 +1372,8 @@ func _initialize() -> void:
 	var mm: Array = tuning.maps
 	check(mm.size() == 4 and mm[0]["name"] == "Countryside" and mm[1]["name"] == "Coast" and mm[2]["name"] == "Mountains" and mm[3]["name"] == "Stormfront", "four maps: Countryside, Coast, Mountains, Stormfront")
 	check(tuning.map_coin_mult[0] == 1.0 and tuning.map_coin_mult[1] == 2.0 and tuning.map_coin_mult[2] == 4.0 and tuning.map_coin_mult[3] == 8.0, "coin multipliers x1, x2, x4, x8")
-	check(mm[1]["unlock_from"] == 0 and mm[1]["unlock_meters"] == 3000.0 and mm[2]["unlock_from"] == 1 and mm[2]["unlock_meters"] == 4000.0 and mm[3]["unlock_from"] == 2 and mm[3]["unlock_meters"] == 5000.0,
-			"unlocks: 3,000 m in Countryside, 4,000 m in Coast, 5,000 m in Mountains")
+	check(mm[1]["unlock_from"] == 0 and mm[1]["unlock_meters"] == 5000.0 and mm[2]["unlock_from"] == 1 and mm[2]["unlock_meters"] == 7500.0 and mm[3]["unlock_from"] == 2 and mm[3]["unlock_meters"] == 10000.0,
+			"unlocks: 5,000 m in Countryside, 7,500 m in Coast, 10,000 m in Mountains")
 	check(mm[1]["gull_share"] > 0.0 and mm[0]["gull_share"] == 0.0 and mm[2]["gust_chance"] > 0.0 and mm[1]["gust_chance"] == 0.0 and mm[3]["lightning_interval"] > 0.0 and mm[2]["lightning_interval"] == 0.0,
 			"each map brings its own hazard: gulls (Coast), gusts (Mountains), lightning (Stormfront)")
 	var pal_ok := true
@@ -1384,19 +1385,19 @@ func _initialize() -> void:
 	check(tuning.meters(100.0) == 100.0 * tuning.meters_per_unit and tuning.fmt_m(3120.0) == "3,120 m" and tuning.fmt_m(999.0) == "999 m" and tuning.fmt_m(1234567.0) == "1,234,567 m", "meters are a Tuning conversion of world units (%.1f m per unit); 3,120 m formatting" % tuning.meters_per_unit)
 	check(is_equal_approx(tuning.map_speed(1, 0.0), tuning.base_speed * 1.1) and tuning.map_speed(3, 1000.0) <= tuning.max_speed * 1.3 + 0.001 and tuning.map_speed(3, 0.0) > tuning.map_speed(0, 0.0), "harder maps start faster")
 	# (b) saves: per-map bests, medals (paid once), unlocks, migration from v2
-	var r1: Dictionary = tsave.record_map_run(0, 1600.0, 500.0)
-	check(r1["medals"] == [0] and r1["reward"] == mm[0]["medals"][0][1] and r1["unlocked"].is_empty() and r1["new_best_distance"], "1,600 m on Countryside: bronze medal and its coins, no unlock yet")
+	var r1: Dictionary = tsave.record_map_run(0, 2600.0, 500.0)
+	check(r1["medals"] == [0] and r1["reward"] == mm[0]["medals"][0][1] and r1["unlocked"].is_empty() and r1["new_best_distance"], "2,600 m on Countryside: bronze medal and its coins, no unlock yet")
 	var coins_before: float = tsave.coins
-	var r2: Dictionary = tsave.record_map_run(0, 1600.0, 400.0)
+	var r2: Dictionary = tsave.record_map_run(0, 2600.0, 400.0)
 	check(r2["medals"].is_empty() and tsave.coins == coins_before and not r2["new_best_distance"], "the same medal is not paid twice")
-	var r3: Dictionary = tsave.record_map_run(0, 3100.0, 900.0)
-	check(r3["medals"] == [1] and r3["unlocked"] == [1] and tsave.map_unlocked(1) and not tsave.map_unlocked(2), "3,100 m: silver medal and Coast unlocks")
-	check(tsave.map_stat(0)["best_distance"] == 3100.0 and tsave.map_stat(0)["best_score"] == 900.0 and tsave.map_stat(1)["best_distance"] == 0.0, "bests are kept per map")
+	var r3: Dictionary = tsave.record_map_run(0, 5100.0, 900.0)
+	check(r3["medals"] == [1] and r3["unlocked"] == [1] and tsave.map_unlocked(1) and not tsave.map_unlocked(2), "5,100 m: silver medal and Coast unlocks")
+	check(tsave.map_stat(0)["best_distance"] == 5100.0 and tsave.map_stat(0)["best_score"] == 900.0 and tsave.map_stat(1)["best_distance"] == 0.0, "bests are kept per map")
 	check(not tsave.select_map(2) and tsave.select_map(1) and tsave.selected_map == 1, "a locked map can't be selected; Coast can")
-	var r4: Dictionary = tsave.record_map_run(1, 3999.0, 5000.0)
-	check(r4["unlocked"].is_empty() and not tsave.map_unlocked(2), "3,999 m on Coast does not unlock Mountains")
-	var r5: Dictionary = tsave.record_map_run(1, 4000.0, 5000.0)
-	check(r5["unlocked"] == [2], "4,000 m on Coast unlocks Mountains")
+	var r4: Dictionary = tsave.record_map_run(1, 7499.0, 5000.0)
+	check(r4["unlocked"].is_empty() and not tsave.map_unlocked(2), "7,499 m on Coast does not unlock Mountains")
+	var r5: Dictionary = tsave.record_map_run(1, 7500.0, 5000.0)
+	check(r5["unlocked"] == [2], "7,500 m on Coast unlocks Mountains")
 	tsave.save_game()
 	tsave.load_game()
 	check(tsave.map_unlocked(2) and tsave.selected_map == 1 and tsave.map_stat(0)["medals"] == 2, "map progress survives save and load")
@@ -1409,9 +1410,9 @@ func _initialize() -> void:
 	# (c) the start screen: map cards, locks, selection, PLAY uses the selected map
 	main.hud.show_menu()
 	var cards: Array = main.hud._map_cards
-	check(cards.size() == 4 and not (cards[0] as Button).disabled and (cards[1] as Button).disabled and (cards[1] as Button).text.contains("Reach 3,000 m on Countryside") and (cards[0] as Button).text.contains("x1 coins"),
+	check(cards.size() == 4 and not (cards[0] as Button).disabled and (cards[1] as Button).disabled and (cards[1] as Button).text.contains("Reach 5,000 m on Countryside") and (cards[0] as Button).text.contains("x1 coins"),
 			"start screen: four map cards, the locked ones say how to unlock (\"%s\")" % (cards[1] as Button).text.replace("\n", " / "))
-	tsave.record_map_run(0, 3000.0, 100.0)
+	tsave.record_map_run(0, 5000.0, 100.0)
 	check(not (cards[1] as Button).disabled and (cards[1] as Button).text.contains("x2 coins") and (cards[2] as Button).disabled and main.hud._map_dots[0][1].get_theme_stylebox("panel").bg_color.is_equal_approx(Color(0.82, 0.86, 0.92)),
 			"Coast opens (x2 coins) and the Countryside silver medal dot lights up")
 	(cards[1] as Button).pressed.emit()
@@ -1431,12 +1432,12 @@ func _initialize() -> void:
 	tsave.select_map(0)
 	main.restart()
 	main.set_process(false)
-	main.run_distance = 3300.0 / tuning.meters_per_unit
+	main.run_distance = 5300.0 / tuning.meters_per_unit
 	main.score = 777.0
 	main._end_run(main.HEADER_CRASH, main.REASON_OBSTACLE)
 	var over_txt: String = main.hud._over.text
-	check(over_txt.contains("3,300 m  NEW BEST!") and over_txt.contains("Bronze medal!") and over_txt.contains("Silver medal!") and not over_txt.contains("Gold medal"), "the game-over screen shows the distance and the medals earned")
-	check(tsave.map_stat(0)["best_distance"] == 3300.0 and tsave.map_stat(0)["best_score"] == 777.0, "...and per-map bests update")
+	check(over_txt.contains("5,300 m  NEW BEST!") and over_txt.contains("Bronze medal!") and over_txt.contains("Silver medal!") and not over_txt.contains("Gold medal"), "the game-over screen shows the distance and the medals earned")
+	check(tsave.map_stat(0)["best_distance"] == 5300.0 and tsave.map_stat(0)["best_score"] == 777.0, "...and per-map bests update")
 	main.hud.hide_menus()
 	# (e) GULLS (Coast): drifting obstacles that never close the safe path
 	tsave.reset_all()
@@ -1978,8 +1979,9 @@ func _initialize() -> void:
 	main.fuel = 10.0
 	main._apply_card({"kind": "supply", "id": "full_tank"})
 	check(main.fuel == tuning.fuel_max(), "Full Tank fills the tank")
+	main.fuel = 40.0
 	main._apply_card({"kind": "supply", "id": "patch"})
-	check(main.lives == 1 and main.hud._lives_pips[0].visible, "Patch: +1 hit you can survive")
+	check(absf(main.fuel - (40.0 + tuning.fuel_max() * tuning.patch_fuel_fraction)) < 0.01, "Patch Kit repairs a hit: a quarter of the tank back")
 	pk.start_run(1.0)
 	main.score = 0.0
 	var bag: float = pk.coin_bag_amount()
@@ -2167,12 +2169,12 @@ func _initialize() -> void:
 	fresh2.call()
 	pk.set_perk("battering_ram", 3)
 	main._check_combos()
-	var lives0: int = main.lives
+	main.fuel = 30.0
 	for i in 9:
 		main._on_crate_broken()
-	check(main.combo_on("cats_cradle") and main.lives == lives0, "Cat's Cradle: nine crates give nothing yet")
+	check(main.combo_on("cats_cradle") and main.fuel == 30.0, "Cat's Cradle: nine crates give nothing yet")
 	main._on_crate_broken()
-	check(main.lives == lives0 + 1 and main.hud._lives_pips[lives0].visible, "...the tenth restores a life")
+	check(absf(main.fuel - (30.0 + tuning.fuel_max() * tuning.cradle_fuel_fraction)) < 0.01, "...the tenth refuels a quarter of the tank")
 	# (h) Wingwalker (perk + perk)
 	tsave.loadout = ["", "", ""]
 	fresh2.call()
@@ -2301,7 +2303,7 @@ func _initialize() -> void:
 	crow = sp._rows_make_for_test(pz, [px + 1.5])   # beside the wing
 	crow.crate_kind[0] = 1
 	main._process(0.02)
-	check(not main.alive and main.hud._over.text.contains(main.REASON_CRATE), "a crate touched from the SIDE crashes the plane (\"%s\")" % main.REASON_CRATE)
+	check(not main.alive and main.last_hit_name == main.REASON_CRATE, "a crate touched from the SIDE is a hit (\"%s\")" % main.REASON_CRATE)
 	crate_run.call()
 	pz = main.player.position.z
 	px = main.player.position.x
@@ -2424,11 +2426,11 @@ func _initialize() -> void:
 	pk.next_pick = INF
 	pk.set_perk("battering_ram", 3)
 	main._check_combos()
-	var l0: int = main.lives
+	main.fuel = 20.0
 	var crates0: float = tsave.stat("crates")
 	for i in 10:
 		main._on_crate_break(1, Vector3(0, 0.4, -3))
-	check(main.combo_on("cats_cradle") and main.lives == l0 + 1 and tsave.stat("crates") == crates0 + 10.0, "ten crate breaks restore a life with Cat's Cradle, and each counts toward the lifetime total")
+	check(main.combo_on("cats_cradle") and main.fuel >= 20.0 + tuning.fuel_max() * tuning.cradle_fuel_fraction - 0.01 and tsave.stat("crates") == crates0 + 10.0, "ten crate breaks refuel a quarter tank with Cat's Cradle, and each counts toward the lifetime total")
 	pk.set_perk("battering_ram", 0)
 	tsave.loadout = ["", "", ""]
 	# (c) milestones
@@ -3705,8 +3707,8 @@ func _initialize() -> void:
 	main.set_process(false)
 	main._callout_ms["nine_lives"] = -100000
 	main.last_callout = ""
-	main._absorb_hit(Vector2(main.player.position.x, main.player.position.z), main.player.hit_capsules())
-	check(main.last_callout == "Nine Lives!", "Nine Lives acting says \"Nine Lives!\"")
+	main._take_hit(Vector2(main.player.position.x, main.player.position.z), main.player.hit_capsules())
+	check(main.last_callout == "Nine Lives! Hit ignored", "Nine Lives acting says \"Nine Lives! Hit ignored\"")
 	pf_save.levels["reserve_tank"] = 1
 	pf_save.loadout = ["reserve_tank", "", ""]
 	main.restart()
@@ -3784,7 +3786,7 @@ func _initialize() -> void:
 	var pf_gl = main.goals
 	check(pf_gl.count == 3, "a run puts three goals in the world: your best, the next medal, the next map unlock (%d)" % pf_gl.count)
 	check(pf_gl._goals[0]["kind"] == "best" and pf_gl._goals[0]["meters"] == 1000.0 and pf_gl._gates[0]["label"].text == "BEST  1,000 m", "the first is a flag at your best: \"%s\"" % pf_gl._gates[0]["label"].text)
-	check(pf_gl._goals[1]["kind"] == "medal" and pf_gl._goals[1]["meters"] == 1500.0 and pf_gl._goals[2]["kind"] == "unlock" and pf_gl._goals[2]["meters"] == 3000.0, "...then Bronze at 1,500 m and the Coast at 3,000 m")
+	check(pf_gl._goals[1]["kind"] == "medal" and pf_gl._goals[1]["meters"] == 2500.0 and pf_gl._goals[2]["kind"] == "unlock" and pf_gl._goals[2]["meters"] == 5000.0, "...then Bronze at 2,500 m and the Coast at 5,000 m")
 	var pf_gz: float = main.player.position.z
 	pf_gl.update(0.0, pf_gz, -9.0)
 	check(not pf_gl._gates[0]["root"].visible, "far away the gates are out of sight")
@@ -3795,7 +3797,7 @@ func _initialize() -> void:
 	pf_gl.update(1002.0, pf_gz, -9.0)
 	pf_gl.update(1010.0, pf_gz, -9.0)
 	check(reached_kinds == ["best"] and main.last_cue == "NEW BEST!", "passing it celebrates once (%s)" % main.last_cue)
-	pf_gl.update(1600.0, pf_gz, -9.0)
+	pf_gl.update(2600.0, pf_gz, -9.0)
 	check(reached_kinds == ["best", "medal"] and main.last_cue == "BRONZE MEDAL!", "...and the medal gate: %s" % main.last_cue)
 	main.restart()
 	main.set_process(false)
@@ -4334,6 +4336,121 @@ func _initialize() -> void:
 	au_sfx.unlock()
 	check(au_sfx.plays == au_before, "...once")
 	au_sfx.stop_music()
+
+	print("20. fuel is health: a hit costs fuel, the run ends when the tank is empty")
+	var fh_save := root.get_node("Save")
+	fh_save.reset_all()
+	tuning.hit_fuel_fraction = 0.25   # (the real rule: the older sections above played with one-hit deaths)
+	main.set_process(true)
+	main.restart()
+	main.picks.enabled = false
+	main.spawner.kit_enabled = false
+	main.spawner.kit_on = false
+	main.set_process(false)
+	var fh_caps: PackedFloat32Array = main.player.hit_capsules()
+	var fh_p := Vector2(main.player.position.x, main.player.position.z)
+	var fh_max: float = tuning.fuel_max()
+	main.fuel = fh_max
+	main._steps.clear()
+	for v in [0.5, 0.5, 0.5, 0.5, 0.5]:
+		main._steps.append(v)
+	main._refresh_bonus()
+	var fh_bonus0: float = main.bonus
+	main._shake_t = 0.0
+	main.sfx.last_played = ""
+	main._take_hit(fh_p, fh_caps)
+	check(main.alive and absf(main.fuel - fh_max * 0.75) < 0.01 and main.hits_taken == 1, "a hit costs %d%% of the tank and the run goes on (fuel %.0f / %.0f)" % [int(tuning.hit_fuel_fraction * 100.0), main.fuel, fh_max])
+	check(main.sfx.last_played == "crunch" and main._shake_t > 0.3 and main._invuln >= tuning.hit_invulnerable_time - 0.001 and tuning.hit_invulnerable_time >= 0.9 and tuning.hit_invulnerable_time <= 1.1, "...with a crunch, a screen shake and about a second of invulnerability")
+	check(main.hud._fuel_hit.visible and main.hud._fuel_hit.text == "-%d" % int(round(fh_max * 0.25)), "...and a big \"%s\" slams onto the fuel gauge" % main.hud._fuel_hit.text)
+	check(main._steps.size() == 5 - tuning.hit_bonus_steps and main.bonus < fh_bonus0, "...and the close-call bonus drops %d steps (x%.1f -> x%.1f)" % [tuning.hit_bonus_steps, fh_bonus0, main.bonus])
+	# invulnerable: a second touch right away does nothing
+	main._invuln = tuning.hit_invulnerable_time
+	var fh_row = main.spawner._rows_make_for_test(fh_p.y, [fh_p.x])
+	main._process(0.016)
+	check(main.alive and absf(main.fuel - (fh_max * 0.75 - tuning.fuel_drain * 0.016)) < 0.2 and main.hits_taken == 1, "while invulnerable, touching an obstacle costs nothing")
+	main.spawner._release_row(fh_row)
+	# Steady Nerves protects part of the bonus loss
+	fh_save.levels["steady_nerves"] = 2
+	fh_save.loadout = ["steady_nerves", "", ""]
+	main.restart()
+	main.set_process(false)
+	main.picks.enabled = false
+	main._steps.clear()
+	for v in [0.5, 0.5, 0.5, 0.5]:
+		main._steps.append(v)
+	main._take_hit(fh_p, fh_caps)
+	check(main._steps.size() == 4, "Steady Nerves 2 protects the whole bonus on a hit")
+	fh_save.levels["steady_nerves"] = 0
+	fh_save.loadout = ["", "", ""]
+	# Nine Lives: charges ignore hits
+	fh_save.levels["nine_lives"] = 2
+	fh_save.loadout = ["nine_lives", "", ""]
+	main.restart()
+	main.set_process(false)
+	main.picks.enabled = false
+	var fh_f0: float = main.fuel
+	main._callout_ms["nine_lives"] = -100000
+	main.last_callout = ""
+	main._take_hit(fh_p, fh_caps)
+	main._invuln = 0.0
+	main._take_hit(fh_p, fh_caps)
+	check(main.lives == 0 and main.fuel == fh_f0 and main.hits_taken == 0 and main.last_callout.begins_with("Nine Lives"), "Nine Lives 2: the next two hits are ignored, with a callout, and cost nothing")
+	main._invuln = 0.0
+	main._take_hit(fh_p, fh_caps)
+	check(main.fuel < fh_f0, "...the third costs fuel")
+	fh_save.levels["nine_lives"] = 0
+	fh_save.loadout = ["", "", ""]
+	# the run ends when the tank is empty from hits
+	main.restart()
+	main.set_process(false)
+	main.picks.enabled = false
+	main.fuel = fh_max
+	for i in 3:
+		main._invuln = 0.0
+		main._take_hit(fh_p, fh_caps)
+	check(main.alive and main.hits_taken == 3 and main.fuel < fh_max * 0.3, "three hits: still flying with a quarter of the tank")
+	main._invuln = 0.0
+	main.fuel = fh_max * 0.2
+	check(main._hit_is_fatal(), "a hit that would empty the tank is fatal")
+	main._fatal_hit(main.REASON_OBSTACLE)
+	check(not main.alive and main.hud._over.text.begins_with(main.HEADER_FUEL) and main.hud._over.text.contains("Out of fuel after 4 hits"), "the run ends with \"Out of fuel after 4 hits\"")
+	check(main._results["cause"] == "Out of fuel after 4 hits" and main._results["extra"].contains("Last hit"), "...which the results show, with the last hit")
+	# the tank running dry with no hits
+	main.restart()
+	main.set_process(false)
+	main.picks.enabled = false
+	check(main._fuel_death_reason() == main.REASON_FUEL, "dry without a hit: \"%s\"" % main.REASON_FUEL)
+	# Reserve Tank still refills on empty
+	main.reserve_left = 1
+	main.fuel = 0.0
+	main._check_fuel(0.016)
+	check(main.alive and main.fuel > 0.0 and main.reserve_left == 0, "Reserve Tank refills the tank when it is empty")
+	# a hit with a Reserve Tank charge left is not fatal
+	main.reserve_left = 1
+	main.fuel = fh_max * 0.1
+	check(not main._hit_is_fatal(), "...so a hit that empties the tank with a Reserve Tank left is not fatal")
+	# cans heal
+	main.reserve_left = 0
+	main.fuel = fh_max * 0.5
+	main._on_pickup(Vector3(0, 0.4, 0))
+	check(main.fuel > fh_max * 0.5 + 1.0, "fuel cans refuel")
+	# Full Tank and Patch Kit come up more when the tank is low
+	var fh_low := 0
+	var fh_full := 0
+	for i in 400:
+		for c in main.picks.roll(0.1, 3):
+			fh_low += int(c["id"] == "full_tank" or c["id"] == "patch")
+		for c in main.picks.roll(1.0, 3):
+			fh_full += int(c["id"] == "full_tank" or c["id"] == "patch")
+	check(fh_low > fh_full * 2, "Full Tank and Patch Kit are offered far more when the tank is low (%d vs %d of 1200 cards)" % [fh_low, fh_full])
+	check(tuning.fuel_drain < 6.5 and tuning.hit_cost() == 25.0, "the balance: slower drain (%.1f/s) and a hit is 25 fuel" % tuning.fuel_drain)
+	DebugFlags.parse(["tune", "nofx=shake"])
+	main._shake_t = 0.0
+	main._hit_feedback(10.0)
+	check(main._shake_t == 0.0, "?nofx=shake: no screen shake")
+	DebugFlags.parse(["tune"])
+	tuning.hit_fuel_fraction = 100.0
+	fh_save.reset_all()
 
 	DirAccess.remove_absolute(ProjectSettings.globalize_path("user://smoke_test_save.json"))
 	print("")

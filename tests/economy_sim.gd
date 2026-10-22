@@ -87,10 +87,30 @@ func evaluate(level: Dictionary, equipped: Array, s: float, target_dist_units: f
 			"steady_nerves": steady = T.upgrade_value("steady_nerves", lv)
 			"head_start": head = T.upgrade_value("head_start", lv)
 	var lam: float = catch_rate(s) * (1.0 + 0.5 * reach / 3.5 + (0.1 if reach > 0.0 else 0.0))
-	var net := d - r * lam
-	var fuel_total: float = F * (1.0 + T.reserve_refill_fraction * reserve)
-	var t_fuel: float = fuel_total / net if net > 0.4 else 400.0
-	t_fuel = minf(t_fuel, 400.0)
+	# FUEL IS HEALTH: the tank drains, cans refill it, and every hit (the old "crash" rate) costs hit_cost() fuel; the first `lives`
+	# hits (Nine Lives) are ignored; an empty tank ends the run unless a Reserve Tank refills it.
+	var hit_cost: float = T.hit_cost()
+	var fuel_left: float = F
+	var res_left := reserve
+	var hits_total := 0.0
+	var tt := 0.0
+	while tt < 400.0:
+		var sp0 := speed_at(tt)
+		var h0 := hazard0(s) * pow(sp0 / T.base_speed, 1.5) * (0.9 if (eye and tt > T.cloud_start_time) else 1.0)
+		var dh := h0 * DT
+		var paid := dh if hits_total >= float(lives) else maxf(hits_total + dh - float(lives), 0.0)
+		hits_total += dh
+		fuel_left -= (d - r * lam) * DT + paid * hit_cost
+		fuel_left = minf(fuel_left, F)
+		if fuel_left <= 0.0:
+			if res_left > 0:
+				res_left -= 1
+				fuel_left = F * T.reserve_refill_fraction
+			else:
+				break
+		tt += DT
+	var t_fuel: float = tt
+	var hits_per_run := hits_total
 	var c := close_rate(s)
 	var base_b := bonus_for(steps_reached(s) * (1.0 + 0.15 * steady), cap)
 	# integrate
@@ -115,14 +135,7 @@ func evaluate(level: Dictionary, equipped: Array, s: float, target_dist_units: f
 	while t < maxf(t_fuel, 150.0):
 		var alive := t < t_fuel
 		var sp := speed_at(t)
-		var h := hazard0(s) * pow(sp / T.base_speed, 1.5) * (0.9 if (eye and t > T.cloud_start_time) else 1.0)
-		cum_h += h * DT
-		# survival: at most `lives` crashes survived (Poisson)
-		var surv := 0.0
-		var term := exp(-cum_h)
-		for k in lives + 1:
-			surv += term
-			term *= cum_h / float(k + 1)
+		var surv := 1.0   # (a run lasts until the tank is empty: see above)
 		var b := base_b + (head - 1.0) * exp(-t / 8.0)
 		var per_sec: float = sp * T.coins_per_unit * maxf(b - T.bonus_pay_offset, 0.0) * coin_mult + (lam * bounty + c * ccpay + trail_rate(s, sp) * T.trail_coin_value) * coin_mult
 		var w := surv if alive else 0.0
@@ -154,7 +167,7 @@ func evaluate(level: Dictionary, equipped: Array, s: float, target_dist_units: f
 			target_t = t
 			p_target = surv
 		t += DT
-	return {"time": e_time, "coins": e_coins, "dist_units": e_dist, "p_target": p_target, "t_fuel": t_fuel, "picks": picks_exp, "first_pick": first_pick_t, "gap_sum": gap_sum, "gap_w": gap_w, "hyp_gap": (hyp_gap_sum / hyp_gap_n) if hyp_gap_n > 0 else -1.0}
+	return {"time": e_time, "coins": e_coins, "dist_units": e_dist, "p_target": p_target, "t_fuel": t_fuel, "hits": hits_per_run, "picks": picks_exp, "first_pick": first_pick_t, "gap_sum": gap_sum, "gap_w": gap_w, "hyp_gap": (hyp_gap_sum / hyp_gap_n) if hyp_gap_n > 0 else -1.0}
 
 ## The score at which pick number k (0 = the first) comes: the sum of the prices so far.
 func _pick_cum(k: int, perm: float) -> float:
@@ -202,7 +215,7 @@ func play(label: String) -> Dictionary:
 	var runs := 0
 	var buys := 0
 	var unlock_p := 1.0           # probability the 3,000 m goal has NOT been reached yet
-	var target_units: float = 3000.0 / T.meters_per_unit
+	var target_units: float = float(T.maps[1]["unlock_meters"]) / T.meters_per_unit
 	var marks := [300.0, 900.0, 1800.0, 2700.0, 3600.0, 5400.0, 7200.0]
 	var next_mark := 0
 	var events: Array[String] = []
@@ -297,14 +310,15 @@ func play(label: String) -> Dictionary:
 					clock / 60.0, runs, run_len, fmt(ev["coins"]), fmt(ev["coins"] / (run_len + OVERHEAD) * 60.0), fmt(coins),
 					level["coin_value"], level["can_bounty"], level["close_call_pay"], level["bonus_cap"],
 					level["fuel_tank"], level["efficiency"], level["refill"], str(loadout), slots, (1.0 - unlock_p) * 100.0])
+			print("          hits per run: %.1f (each costs %d fuel of %d)" % [ev["hits"], int(T.hit_cost()), int(T.fuel_max())])
 			print("          picks: first after %s, %.1f picks per run, %s between picks" % [("%.0f s" % ev["first_pick"]) if ev["first_pick"] >= 0.0 else "never", ev["picks"], ("%.0f s" % (ev["gap_sum"] / ev["gap_w"])) if ev["gap_w"] > 0.05 else "-"])
 			print("          (if the run lasted: %s between picks)" % (("%.0f s" % ev["hyp_gap"]) if ev["hyp_gap"] >= 0.0 else "-"))
 			next_mark += 1
 	print("")
 	for e in events:
 		print(e)
-	print("3,000 m goal (Coast unlock): 50%% chance reached by %.0f min, 90%% by %s (a run needs %.0f units = %.0f m)" % [
-			unlock50 / 60.0, ("%.0f min" % (unlock90 / 60.0)) if unlock90 > 0.0 else "after the 2 hours", target_units, 3000.0])
+	print("Coast unlock goal: 50%% chance reached by %.0f min, 90%% by %s (a run needs %.0f units = %.0f m)" % [
+			unlock50 / 60.0, ("%.0f min" % (unlock90 / 60.0)) if unlock90 > 0.0 else "after the 2 hours", target_units, float(T.maps[1]["unlock_meters"])])
 	print("runs in 2 hours: %d, purchases: %d" % [runs, buys])
 	return {"reached": reached, "first_buy_run": first_buy_run, "slot2": slot2_time, "runs": runs}
 

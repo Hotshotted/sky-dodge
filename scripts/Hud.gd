@@ -82,6 +82,9 @@ var _fuel_fill: Panel
 var _fuel_sb: StyleBoxFlat
 var _fuel_icon: IconView
 var _fuel_label: Control
+var _fuel_hit: Label                # the big "-25" that slams onto the gauge when the plane is hit
+var _fuel_hit_ms := -100000
+var _fuel_jx := 0.0                 # the gauge shakes sideways for a moment after a hit
 var _fuel_frac := 1.0
 var _fuel_pulse_ms := -10000        # when a pickup last made the gauge flash
 const FUEL_BAR_W := 560.0
@@ -812,6 +815,8 @@ func reset_transients() -> void:
 		_coin_born[i] = 0
 	_combo_label.visible = false
 	_combo_sub.visible = false
+	_fuel_hit.visible = false
+	_fuel_hit_ms = -100000
 	_flash_rect.color.a = 0.0
 
 func hide_menus() -> void:
@@ -944,7 +949,7 @@ func show_combo(combo_name: String, color: Color, sub: String = "COMBO!") -> voi
 	_combo_label.visible = true
 	_combo_sub.visible = true
 
-## Lives (Nine Lives, Patch): small red hearts under the fuel gauge.
+## Nine Lives charges (hits the plane will ignore): small red hearts under the fuel gauge.
 func set_lives(n: int) -> void:
 	for i in LIVES_POOL:
 		var pip := _lives_pips[i]
@@ -989,6 +994,11 @@ func _build_fuel_gauge() -> void:
 	_fuel_icon.plate = Color(0.2, 0.62, 0.3)
 	_fuel_label = _fuel_icon
 	add_child(_fuel_icon)
+	_fuel_hit = _make_label(110, true)
+	_fuel_hit.add_theme_color_override("font_color", Style.DANGER)
+	_fuel_hit.size = Vector2(300, 130)
+	_fuel_hit.pivot_offset = Vector2(150, 65)
+	_fuel_hit.visible = false
 	set_fuel(1.0)
 
 func _layout_fuel() -> void:
@@ -997,14 +1007,22 @@ func _layout_fuel() -> void:
 	_fuel_bg.size = Vector2(FUEL_BAR_W + 16.0, FUEL_BAR_H + 16.0)
 	_fuel_icon.position = Vector2(x0 - 78.0, _fuel_top - 18.0)
 	_fuel_icon.size = Vector2(68, 68)
+	_fuel_hit.position = Vector2(_vp.x * 0.5 - 150.0, _fuel_top - 30.0)
 	set_fuel(_fuel_frac)
 
 ## Show the tank level (0..1).
 func set_fuel(frac: float) -> void:
 	_fuel_frac = clampf(frac, 0.0, 1.0)
 	var x0 := (_vp.x - FUEL_BAR_W) * 0.5
-	_fuel_fill.position = Vector2(x0, _fuel_top)
+	_fuel_fill.position = Vector2(x0 + _fuel_jx, _fuel_top)
 	_fuel_fill.size = Vector2(maxf(FUEL_BAR_W * _fuel_frac, 12.0 if _fuel_frac > 0.0 else 0.0), FUEL_BAR_H)
+
+## The plane was hit: a big red "-25" slams onto the gauge (pops past its size, settles, floats up and fades) and the gauge
+## flashes and shakes.
+func fuel_damage(amount: float) -> void:
+	_fuel_hit.text = "-%d" % int(round(amount))
+	_fuel_hit_ms = Time.get_ticks_msec()
+	_fuel_hit.visible = true
 
 ## A pickup: the gauge flashes bright and swells for a moment.
 func fuel_pulse() -> void:
@@ -1022,6 +1040,22 @@ func _update_fuel_look(now: int) -> void:
 			c = c.lightened(0.45)
 	var pt := clampf((now - _fuel_pulse_ms) / 1000.0 / FUEL_PULSE_TIME, 0.0, 1.0)
 	c = c.lerp(Color.WHITE, 0.7 * (1.0 - pt))
+	var ht := (now - _fuel_hit_ms) / 1000.0   # the hit: the fill flashes red-white and the gauge shakes
+	if ht < 0.6:
+		c = c.lerp(Style.DANGER if int(ht * 20.0) % 2 == 0 else Color.WHITE, 0.8 * (1.0 - ht / 0.6))
+		_fuel_jx = sin(ht * 70.0) * 12.0 * (1.0 - ht / 0.6)
+	else:
+		_fuel_jx = 0.0
+	_fuel_bg.position.x = (_vp.x - FUEL_BAR_W) * 0.5 - 8.0 + _fuel_jx
+	_fuel_icon.position.x = (_vp.x - FUEL_BAR_W) * 0.5 - 78.0 + _fuel_jx
+	if _fuel_hit.visible:
+		if ht >= 1.1:
+			_fuel_hit.visible = false
+		else:
+			var pop := 0.3 + 1.05 * Style.ease_out_back(minf(ht / 0.22, 1.0)) if ht < 0.22 else lerpf(1.35, 1.0, minf((ht - 0.22) / 0.2, 1.0))
+			_fuel_hit.scale = Vector2.ONE * pop
+			_fuel_hit.position.y = _fuel_top - 30.0 - 50.0 * Style.ease_out_cubic(clampf((ht - 0.3) / 0.8, 0.0, 1.0))
+			_fuel_hit.modulate.a = 1.0 if ht < 0.75 else 1.0 - (ht - 0.75) / 0.35
 	_fuel_sb.bg_color = c
 	_fuel_fill.queue_redraw()
 	var swell := 5.0 * (1.0 - pt)
@@ -1629,6 +1663,7 @@ func prewarm_popups() -> void:
 ## Every label stays alive; nothing is created or freed.
 func reset_for_run() -> void:
 	_over.visible = false
+	_fuel_hit.visible = false
 	for i in CALLOUTS:
 		_call_born[i] = 0
 		(_call_nodes[i]["holder"] as Control).visible = false

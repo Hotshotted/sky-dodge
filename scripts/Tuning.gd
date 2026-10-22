@@ -76,7 +76,16 @@ var fuel_start := 100.0
 ## Balance check (tests/fuel_balance_sim.gd, autopilots, 12 runs each): a player who only flies the
 ## widest gaps ran dry at 29 s every time; random gaps median 41 s; a can-chasing player's lowest fuel
 ## averaged ~38 and 9 of 12 runs ended on an obstacle, 3 on fuel (can chance 0.18: 1 of 12).
-var fuel_drain := 6.5
+var fuel_drain := 3.2
+## FUEL IS HEALTH. Hitting something costs this share of the STARTING tank (25 of 100: the Fuel Tank upgrade makes the tank
+## bigger, not the hits dearer, so it is more health) instead of ending the run; the run ends when
+## the tank is empty, from the drain or from hits. A hit also costs hit_bonus_steps steps of the close-call bonus (Steady
+## Nerves protects part of that), shakes the screen for hit_shake_time seconds (amplitude hit_shake_amount, in world units) and
+## makes the plane invulnerable (flickering) for hit_invulnerable_time seconds.
+var hit_fuel_fraction := 0.25
+var hit_bonus_steps := 3
+var hit_shake_time := 0.4
+var hit_shake_amount := 0.5
 ## Fuel one can gives back.
 var fuel_refill := 20.0
 ## Chance (0-1) that a new row gets a fuel can (rows with no risky spot get none).
@@ -230,22 +239,22 @@ var maps: Array[Dictionary] = [
 			"speed_mult": 1.0, "ramp_mult": 1.0, "blocked_add": 0, "gull_share": 0.0, "gust_chance": 0.0, "lightning_interval": 0.0, "cloud_mult": 1.0,
 			"sky": Color(0.2, 0.26, 0.34), "ground": Color(0.2, 0.26, 0.34), "stripe": Color(0.3, 0.38, 0.5),
 			"obstacle": Color(1.0, 0.3, 0.12), "cloud": Color(1.0, 1.0, 1.0), "ambient": Color(0.75, 0.78, 0.9),
-			"medals": [[1500.0, 3000.0], [3000.0, 20000.0], [6000.0, 120000.0]]},
-	{"id": "coast", "name": "Coast", "unlock_from": 0, "unlock_meters": 3000.0,
+			"medals": [[2500.0, 3000.0], [5000.0, 20000.0], [10000.0, 120000.0]]},
+	{"id": "coast", "name": "Coast", "unlock_from": 0, "unlock_meters": 5000.0,
 			"speed_mult": 1.1, "ramp_mult": 1.1, "blocked_add": 0, "gull_share": 0.5, "gust_chance": 0.0, "lightning_interval": 0.0, "cloud_mult": 1.0,
 			"sky": Color(0.16, 0.36, 0.5), "ground": Color(0.1, 0.42, 0.56), "stripe": Color(0.3, 0.62, 0.74),
 			"obstacle": Color(1.0, 0.45, 0.2), "cloud": Color(1.0, 0.98, 0.95), "ambient": Color(0.85, 0.9, 1.0),
-			"medals": [[2000.0, 25000.0], [4000.0, 160000.0], [7000.0, 900000.0]]},
-	{"id": "mountains", "name": "Mountains", "unlock_from": 1, "unlock_meters": 4000.0,
+			"medals": [[3500.0, 25000.0], [7000.0, 160000.0], [12000.0, 900000.0]]},
+	{"id": "mountains", "name": "Mountains", "unlock_from": 1, "unlock_meters": 7500.0,
 			"speed_mult": 1.2, "ramp_mult": 1.2, "blocked_add": 1, "gull_share": 0.3, "gust_chance": 0.4, "lightning_interval": 0.0, "cloud_mult": 1.3,
 			"sky": Color(0.3, 0.28, 0.38), "ground": Color(0.32, 0.3, 0.36), "stripe": Color(0.5, 0.47, 0.56),
 			"obstacle": Color(0.95, 0.62, 0.2), "cloud": Color(0.92, 0.9, 1.0), "ambient": Color(0.8, 0.78, 0.95),
-			"medals": [[2500.0, 150000.0], [5000.0, 1000000.0], [8000.0, 6000000.0]]},
-	{"id": "stormfront", "name": "Stormfront", "unlock_from": 2, "unlock_meters": 5000.0,
+			"medals": [[4000.0, 150000.0], [8500.0, 1000000.0], [14000.0, 6000000.0]]},
+	{"id": "stormfront", "name": "Stormfront", "unlock_from": 2, "unlock_meters": 10000.0,
 			"speed_mult": 1.3, "ramp_mult": 1.3, "blocked_add": 1, "gull_share": 0.3, "gust_chance": 0.3, "lightning_interval": 5.0, "cloud_mult": 1.8,
 			"sky": Color(0.09, 0.1, 0.16), "ground": Color(0.12, 0.13, 0.2), "stripe": Color(0.22, 0.24, 0.36),
 			"obstacle": Color(0.9, 0.2, 0.45), "cloud": Color(0.5, 0.53, 0.62), "ambient": Color(0.6, 0.62, 0.8),
-			"medals": [[3000.0, 1000000.0], [6000.0, 7000000.0], [9000.0, 45000000.0]]},
+			"medals": [[5000.0, 1000000.0], [10000.0, 7000000.0], [16000.0, 45000000.0]]},
 ]
 ## GULLS: white obstacles that drift sideways slowly (units/second), at most this fraction of a column
 ## each way. A gull never drifts toward the main safe-path column unless it is far from it.
@@ -318,7 +327,8 @@ var perk_owned_weight := 3.0
 ## Offer odds of the other card kinds, relative to one new perk (1.0). Full Tank gets a boost when the tank is low.
 var boost_weight := 0.8
 var supply_weight := 0.7
-var full_tank_low_weight := 3.0
+## Full Tank and Patch Kit are offered more the emptier the tank: weight x (1 + this x the share of the tank that is missing).
+var fuel_supply_missing_weight := 5.0
 ## Boosts last this many seconds.
 var boost_time := 20.0
 ## Magnet Storm's pull radius (units), and the Coin Bag's size as a fraction of the NEXT pick's price.
@@ -367,7 +377,7 @@ var boosts: Array[Dictionary] = [
 ]
 var supplies: Array[Dictionary] = [
 	{"id": "full_tank", "name": "Full Tank", "glyph": "full_tank", "color": Color(0.3, 0.9, 0.4), "line": "Fill the tank right now."},
-	{"id": "patch", "name": "Patch", "glyph": "patch", "color": Color(1.0, 0.4, 0.4), "line": "+1 hit you can survive this run."},
+	{"id": "patch", "name": "Patch Kit", "glyph": "patch", "color": Color(1.0, 0.4, 0.4), "line": "Repairs a hit: a quarter of the tank back."},
 	{"id": "crate_shower", "name": "Crate Shower", "glyph": "crate_shower", "color": Color(0.9, 0.7, 0.3), "needs": "crates", "line": "The next rows are full of crates."},
 	{"id": "coin_bag", "name": "Coin Bag", "glyph": "coin_bag", "color": Color(1.0, 0.8, 0.2), "line": "Instant coins: {v}."},
 ]
@@ -376,7 +386,9 @@ var supplies: Array[Dictionary] = [
 var deadstick_extend := 3.0        # Deadstick: seconds a can adds to the glide
 var overflow_coin_rate := 6.0      # Fuel Overflow: coins per unit of fuel gained beyond a full tank
 var golden_can_coins := 40.0       # Golden Whiskers: coins a golden can pays (x the earn multiplier) on top of fuel
-var cradle_crates := 10            # Cat's Cradle: crates broken per life restored
+var cradle_crates := 10            # Cat's Cradle: crates broken per refuel
+var cradle_fuel_fraction := 0.25   # ...and how much of the tank it gives back
+var patch_fuel_fraction := 0.25    # a Patch Kit repairs one hit: this much of the tank
 var chain_max := 4                 # Wingwalker: how many obstacles a nudge can chain through
 var combo_banner_time := 2.4
 var combos: Array[Dictionary] = [
@@ -396,8 +408,8 @@ var combos: Array[Dictionary] = [
 			"line": "Cans dropped by Whisker closes are golden: fuel plus a big burst of coins.",
 			"hint": "Luck on the whiskers, and a flying start."},
 	{"id": "cats_cradle", "name": "Cat's Cradle", "perk": "battering_ram", "partner_kind": "gear", "partner": "nine_lives", "color": Color(0.85, 0.6, 0.35),
-			"line": "Every 10 crates you break restores a life.",
-			"hint": "Break crates like a ram, with lives to spare."},
+			"line": "Every 10 crates you break refuels a quarter of the tank.",
+			"hint": "Break crates like a ram, with a charge in reserve."},
 	{"id": "wingwalker", "name": "Wingwalker", "perk": "prop_wash", "partner_kind": "perk", "partner": "daredevil", "color": Color(0.6, 0.9, 0.7),
 			"line": "Shoved obstacles chain-react, and every link in the chain pays more.",
 			"hint": "Blow obstacles around, and fly close enough to do it."},
@@ -462,7 +474,7 @@ var pick_short := {
 	"daredevil": "Close calls from {v}% farther", "second_wind": "Refill {v}% once when low", "golden_touch": "Crates pay x{v}",
 	"double_coins": "Double coins, 20 s", "shield": "One free hit, 20 s", "magnet_storm": "Cans fly to you, 20 s",
 	"whisker_window": "Every close call Whisker", "fuel_freeze": "No fuel burn, 20 s",
-	"full_tank": "Fill the tank", "patch": "+1 hit this run", "crate_shower": "Next rows full of crates", "coin_bag": "+{v} coins now",
+	"full_tank": "Fill the tank", "patch": "Repairs a hit: +25% fuel", "crate_shower": "Next rows full of crates", "coin_bag": "+{v} coins now",
 }
 
 func perk_def(id: String) -> Dictionary:
@@ -500,8 +512,8 @@ var plane_cost_growth := 1.5
 var gear_slot_costs: Array[float] = [0.0, 28000.0, 1750000.0]
 ## Reserve Tank refills the tank to this fraction of its size.
 var reserve_refill_fraction := 0.6
-## Nine Lives: after a survived hit the plane is invulnerable (sputtering) for this many seconds.
-var hit_invulnerable_time := 1.6
+## After a hit the plane is invulnerable (sputtering) for this many seconds.
+var hit_invulnerable_time := 1.0
 ## Magnet: cans inside the radius fly toward the plane at this speed (units/second).
 var magnet_pull_speed := 16.0
 
@@ -527,7 +539,7 @@ var upgrades: Array[Dictionary] = [
 	{"id": "refill", "tab": "plane", "name": "Refill", "glyph": "refill", "color": Color(0.6, 0.8, 0.3),
 			"line": "Each can gives {d} more fuel ({a} -> {b})", "fmt": "dec1", "max": 12, "cost_base": 120.0, "per": 7.0, "falloff": 0.9, "notice": "Each can buys more time in the air."},
 	{"id": "nine_lives", "tab": "gear", "name": "Nine Lives", "glyph": "nine_lives", "color": Color(1.0, 0.35, 0.35),
-			"line": "Survive hits per run: {a} -> {b}", "fmt": "int", "max": 3, "costs": [1400.0, 42000.0, 1680000.0], "steps": [0, 1, 2, 3], "notice": "A crash costs a life, not the run."},
+			"line": "Ignore the next hit: {a} -> {b} per run", "fmt": "int", "max": 3, "costs": [1400.0, 42000.0, 1680000.0], "steps": [0, 1, 2, 3], "notice": "A hit bounces off: no fuel lost."},
 	{"id": "reserve_tank", "tab": "gear", "name": "Reserve Tank", "glyph": "reserve_tank", "color": Color(0.5, 0.6, 1.0),
 			"line": "Refill the tank when empty: {a} -> {b} times", "fmt": "int", "max": 2, "costs": [2100.0, 84000.0], "steps": [0, 1, 2], "notice": "Run dry? The tank refills itself."},
 	{"id": "magnet", "name": "Can Magnet", "tab": "gear", "glyph": "magnet", "color": Color(0.8, 0.5, 1.0),
@@ -535,7 +547,7 @@ var upgrades: Array[Dictionary] = [
 	{"id": "cloud_eye", "tab": "gear", "name": "Cloud Eye", "glyph": "cloud_eye", "color": Color(0.8, 0.9, 1.0),
 			"line": "Outlines show obstacles under clouds: {a} -> {b}", "fmt": "onoff", "max": 1, "costs": [3500.0], "steps": [0, 1], "notice": "See what hides in the clouds."},
 	{"id": "steady_nerves", "tab": "gear", "name": "Steady Nerves", "glyph": "steady_nerves", "color": Color(0.95, 0.75, 0.5),
-			"line": "A hit keeps {a} -> {b} of your close-call bonus", "fmt": "pct", "max": 2, "costs": [2800.0, 84000.0], "steps": [0.0, 0.5, 1.0], "notice": "A hit no longer wipes your streak."},
+			"line": "A hit costs you {a} -> {b} less bonus", "fmt": "pct", "max": 2, "costs": [2800.0, 84000.0], "steps": [0.0, 0.5, 1.0], "notice": "A hit hurts your streak less."},
 	{"id": "head_start", "tab": "gear", "name": "Head Start", "glyph": "head_start", "color": Color(1.0, 0.9, 0.3),
 			"line": "Begin each run at bonus {a} -> {b}", "fmt": "x1", "max": 2, "costs": [1750.0, 52500.0], "steps": [1.0, 1.5, 2.0], "notice": "Every run starts already hot."},
 ]
@@ -693,6 +705,10 @@ func upgrade_notice(id: String, level: int) -> String:
 	return "You'll notice: " + note
 
 ## What the game uses, upgrades included (the plain tuning values are the level-0 numbers).
+## What one hit costs in fuel.
+func hit_cost() -> float:
+	return fuel_start * hit_fuel_fraction
+
 func fuel_max() -> float:
 	return upgrade_value("fuel_tank", Save.level("fuel_tank"))
 

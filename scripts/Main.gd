@@ -43,7 +43,10 @@ var _coin_pop_pos := Vector3.ZERO
 var run_cans := 0       # fuel cans collected this run
 var last_earned := 0.0  # coins the last run earned (its score)
 var coin_mult := 1.0    # everything earned this run is multiplied by this (map multiplier x Coin Value)
-var lives := 0          # hits the plane can still survive this run (Nine Lives)
+var lives := 0          # hits the plane can still ignore this run (Nine Lives charges)
+var last_hit_name := ""  # what the hit that ended the run was (the results show it as a second line)
+var hits_taken := 0     # hits that cost fuel this run (the results say "Out of fuel after 3 hits")
+var _shake_t := 0.0     # seconds of screen shake left after a hit
 var reserve_left := 0   # Reserve Tank refills still available this run
 var _invuln := 0.0      # seconds of invulnerability left after a survived hit
 var last_was_best := false
@@ -278,6 +281,9 @@ func restart() -> void:
 	score = 0.0
 	coin_mult = Tuning.map_coin_mult[map] * Tuning.coin_value_mult()
 	lives = int(Tuning.gear_value("nine_lives"))
+	hits_taken = 0
+	last_hit_name = ""
+	_shake_t = 0.0
 	reserve_left = int(Tuning.gear_value("reserve_tank"))
 	_invuln = 0.0
 	_glide_left = 0.0
@@ -428,6 +434,8 @@ func _process(raw_delta: float) -> void:
 	if screen == SCREEN_PLAY:
 		_flush_coin_pop()
 	_apply_time_of_day(_current_tod())
+	if _shake_t > 0.0:
+		_shake_t = maxf(_shake_t - raw_delta, 0.0)
 	if _warming or not alive or screen != SCREEN_PLAY:
 		shadows.update_from(spawner, _tod_dark, not _warming and screen == SCREEN_OVER)
 	if not _warming and not alive and _crash_t >= 0.0 and screen == SCREEN_OVER:
@@ -526,11 +534,10 @@ func _process(raw_delta: float) -> void:
 		_invuln = maxf(_invuln - delta, 0.0)
 		player.set_flicker(_invuln > 0.0 and int(_invuln * 14.0) % 2 == 0)   # the plane sputters
 	if _invuln <= 0.0 and not DebugFlags.god and spawner.hazards.hit(player.position.x):   # lightning
-		if _can_absorb():
-			_absorb_hit(plane, caps)
-		else:
-			_end_run(HEADER_STRUCK, REASON_STRUCK)
+		if _hit_is_fatal():
+			_fatal_hit(REASON_STRUCK)
 			return
+		_take_hit(plane, caps, REASON_STRUCK)
 	var battering: bool = picks.level("battering_ram") > 0                          # Battering Ram: any touch breaks a crate
 	var ram_ok: bool = Tuning.ram_speed <= 0.0 or player.velocity.y < -Tuning.ram_speed   # (optional extra: moving up fast enough)
 	var from: Vector2 = player.prev_xz
@@ -545,22 +552,22 @@ func _process(raw_delta: float) -> void:
 		var was_hit: bool = _invuln <= 0.0 and not DebugFlags.god and spawner.hits(p, caps)
 		_pf("collision: hits", t_pf)
 		if was_hit:
-			if _can_absorb():   # Nine Lives / Shield / Patch: the plane takes the hit and keeps flying
-				_absorb_hit(p, caps)
-				continue
-			# Found the step that hit: narrow it down to the exact first touch, so a fast flick
-			# stops AT the obstacle instead of up to a sweep step inside it.
-			var lo: Vector2 = from.lerp(plane, float(i - 1) / steps)
-			var hi := p
-			for k in 8:
-				var mid := lo.lerp(hi, 0.5)
-				if spawner.hits(mid, caps):
-					hi = mid
-				else:
-					lo = mid
-			player.position = Vector3(hi.x, player.position.y, hi.y)
-			_end_run(HEADER_CRASH, REASON_CRATE if spawner.last_hit_crate else REASON_OBSTACLE)
-			return
+			if _hit_is_fatal():
+				# This hit empties the tank for good. Find the step that hit and narrow it down to the exact first touch, so a
+				# fast flick stops AT the obstacle instead of up to a sweep step inside it.
+				var lo: Vector2 = from.lerp(plane, float(i - 1) / steps)
+				var hi := p
+				for k in 8:
+					var mid := lo.lerp(hi, 0.5)
+					if spawner.hits(mid, caps):
+						hi = mid
+					else:
+						lo = mid
+				player.position = Vector3(hi.x, player.position.y, hi.y)
+				_fatal_hit(REASON_CRATE if spawner.last_hit_crate else REASON_OBSTACLE)
+				return
+			_take_hit(p, caps, REASON_CRATE if spawner.last_hit_crate else REASON_OBSTACLE)   # a hit costs fuel (or is ignored): the run goes on, the plane is invulnerable for a moment
+			continue
 		t_pf = Time.get_ticks_usec()
 		for ev in spawner.update_near_misses(p, caps):
 			_on_near_miss(ev)
@@ -623,7 +630,13 @@ func _check_fuel(delta: float) -> void:
 			fuel = Tuning.fuel_max() * 0.2
 			_callout("glide", "Glide: tank topped up!")
 			return
-	_end_run(HEADER_FUEL, REASON_FUEL)
+	_end_run(HEADER_FUEL, _fuel_death_reason())
+
+## "Out of fuel after 3 hits": what the results say when the tank is empty (hits count, so you see what drained it).
+func _fuel_death_reason() -> String:
+	if hits_taken <= 0:
+		return REASON_FUEL
+	return "Out of fuel after %d hit%s" % [hits_taken, "" if hits_taken == 1 else "s"]
 
 ## Coins per unit flown at the current bonus: bonus - bonus_pay_offset (x1 = 0.2, x2 = 1.2, x3 = 2.2).
 func distance_pay() -> float:
@@ -632,9 +645,6 @@ func distance_pay() -> float:
 ## Everything earned is multiplied by this: the permanent multiplier (map x Coin Value), Tailwind, Double Coins.
 func earn_mult() -> float:
 	return coin_mult * (1.0 + picks.value("tailwind") * 0.01) * (2.0 if picks.has_boost("double_coins") else 1.0)
-
-func _can_absorb() -> bool:
-	return lives > 0 or picks.has_boost("shield")
 
 # ---------- In-run picks ----------
 
@@ -727,9 +737,9 @@ func _apply_card(card: Dictionary) -> void:
 		"full_tank":
 			fuel = Tuning.fuel_max()
 			hud.fuel_pulse()
-		"patch":
-			lives += 1
-			hud.set_lives(lives)
+		"patch":   # a Patch Kit repairs one hit
+			_add_fuel(Tuning.fuel_max() * Tuning.patch_fuel_fraction)
+			hud.fuel_pulse()
 		"coin_bag":
 			var amount := picks.coin_bag_amount()
 			score += amount
@@ -811,36 +821,80 @@ func _on_crate_break(kind: int, pos: Vector3) -> void:
 ## A crate was broken: Cat's Cradle gives a life back for every N of them.
 func _on_crate_broken() -> void:
 	_crates_broken += 1
-	if combo_on("cats_cradle") and _crates_broken % Tuning.cradle_crates == 0:
-		lives += 1
-		hud.set_lives(lives)
+	if combo_on("cats_cradle") and _crates_broken % Tuning.cradle_crates == 0:   # Cat's Cradle refuels a quarter tank
+		_add_fuel(Tuning.fuel_max() * Tuning.cradle_fuel_fraction)
+		hud.fuel_pulse()
+		hud.coin_pop("FUEL", camera.unproject_position(player.position + Vector3(0, 0, -2.0)))
 
-## A hit the plane survives: sputter (brief invulnerability), keep going, and the close-call streak
-## drops (Steady Nerves keeps half or all of it). The obstacle it hit gives no close-call credit.
-func _absorb_hit(p: Vector2, caps: PackedFloat32Array) -> void:
+## The plane hit something (or was struck by lightning). A Shield or a Nine Lives charge ignores it; otherwise it costs
+## hit_fuel_fraction of the tank (the run ends only if that empties it, see _check_fuel), drops the close-call bonus by
+## hit_bonus_steps (Steady Nerves protects part of that) and gives about a second of invulnerability. The obstacle it hit gives
+## no close-call credit. Strong feedback: crunch, screen shake, flicker, debris, a big "-25" on the fuel gauge.
+func _take_hit(p: Vector2, caps: PackedFloat32Array, what: String = REASON_OBSTACLE) -> void:
+	last_hit_name = _hit_name(what)
+	_invuln = Tuning.hit_invulnerable_time
+	spawner.mark_hit_rows(p, caps)
 	if picks.has_boost("shield"):   # the Shield goes first
 		picks.boosts.erase("shield")
 		picks.changed.emit()
 		_callout("shield", "Shield!")
-	else:
+		_hit_feedback(0.0)
+		return
+	if lives > 0:   # Nine Lives: ignore this hit
 		lives -= 1
-		_callout("nine_lives", "Nine Lives!")
-	_invuln = Tuning.hit_invulnerable_time
-	spawner.mark_hit_rows(p, caps)
-	var keep := Tuning.gear_value("steady_nerves")
-	_steps.resize(int(round(_steps.size() * keep)))
+		_callout("nine_lives", "Nine Lives! Hit ignored")
+		hud.set_lives(lives)
+		_hit_feedback(0.0)
+		return
+	hits_taken += 1
+	var cost := Tuning.hit_cost()
+	fuel = maxf(fuel - cost, 0.0)
+	hud.set_fuel(fuel / Tuning.fuel_max())
+	# the close-call bonus drops a few steps (the most recent ones first); Steady Nerves protects part of the loss
+	var protect := Tuning.gear_value("steady_nerves")
+	var drop := ceili(float(Tuning.hit_bonus_steps) * (1.0 - protect) - 0.0001)
+	_steps.resize(maxi(_steps.size() - drop, 0))
 	_refresh_bonus()
-	if keep < 1.0:
+	if drop > 0 and not _steps.is_empty() or protect > 0.0 and not _steps.is_empty():
 		_bonus_timer = Tuning.bonus_hold_time
 		hud.set_bonus(bonus, hud.BONUS_SHRINK)
-	if keep > 0.0 and not _steps.is_empty():
+	if protect > 0.0 and not _steps.is_empty():
 		_callout("steady_nerves", "Steady Nerves kept your streak!")
-	hud.set_lives(lives)
+	_hit_feedback(cost)
+
+## What a hit was, for the results ("Clipped by a crow flock").
+func _hit_name(what: String) -> String:
+	if what == REASON_OBSTACLE and spawner.kit_on and spawner.kit.last_hit_kind >= 0:
+		return Kit.CAUSES[spawner.kit.last_hit_kind]
+	return what
+
+## Would a hit now empty the tank for good (no Shield, no Nine Lives charge, no Reserve Tank, no Glide)?
+func _hit_is_fatal() -> bool:
+	if picks.has_boost("shield") or lives > 0 or reserve_left > 0 or picks.value("glide") > 0.0:
+		return false
+	return fuel - Tuning.hit_cost() <= 0.0
+
+## The hit that ends the run: it counts, the tank is empty, and the results name what drained it.
+func _fatal_hit(what: String) -> void:
+	hits_taken += 1
+	fuel = 0.0
+	hud.set_fuel(0.0)
+	var cause := _fuel_death_reason()
+	last_hit_name = _hit_name(what)
+	_end_run(HEADER_FUEL if what != REASON_STRUCK else HEADER_STRUCK, cause)
+
+func _hit_feedback(cost: float) -> void:
+	sfx.play("crunch", 1.0)
+	if not DebugFlags.off("shake"):
+		_shake_t = Tuning.hit_shake_time
 	if not DebugFlags.off("sparks"):
 		fx.sparks(player.position + Vector3(-1.05, 0.0, 0.1), -1)
 		fx.sparks(player.position + Vector3(1.05, 0.0, 0.1), 1)
+		fx.crate_burst(player.position, 0)   # splinters and dust: debris
+	if cost > 0.0:
+		hud.fuel_damage(cost)
 	if not DebugFlags.off("haptic"):
-		Input.vibrate_handheld(Tuning.haptic_ms * 3)
+		Input.vibrate_handheld(Tuning.haptic_ms * 4)
 
 ## End the run: freeze the plane and show the game-over screen with what ended it.
 func _end_run(header: String, reason: String) -> void:
@@ -922,6 +976,8 @@ func _build_results(header: String, cause: String, meters_run: float, prev_best_
 ## The milestone lines for the results screen (medals, unlocks, perks).
 func _result_extra() -> String:
 	var lines: Array[String] = []
+	if last_hit_name != "":
+		lines.append("Last hit: %s" % last_hit_name)
 	for k in last_result.get("medals", []):
 		lines.append("%s medal!  +%s coins" % [MEDAL_NAMES[k], Tuning.fmt(Tuning.map_def(map)["medals"][k][1])])
 	for j in last_result.get("unlocked", []):
@@ -1251,6 +1307,9 @@ func _update_camera() -> void:
 	camera.size = Tuning.ortho_size * (1.0 - 0.2 * _cam_ease)   # (a crash: the camera eases in toward the plane)
 	camera.position = Vector3(player.position.x * 0.55 * _cam_ease, 0, player.position.z * 0.35 * _cam_ease) + Vector3(0, cos(tilt), sin(tilt)) * 30.0
 	camera.rotation = Vector3(-(PI / 2 - tilt), 0, 0)
+	if _shake_t > 0.0:   # a hit: the screen shakes and settles
+		var k := _shake_t / maxf(Tuning.hit_shake_time, 0.01)
+		camera.position += Vector3(randf_range(-1.0, 1.0), 0.0, randf_range(-1.0, 1.0)) * Tuning.hit_shake_amount * k * k
 
 ## Screen spans z = -half .. +half (stretched slightly by the camera tilt).
 func _half_height() -> float:

@@ -1,81 +1,88 @@
-Godot Engine v4.5.stable.official.876b29033 - https://godotengine.org
-
-
 === ENGAGED (chases close calls) player ===
 minutes | runs | run length | coins/run | coins/min | balance | levels (coin/bounty/ccpay/cap | tank/eff/refill) | gear | slots | best-distance chance
-      6 |    9 |    18 s |       987 |        2K |     240 | 5/0/3/0 | 3/2/1 | [] | 1 | 16%
-          picks: first after 15 s, 0.5 picks per run, - between picks
+      5 |    4 |    54 s |      2.8K |      2.5K |     183 | 6/0/3/0 | 4/2/2 | [] | 1 | 100%
+          hits per run: 3.4 (each costs 25 fuel of 100)
+          picks: first after 15 s, 2.0 picks per run, 29 s between picks
           (if the run lasted: 28 s between picks)
-     16 |   19 |    36 s |        6K |      7.5K |     560 | 18/4/12/0 | 4/4/3 | ["nine_lives"] | 1 | 65%
-          picks: first after 15 s, 1.1 picks per run, 32 s between picks
-          (if the run lasted: 33 s between picks)
-     30 |   31 |    37 s |       42K |       51K |    1.5K | 31/15/26/0 | 4/5/4 | ["nine_lives"] | 2 | 93%
-          picks: first after 15 s, 1.2 picks per run, 32 s between picks
-          (if the run lasted: 33 s between picks)
-     46 |   42 |    53 s |      140K |      130K |    9.5K | 47/36/40/0 | 4/5/4 | ["nine_lives", "magnet"] | 2 | 100%
-          picks: first after 15 s, 1.6 picks per run, 35 s between picks
-          (if the run lasted: 42 s between picks)
-     61 |   52 |    54 s |      717K |      652K |     35K | 59/46/52/0 | 4/5/4 | ["nine_lives", "magnet"] | 2 | 100%
-          picks: first after 15 s, 1.7 picks per run, 32 s between picks
-          (if the run lasted: 44 s between picks)
-     91 |   73 |    73 s |      3.8M |      2.7M |     23K | 77/64/68/0 | 4/5/4 | ["nine_lives", "magnet", "cloud_eye"] | 3 | 100%
-          picks: first after 15 s, 2.1 picks per run, 36 s between picks
-          (if the run lasted: 48 s between picks)
-    121 |   91 |    75 s |       12M |        8M |    427K | 92/80/83/0 | 4/5/4 | ["nine_lives", "magnet", "cloud_eye"] | 3 | 100%
-          picks: first after 15 s, 2.2 picks per run, 35 s between picks
+     17 |    8 |   134 s |       22K |      8.9K |     193 | 20/4/13/0 | 6/6/6 | ["reserve_tank"] | 1 | 100%
+          hits per run: 14.3 (each costs 25 fuel of 100)
+          picks: first after 15 s, 4.0 picks per run, 31 s between picks
+          (if the run lasted: 32 s between picks)
+     32 |   11 |   205 s |      148K |       41K |    2.2K | 34/15/28/0 | 9/8/9 | ["reserve_tank", "magnet"] | 2 | 100%
+          hits per run: 30.5 (each costs 25 fuel of 100)
+          picks: first after 15 s, 6.0 picks per run, 36 s between picks
+          (if the run lasted: 36 s between picks)
+     46 |   13 |   303 s |      554K |      105K |    1.9K | 45/31/38/0 | 12/10/11 | ["reserve_tank", "magnet"] | 2 | 100%
+          hits per run: 55.8 (each costs 25 fuel of 100)
+          picks: first after 15 s, 8.0 picks per run, 39 s between picks
+          (if the run lasted: 39 s between picks)
+     62 |   15 |   352 s |      2.2M |      359K |    3.7K | 58/44/52/0 | 12/10/12 | ["reserve_tank", "magnet"] | 2 | 100%
+          hits per run: 67.9 (each costs 25 fuel of 100)
+          picks: first after 15 s, 8.0 picks per run, 46 s between picks
           (if the run lasted: 46 s between picks)
-
-  0.5 min  first purchase after run 1: fuel_tank
-  7.5 min  gear: nine_lives
- 11.0 min  gear: magnet
- 15.7 min  gear: head_start
- 17.9 min  gear: reserve_tank
- 21.6 min  gear: steady_nerves
- 25.0 min  gear: cloud_eye
- 29.7 min  2nd gear slot
- 88.9 min  3rd gear slot
-3,000 m goal (Coast unlock): 50% chance reached by 13 min, 90% by 27 min (a run needs 600 units = 3000 m)
-runs in 2 hours: 91, purchases: 283
-
+     94 |   19 |   400 s |      8.7M |      1.3M |    200K | 76/60/67/0 | 12/10/12 | ["reserve_tank", "magnet", "steady_nerves"] | 3 | 100%
+          hits per run: 78.9 (each costs 25 fuel of 100)
+          picks: first after 15 s, 8.0 picks per run, 48 s between picks
+          (if the run lasted: 48 s between picks)
+    126 |   23 |   400 s |       45M |      6.5M |    1.7M | 91/74/84/0 | 12/10/12 | ["reserve_tank", "magnet", "steady_nerves"] | 3 | 100%
+          hits per run: 77.6 (each costs 25 fuel of 100)
+          picks: first after 15 s, 9.0 picks per run, 46 s between picks
+          (if the run lasted: 46 s between picks)
+  0.8 min  first purchase after run 1: fuel_tank
+  6.6 min  gear: magnet
+  9.2 min  gear: reserve_tank
+  9.3 min  gear: nine_lives
+  9.4 min  gear: head_start
+ 12.4 min  gear: cloud_eye
+ 12.5 min  gear: steady_nerves
+ 24.5 min  2nd gear slot
+ 68.0 min  3rd gear slot
+Coast unlock goal: 50% chance reached by 1 min, 90% by 1 min (a run needs 1000 units = 5000 m)
+runs in 2 hours: 23, purchases: 298
 === PASSIVE (mostly avoids close calls) player ===
 minutes | runs | run length | coins/run | coins/min | balance | levels (coin/bounty/ccpay/cap | tank/eff/refill) | gear | slots | best-distance chance
-      5 |   10 |    19 s |       170 |       330 |      45 | 2/0/0/0 | 3/1/0 | [] | 1 | 50%
-          picks: first after 15 s, 0.6 picks per run, - between picks
+      6 |    6 |    50 s |       585 |       562 |      54 | 4/0/0/0 | 3/2/0 | [] | 1 | 100%
+          hits per run: 2.1 (each costs 25 fuel of 100)
+          picks: first after 15 s, 1.0 picks per run, - between picks
           (if the run lasted: 39 s between picks)
-     15 |   25 |    24 s |       411 |       681 |     466 | 5/2/2/0 | 4/3/0 | [] | 1 | 85%
-          picks: first after 15 s, 0.7 picks per run, - between picks
-          (if the run lasted: 46 s between picks)
-     30 |   42 |    46 s |      1.4K |      1.5K |      41 | 13/5/5/0 | 5/5/4 | ["nine_lives"] | 1 | 100%
-          picks: first after 15 s, 1.2 picks per run, 51 s between picks
-          (if the run lasted: 49 s between picks)
-     45 |   55 |    51 s |      2.4K |      2.3K |     165 | 20/10/9/0 | 7/6/4 | ["nine_lives"] | 1 | 100%
-          picks: first after 15 s, 1.2 picks per run, 54 s between picks
-          (if the run lasted: 52 s between picks)
-     61 |   68 |    53 s |      5.9K |      5.5K |    1.8K | 25/14/14/0 | 7/7/5 | ["nine_lives"] | 1 | 100%
-          picks: first after 15 s, 1.2 picks per run, 56 s between picks
+     15 |   12 |    78 s |      1.7K |      1.1K |     220 | 9/2/2/0 | 5/4/3 | [] | 1 | 100%
+          hits per run: 3.9 (each costs 25 fuel of 100)
+          picks: first after 15 s, 2.0 picks per run, 49 s between picks
+          (if the run lasted: 47 s between picks)
+     31 |   18 |   138 s |      5.8K |      2.3K |     380 | 17/5/5/0 | 7/6/5 | ["reserve_tank"] | 1 | 100%
+          hits per run: 9.8 (each costs 25 fuel of 100)
+          picks: first after 15 s, 3.0 picks per run, 50 s between picks
+          (if the run lasted: 50 s between picks)
+     47 |   23 |   162 s |       10K |      3.5K |    3.2K | 24/11/11/0 | 8/7/6 | ["reserve_tank"] | 1 | 100%
+          hits per run: 12.7 (each costs 25 fuel of 100)
+          picks: first after 15 s, 3.0 picks per run, 54 s between picks
           (if the run lasted: 54 s between picks)
-     91 |   92 |    55 s |       13K |       12K |    1.5K | 35/26/23/0 | 7/8/5 | ["nine_lives"] | 2 | 100%
-          picks: first after 15 s, 1.1 picks per run, 64 s between picks
-          (if the run lasted: 64 s between picks)
-    121 |  114 |    76 s |       43K |       29K |     14K | 44/37/33/0 | 7/8/5 | ["nine_lives", "magnet"] | 2 | 100%
-          picks: first after 15 s, 1.5 picks per run, 63 s between picks
-          (if the run lasted: 63 s between picks)
-
-  0.9 min  first purchase after run 2: fuel_tank
- 22.2 min  gear: nine_lives
- 45.0 min  gear: magnet
- 59.2 min  gear: reserve_tank
- 60.6 min  gear: head_start
- 72.0 min  gear: steady_nerves
- 80.7 min  gear: cloud_eye
- 90.6 min  2nd gear slot
-3,000 m goal (Coast unlock): 50% chance reached by 6 min, 90% by 19 min (a run needs 600 units = 3000 m)
-runs in 2 hours: 114, purchases: 143
-
+     62 |   27 |   178 s |       28K |      8.7K |     408 | 31/17/17/0 | 10/9/8 | ["reserve_tank"] | 1 | 100%
+          hits per run: 15.1 (each costs 25 fuel of 100)
+          picks: first after 15 s, 3.0 picks per run, 57 s between picks
+          (if the run lasted: 57 s between picks)
+     92 |   34 |   241 s |       89K |       21K |    4.2K | 41/33/23/0 | 11/10/10 | ["reserve_tank", "magnet"] | 2 | 100%
+          hits per run: 24.9 (each costs 25 fuel of 100)
+          picks: first after 15 s, 4.0 picks per run, 65 s between picks
+          (if the run lasted: 65 s between picks)
+    122 |   40 |   264 s |      166K |       36K |     32K | 48/39/36/0 | 12/10/12 | ["reserve_tank", "magnet"] | 2 | 100%
+          hits per run: 28.0 (each costs 25 fuel of 100)
+          picks: first after 15 s, 4.0 picks per run, 67 s between picks
+          (if the run lasted: 67 s between picks)
+  0.7 min  first purchase after run 1: fuel_tank
+ 17.1 min  gear: reserve_tank
+ 21.9 min  gear: magnet
+ 27.6 min  gear: nine_lives
+ 30.5 min  gear: head_start
+ 43.4 min  gear: steady_nerves
+ 50.0 min  gear: cloud_eye
+ 65.2 min  2nd gear slot
+Coast unlock goal: 50% chance reached by 1 min, 90% by 1 min (a run needs 1000 units = 5000 m)
+runs in 2 hours: 40, purchases: 167
 === runs needed to earn the same total (passive / engaged) ===
-      1K coins: engaged 4 runs (2 min), passive 10 runs (5 min)  ->  2.5x as many runs
-     10K coins: engaged 13 runs (8 min), passive 35 runs (21 min)  ->  2.7x as many runs
-    100K coins: engaged 27 runs (24 min), passive 71 runs (63 min)  ->  2.6x as many runs
-      1M coins: engaged 41 runs (43 min), passive - runs (-1 min)  ->  -
-     10M coins: engaged 58 runs (68 min), passive - runs (-1 min)  ->  -
-first purchase after run: engaged 1, passive 2
+      1K coins: engaged 2 runs (1 min), passive 4 runs (3 min)  ->  2.0x as many runs
+     10K coins: engaged 5 runs (5 min), passive 13 runs (15 min)  ->  2.6x as many runs
+    100K coins: engaged 10 runs (22 min), passive 25 runs (50 min)  ->  2.5x as many runs
+      1M coins: engaged 13 runs (38 min), passive 38 runs (107 min)  ->  2.9x as many runs
+     10M coins: engaged 17 runs (69 min), passive - runs (-1 min)  ->  -
+first purchase after run: engaged 1, passive 1
