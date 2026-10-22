@@ -1,0 +1,58 @@
+# tests/threat_sim.gd, 8 runs per build (perfect obstacle pilot; see docs/threats.md)
+  NOPERK seed 2000: 167 s, 8500 m, cans 36, hits 1, kills 0, shots 0, bosses 2, ended: Out of fuel after 1 hit | Dived on by a hawk
+  NOPERK seed 2001: 173 s, 8937 m, cans 39, hits 4, kills 0, shots 0, bosses 2, ended: Out of fuel after 4 hits | Dived on by a hawk
+  NOPERK seed 2002: 80 s, 3105 m, cans 18, hits 1, kills 0, shots 0, bosses 0, ended: Out of fuel after 1 hit | Clipped by a goose squadron
+  NOPERK seed 2003: 175 s, 9037 m, cans 37, hits 3, kills 0, shots 0, bosses 2, ended: Out of fuel after 3 hits | Clipped by a goose squadron
+  NOPERK seed 2004: 295 s, 21905 m, cans 72, hits 8, kills 0, shots 0, bosses 4, ended: Out of fuel after 8 hits | Clipped by a goose squadron
+  NOPERK seed 2005: 169 s, 8710 m, cans 32, hits 2, kills 0, shots 0, bosses 2, ended: Out of fuel after 2 hits | Clipped by a goose squadron
+  NOPERK seed 2006: 212 s, 12375 m, cans 51, hits 4, kills 0, shots 0, bosses 2, ended: Out of fuel after 4 hits | Hit by lightning
+  NOPERK seed 2007: 169 s, 8592 m, cans 32, hits 1, kills 0, shots 0, bosses 2, ended: Out of fuel after 1 hit | Clipped by a goose squadron
+NOPERK survival s: min 80  median 173  max 295 | hits/run 3.0 | shots/run 0.0 kills/run 0.0 (coins spent 0) | bosses/run 2.0 | m/run 10145
+  BUILD seed 2000: 89 s, 3505 m, cans 15, hits 0, kills 7, shots 5, bosses 0, ended: The tank ran dry | 
+  BUILD seed 2001: 263 s, 18990 m, cans 55, hits 0, kills 100, shots 86, bosses 4, ended: The tank ran dry | 
+  BUILD seed 2002: 353 s, 29632 m, cans 81, hits 2, kills 198, shots 166, bosses 6, ended: Out of fuel after 2 hits | Rammed the Goose General
+  BUILD seed 2003: 480 s, 46678 m, cans 78, hits 6, kills 331, shots 299, bosses 9, ended: survived 480s | Clipped by a goose squadron
+  BUILD seed 2004: 480 s, 46161 m, cans 89, hits 7, kills 296, shots 291, bosses 9, ended: survived 480s | Clipped by a goose squadron
+  BUILD seed 2005: 480 s, 45852 m, cans 95, hits 2, kills 329, shots 309, bosses 9, ended: survived 480s | Hit by lightning
+  BUILD seed 2006: 130 s, 5847 m, cans 25, hits 0, kills 11, shots 11, bosses 1, ended: The tank ran dry | 
+  BUILD seed 2007: 383 s, 33271 m, cans 64, hits 1, kills 234, shots 192, bosses 7, ended: Out of fuel after 1 hit | Rammed the Goose General
+BUILD  survival s: min 89  median 383  max 480 | hits/run 2.2 | shots/run 169.9 kills/run 188.2 (coins spent 26733) | bosses/run 5.6 | m/run 28742
+
+# timeline of one BUILD run (seed 2001, Flak Cannon first), first 3 minutes
+       15.0 s  PICK: Flak Cannon L1
+       20.0 s  Hawk circles
+       28.0 s  Hawk circles
+       35.0 s  Golden cans drop ahead (2)
+       41.0 s  PICK: Flak Cannon L2
+       52.0 s  Hawk circles
+       60.0 s  Geese squadron incoming
+       69.1 s  PICK: Second Wind L1
+       74.0 s  Hawk circles
+       90.0 s  Rival Crop Duster: warning
+       92.4 s  Rival Crop Duster arrives
+       97.3 s  Rival Crop Duster driven off
+       98.7 s  PICK: Flak Cannon L3  (RARE)
+      107.1 s  PICK: Wing Pods L1
+      110.0 s  Crows close in from behind
+      128.7 s  Flash the Falcon: warning
+      131.0 s  Flash the Falcon arrives
+      134.2 s  Flash the Falcon driven off
+      135.6 s  PICK: Wing Pods L2  (RARE)
+      135.7 s  Drone hovers
+      141.7 s  Hawk circles
+      147.0 s  Hawk circles
+      149.8 s  Hawk circles
+      152.6 s  Hawk circles
+      153.1 s  PICK: Fuel Miser L1
+      155.3 s  Hawk circles
+      157.9 s  Hawk circles
+      160.5 s  Hawk circles
+      162.5 s  Hawk circles
+      164.3 s  Hawk circles
+      165.6 s  The Thunderhead: warning
+      168.0 s  The Thunderhead arrives
+      175.5 s  The Thunderhead driven off
+      176.9 s  PICK: Second Wind L2  (RARE)
+      177.0 s  Hawk circles
+      180.9 s  Hawk circles
+       ended by { "survived 190s": 1 } | hits by {  } | launched (all runs) { "hawk": 16, "goose": 1, "crow": 1, "drone": 1 }

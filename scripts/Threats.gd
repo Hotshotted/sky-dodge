@@ -925,7 +925,8 @@ func _update_crows(g: Grp, delta: float) -> void:
 		m.prev_z = m.z
 		if m.z > plane_z + 2.2:   # (a crow commits once it is close: it flies straight on, never homing)
 			m.x = move_toward(m.x, plane_x + m.side, Tuning.crow_follow * delta)
-		_put(m, m.x + sin(_clock * 3.0 + m.phase) * 0.12, g.z + m.back)
+		_put(m, m.x, g.z + m.back)
+		m.position.x += sin(_clock * 3.0 + m.phase) * 0.12   # (a wobble you see; the crow's own x stays clean)
 		_flap(m, 20.0, 0.55)
 		if m.z > -half_h - 3.0:
 			alive = true

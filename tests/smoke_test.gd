@@ -4205,6 +4205,7 @@ func _initialize() -> void:
 	ct_sp.reset(-14.0)
 	ct_sp.run_time = 100.0
 	ct_coins.dropped = 0
+	seed(4242)   # (a fixed sequence of patterns: the pool check must not depend on luck)
 	var ct_peak := 0
 	for i in 400:
 		ct_sp._spawn_row(-30.0)
