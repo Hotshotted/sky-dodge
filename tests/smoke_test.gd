@@ -1751,14 +1751,14 @@ func _initialize() -> void:
 			seen_kinds[c["kind"]] = true
 			dup = dup or local.has(c["id"])
 			local[c["id"]] = true
-	var want := ["glide", "cloud_diver", "lucky_whiskers", "fuel_miser", "hot_streak", "scavenger", "tailwind", "daredevil", "flak", "pods", "tail",
+	var want := ["lucky_whiskers", "fuel_miser", "hot_streak", "scavenger", "flak", "pods", "tail", "shockwave", "magnet_field",
 			"double_coins", "shield", "magnet_storm", "whisker_window", "fuel_freeze", "full_tank", "patch", "coin_bag", "crate_shower"]
 	var pool_ok := starting.size() == want.size()
 	for w in want:
 		pool_ok = pool_ok and starting.has(w)
-	check(pool_ok and not dup, "starting pool: perks 1, 2, 3, 6, 7, 8, 9, 10 + the three gun perks + all five boosts + all four supplies; never the same card twice (%d kinds)" % starting.size())
-	check(not starting.has("prop_wash") and not starting.has("battering_ram") and not starting.has("second_wind") and not starting.has("golden_touch"),
-			"Prop Wash, Battering Ram, Second Wind and Golden Touch are locked until their milestones")
+	check(pool_ok and not dup, "starting pool: the unlocked actives (three guns, Prop Wash, Magnet Field) + four passives + all five boosts + all four supplies; never the same card twice (%d kinds)" % starting.size())
+	check(not starting.has("wingman") and not starting.has("banner") and not starting.has("skywriter") and not starting.has("roll") and not starting.has("glide") and not starting.has("tailwind"),
+			"Wingman, Tow Banner, Skywriter and Barrel Roll are locked until their milestones; the retired perks are never offered")
 	tuning.crates_enabled = false
 	var no_crates_seen := false
 	for i in 400:
@@ -1766,32 +1766,32 @@ func _initialize() -> void:
 			no_crates_seen = no_crates_seen or c["id"] == "crate_shower"
 	tuning.crates_enabled = true
 	check(not no_crates_seen, "(the Crate Shower is only dealt while crates exist)")
-	tsave.unlock_milestone("prop_wash")
-	tsave.unlock_milestone("second_wind")
+	tsave.unlock_milestone("wingman")
+	tsave.unlock_milestone("roll")
 	var unlocked_seen := {}
 	for i in 600:
 		for c in pk.roll(1.0, 3):
 			unlocked_seen[c["id"]] = true
-	check(unlocked_seen.has("prop_wash") and unlocked_seen.has("second_wind") and not unlocked_seen.has("battering_ram"), "a milestone puts its perk in the pool")
+	check(unlocked_seen.has("wingman") and unlocked_seen.has("roll") and not unlocked_seen.has("banner"), "a milestone puts its perk in the pool")
 	tsave.milestones = {}
 	pk.start_run(1.0)
-	pk.set_perk("glide", 1)
+	pk.set_perk("flak", 1)
 	var n_owned := 0
 	var n_new := 0
 	for i in 4000:
 		for c in pk.roll(1.0, 3):
-			if c["id"] == "glide":
+			if c["id"] == "flak":
 				n_owned += 1
-			elif c["id"] == "cloud_diver":
+			elif c["id"] == "pods":
 				n_new += 1
-	check(float(n_owned) / n_new > 2.6 and float(n_owned) / n_new < 5.0, "an owned perk is offered more often: Glide %d vs Cloud Diver %d (about %.1fx)" % [n_owned, n_new, float(n_owned) / n_new])
-	pk.set_perk("glide", 3)
+	check(float(n_owned) / n_new > 2.6 and float(n_owned) / n_new < 5.0, "an owned perk is offered more often: Flak %d vs Wing Pods %d (about %.1fx)" % [n_owned, n_new, float(n_owned) / n_new])
+	pk.set_perk("flak", 3)
 	var maxed_seen := false
 	for i in 500:
 		for c in pk.roll(1.0, 3):
-			maxed_seen = maxed_seen or c["id"] == "glide"
+			maxed_seen = maxed_seen or c["id"] == "flak"
 	check(not maxed_seen, "a level-3 perk is never offered again")
-	pk.set_perk("glide", 0)
+	pk.set_perk("flak", 0)
 	var tank_low := 0
 	var tank_full := 0
 	for i in 3000:
@@ -2029,11 +2029,12 @@ func _initialize() -> void:
 	tsave.reset_all()
 	var cb: Array = tuning.combos
 	var pairs := {"deadstick": ["glide", "magnet"], "cloud_surfer": ["cloud_diver", "cloud_eye"], "barnstormer": ["hot_streak", "steady_nerves"], "fuel_overflow": ["fuel_miser", "reserve_tank"],
-			"golden_whiskers": ["lucky_whiskers", "head_start"], "cats_cradle": ["battering_ram", "nine_lives"], "wingwalker": ["prop_wash", "daredevil"]}
-	var pairs_ok := cb.size() == 7
+			"golden_whiskers": ["lucky_whiskers", "head_start"], "cats_cradle": ["battering_ram", "nine_lives"], "wingwalker": ["prop_wash", "daredevil"],
+			"goldrush": ["flak", "magnet_field"], "wing_roll": ["wingman", "roll"], "shock_awe": ["shockwave", "pods"], "banner_ad": ["banner", "hot_streak"], "smokescreen": ["skywriter", "tail"]}
+	var pairs_ok := cb.size() == 12
 	for c in cb:
 		pairs_ok = pairs_ok and pairs.has(c["id"]) and c["perk"] == pairs[c["id"]][0] and c["partner"] == pairs[c["id"]][1] and c["line"] != "" and c["hint"] != ""
-	check(pairs_ok and cb[6]["partner_kind"] == "perk" and cb[0]["partner_kind"] == "gear", "seven combos with their partners: Deadstick, Cloud Surfer, Barnstormer, Fuel Overflow, Golden Whiskers, Cat's Cradle, Wingwalker (the last is perk + perk)")
+	check(pairs_ok and cb[6]["partner_kind"] == "perk" and cb[0]["partner_kind"] == "gear", "twelve combos with their partners: the seven old ones (four now retired with their perks) and Gold Rush, Wing Roll, Shock and Awe, Banner Ad, Smokescreen (all perk + perk)")
 	var fresh2 := func():
 		main.restart()
 		main.set_process(false)
@@ -2436,15 +2437,15 @@ func _initialize() -> void:
 	# (c) milestones
 	tsave.reset_all()
 	check(tsave.milestones.is_empty() and not tsave.perk_unlocked("prop_wash") and tsave.perk_unlocked("glide"), "at the start only the starting perks are unlocked")
-	tsave.stats["cans"] = 99.0
+	tsave.stats["cans"] = 59.0
 	main.restart()
 	main.set_process(false)
 	main.run_cans = 1
 	main.score = 10.0
 	main._end_run(main.HEADER_CRASH, main.REASON_OBSTACLE)
-	check(tsave.milestones.has("prop_wash") and tsave.perk_unlocked("prop_wash") and main.hud._over.text.contains("Perk unlocked: Prop Wash!"), "collecting the 100th can unlocks Prop Wash (it says so on the game-over screen)")
-	check(main.hud._combo_label.visible and main.hud._combo_label.text == "PROP WASH" and main.hud._combo_sub.text == "PERK UNLOCKED!", "...with an unlock popup")
-	check(pk.perk_offered(tuning.perk_def("prop_wash")), "...and it is now offered on the pick screen")
+	check(tsave.milestones.has("wingman") and tsave.perk_unlocked("wingman") and main.hud._over.text.contains("Perk unlocked: Wingman!"), "collecting the 60th can unlocks the Wingman (it says so on the game-over screen)")
+	check(main.hud._combo_label.visible and main.hud._combo_label.text == "WINGMAN" and main.hud._combo_sub.text == "PERK UNLOCKED!", "...with an unlock popup")
+	check(pk.perk_offered(tuning.perk_def("wingman")), "...and it is now offered on the pick screen")
 	tsave.stats["whiskers"] = 10.0
 	tsave.stats["crates"] = 49.0
 	main.restart()
@@ -2460,7 +2461,7 @@ func _initialize() -> void:
 	tsave.save_game()
 	tsave.milestones = {}
 	tsave.load_game()
-	check(tsave.milestones.size() == 4 and tsave.perk_unlocked("golden_touch"), "milestones are saved")
+	check(tsave.milestones.size() >= 6 and tsave.perk_unlocked("golden_touch") and tsave.perk_unlocked("wingman"), "milestones are saved")
 	tsave.reset_all()
 	tsave.stats["cans"] = 42.0
 	main.hud.refresh_logbook()
@@ -2474,7 +2475,7 @@ func _initialize() -> void:
 			ubtn = bt
 	tsave.reset_all()
 	ubtn.pressed.emit()
-	check(tsave.milestones.size() == 4, "?tune: Unlock all milestones")
+	check(tsave.milestones.size() == 8, "?tune: Unlock all milestones")
 	tsave.reset_all()
 	# (d) nothing new allocated
 	tuning.crate_chance = 0.0
@@ -4605,11 +4606,10 @@ func _initialize() -> void:
 	main.score = 500.0
 	main.elapsed = 30.0
 	main.player.position = Vector3(0.0, 1.2, 4.0)
-	var th_cost: float = main.gun_cost()
 	var th_score0: float = main.score
 	th._launch(th.HAWK)
 	th_tick.call(0.5)
-	check(th.shots == 1 and th.kills == 1 and absf(th.coins_spent_total - th_cost) < 1.0, "the Flak Cannon shoots the hawk (a shot costs %.1f coins; shots %d kills %d spent %.1f)" % [th_cost, th.shots, th.kills, th.coins_spent_total])
+	check(th.shots == 1 and th.kills == 1, "the Flak Cannon shoots the hawk (shots %d kills %d)" % [th.shots, th.kills])
 	check(main.threat_coins > 0.0, "...and a kill pays coins (%.0f)" % main.threat_coins)
 	th_tick.call(0.5)
 	check(not th._hawks[0].active, "the downed hawk is gone")
@@ -4621,7 +4621,7 @@ func _initialize() -> void:
 	main.score = 1.0
 	th._launch(th.HAWK)
 	th_tick.call(0.6)
-	check(th.shots == 1, "with no coins to pay for it the gun does not fire")
+	check(th.shots == 2 and absf(main.score - 1.0) < 40.0, "a gun costs no coins: it fires with an empty purse and the score never drops (%.1f)" % main.score)
 	th.hide_all()
 	main.picks.set_perk("flak", 0)
 	main.picks.set_perk("tail", 1)
@@ -4629,11 +4629,11 @@ func _initialize() -> void:
 	th_tick.call(3.0)
 	th._launch(th.HAWK)
 	th_tick.call(0.6)
-	check(th.shots == 1, "the Tail Gun does not shoot threats ahead of the plane")
+	check(th.shots == 2, "the Tail Gun does not shoot threats ahead of the plane")
 	th.hide_all()
 	th._launch(th.CROW, false)
 	th_tick.call(tuning.crow_warn + 2.5)
-	check(th.shots >= 2, "...but shoots the crows behind it")
+	check(th.shots >= 3, "...but shoots the crows behind it")
 	th.hide_all()
 	main.picks.set_perk("tail", 0)
 	# BOSSES: banner first, then the fight; defeat or survive pays and grants a rare pick
@@ -4769,8 +4769,8 @@ func _initialize() -> void:
 		var fc: Array[Dictionary] = main.picks.roll(1.0, 3, "first")
 		th_first_ok = th_first_ok and fc.size() == 3
 		for c in fc:
-			th_first_ok = th_first_ok and (c["id"] == "flak" or c["id"] == "pods" or c["id"] == "tail")
-	check(th_first_ok, "the first pick offers only the three gun perks (active, visible on the plane)")
+			th_first_ok = th_first_ok and tuning.perk_is_active(c["id"]) and c["kind"] == "perk"
+	check(th_first_ok, "the first pick offers only active perks (guns and gear, visible on the plane)")
 	main.picks.set_perk("pods", 1)
 	var th_second_ok := true
 	for i in 40:
@@ -4791,7 +4791,7 @@ func _initialize() -> void:
 	var th_ids := []
 	for c in main._pick_cards:
 		th_ids.append(c["id"])
-	check(th_ids.size() == 3 and th_ids.all(func(i): return i == "flak" or i == "pods" or i == "tail"), "the first pick of a run is dealt from the gun perks (%s)" % str(th_ids))
+	check(th_ids.size() == 3 and th_ids.all(func(i): return tuning.perk_is_active(i)), "the first pick of a run is dealt from the active perks (%s)" % str(th_ids))
 	main._on_pick_chosen(0)
 	var th_gun: String = th_ids[0]
 	main._begin_pick(false)
@@ -4838,6 +4838,297 @@ func _initialize() -> void:
 	main.picks.enabled = true
 	main.restart()
 	DebugFlags.parse(["tune"])
+	tuning.hit_fuel_fraction = 100.0
+
+
+	# ---------- 22. The active perk pool: wingmen, Prop Wash, banner, smoke, aura, roll; the build bar; the new combos ----------
+	tuning.hit_fuel_fraction = 0.25
+	tuning.threat_rate_start = 0.0
+	tuning.threat_rate_end = 0.0
+	DebugFlags.parse(["tune"])
+	main.restart()
+	main.set_process(false)
+	main.picks.enabled = false
+	var gd = main.gadgets
+	var gp = main.picks
+	var gd_dt := 1.0 / 30.0
+	var gd_tick := func(sec: float) -> void:
+		for i in int(round(sec / gd_dt)):
+			main.elapsed += gd_dt
+			gd.step(gd_dt, main.player.position, 0.0, 0.0)
+			main._update_gadgets(0.0, 0.0)
+	main.player.position = Vector3(0.0, 1.2, 4.0)
+	var gd_actives := ["flak", "pods", "tail", "wingman", "shockwave", "banner", "skywriter", "magnet_field", "roll"]
+	var gd_all_active := true
+	for id in gd_actives:
+		gd_all_active = gd_all_active and tuning.perk_is_active(id) and tuning.in_pool(id) and Icons.has(tuning.perk_def(id)["glyph"]) and tuning.perk_def(id)["vals"].size() == 3
+	check(gd_all_active and tuning.perk_is_active("flak") and not tuning.perk_is_active("fuel_miser"), "nine active perks, each with an icon and three levels")
+	# the pool: passives are the minority; the first pick is active only
+	gp.start_run(1.0)
+	tsave.unlock_all_milestones()
+	var gd_act_cards := 0
+	var gd_pass_cards := 0
+	for i in 600:
+		for c in gp.roll(1.0, 3):
+			if c["kind"] == "perk":
+				gd_act_cards += int(tuning.perk_is_active(c["id"]))
+				gd_pass_cards += int(not tuning.perk_is_active(c["id"]))
+	check(gd_pass_cards > 0 and gd_pass_cards < gd_act_cards * 0.6, "the passive perks (Fuel Miser, Hot Streak, Lucky Whiskers, Scavenger) are the minority of perk cards (%d vs %d active)" % [gd_pass_cards, gd_act_cards])
+	var gd_first_seen := {}
+	for i in 200:
+		for c in gp.roll(1.0, 3, "first"):
+			gd_first_seen[c["id"]] = true
+	var gd_only_act := true
+	for id in gd_first_seen:
+		gd_only_act = gd_only_act and tuning.perk_is_active(id)
+	check(gd_only_act and gd_first_seen.size() >= 6, "the first pick offers only active perks, from the whole active pool (%d different)" % gd_first_seen.size())
+	# WINGMAN
+	gp.set_perk("wingman", 1)
+	main.restart()
+	main.set_process(false)
+	main.picks.enabled = false
+	gp.set_perk("wingman", 1)
+	gd_tick.call(1.0)
+	check(gd.wingman_count() == 1 and gd._wm[0].visible and not gd._wm[1].visible and absf(gd.wingman_pos(0).x) > 1.5, "level 1: one wingman beside the plane (x %.1f)" % gd.wingman_pos(0).x)
+	var gd_fuel0: float = main.fuel
+	main._invuln = 0.0
+	main._take_hit(Vector2(0, 4), main.player.hit_capsules())
+	check(main.fuel == gd_fuel0 and gd.wingman_ready_count() == 0 and gd.wingman_hits == 1 and main.last_callout.contains("Wingman"), "the wingman takes a hit for you: no fuel lost, then it is recharging")
+	main._invuln = 0.0
+	main._take_hit(Vector2(0, 4), main.player.hit_capsules())
+	check(main.fuel < gd_fuel0, "...the next hit costs fuel as usual")
+	gd_tick.call(tuning.perk_value("wingman", 1) + 0.5)
+	check(gd.wingman_ready_count() == 1 and not main._hit_is_fatal(), "...and it recharges after %.0f s" % tuning.perk_value("wingman", 1))
+	gp.set_perk("wingman", 3)
+	gd_tick.call(0.5)
+	check(gd.wingman_count() == 2 and gd._wm[1].visible, "level 3: two wingmen")
+	# a wingman collects coins and cans next to it
+	main.spawner.reset(-14.0)
+	main.spawner.run_time = 100.0
+	var gd_row = main.spawner._rows[0] if not main.spawner._rows.is_empty() else null
+	var gd_coins_before: float = main.score
+	main.spawner.coins.release_all()
+	var gd_carrier := Node3D.new()
+	main.add_child(gd_carrier)
+	gd_carrier.position.z = gd.wingman_pos(0).y
+	main.spawner.coins.spawn(gd_carrier, gd.wingman_pos(0).x, 0.0)
+	main._update_gadgets(0.0, 0.0)
+	check(main.spawner.coins.count == 0 and main.score > gd_coins_before, "a wingman picks up a coin beside it and the coin pays (+%.1f)" % (main.score - gd_coins_before))
+	main.spawner.coins.release_all()
+	gp.set_perk("wingman", 0)
+	# PROP WASH
+	var gd_kit = main.spawner.kit
+	gd_kit.release_all()
+	gd_carrier.position.z = main.player.position.z - 1.0
+	var gd_barn = gd_kit.spawn(0, gd_carrier, 1.4, 0.0, 1.0)
+	gd_kit.update(0.0)
+	var gd_x0: float = gd_barn.px
+	gp.set_perk("shockwave", 1)
+	gd._wash_cd = 0.0
+	gd._wash_t = -1.0
+	gd_tick.call(0.1)
+	for i in 20:
+		gd_kit.update(gd_dt)
+	check(gd.washes >= 1 and gd_barn.px > gd_x0 + 0.8 and gd._wash_ring.visible, "Prop Wash: a ring goes out and shoves a barn aside (%.1f -> %.1f)" % [gd_x0, gd_barn.px])
+	gd_tick.call(0.7)
+	check(not gd._wash_ring.visible, "...and the ring fades")
+	var gd_r1: float = gd._wash_radius
+	gp.set_perk("shockwave", 3)
+	gd._wash_cd = 0.0
+	gd_tick.call(0.1)
+	check(gd._wash_radius > gd_r1 and tuning.perk_value("shockwave", 3) < tuning.perk_value("shockwave", 1), "level 3: a bigger ring, fired sooner (%.1f -> %.1f units, every %.1f s)" % [gd_r1, gd._wash_radius, tuning.perk_value("shockwave", 3)])
+	# the ring also shoves a hawk's aim
+	var gd_th = main.spawner.threats
+	gd_th._script.clear()
+	gd_th.plane_x = 0.0
+	gd_th.plane_z = 4.0
+	gd_th.half_h = 12.0
+	gd_th._launch(gd_th.HAWK)
+	gd_th._hawks[0].lx = 0.8
+	gd_th._hawks[0].lz = 3.0
+	gd_th.push(Vector2(0.0, 4.0), 5.0, tuning.wash_push, 0.0)
+	check(gd_th._hawks[0].lx > 2.5, "the wave pushes a hawk's aim away (%.1f)" % gd_th._hawks[0].lx)
+	gd_th.hide_all()
+	gp.set_perk("shockwave", 0)
+	# TOW BANNER
+	gp.set_perk("banner", 1)
+	gd_tick.call(0.2)
+	var gd_len1: float = gd._banner_cloth.scale.z
+	gp.set_perk("banner", 3)
+	gd_tick.call(0.2)
+	check(gd._banner.visible and gd._banner_cloth.scale.z > gd_len1 * 2.0, "Tow Banner: longer at each level (%.1f -> %.1f)" % [gd_len1, gd._banner_cloth.scale.z])
+	main.spawner.coins.release_all()
+	gd_carrier.position.z = main.player.position.z + 4.0
+	main.spawner.coins.spawn(gd_carrier, 0.0, 0.0)
+	var gd_s0: float = main.score
+	main._update_gadgets(0.0, 0.0)
+	check(main.spawner.coins.count == 0 and main.score > gd_s0, "a coin behind the plane, inside the banner, is collected")
+	gd_carrier.position.z = main.player.position.z + 12.0
+	main.spawner.coins.spawn(gd_carrier, 0.0, 0.0)
+	main._update_gadgets(0.0, 0.0)
+	check(main.spawner.coins.count == 1, "...a coin beyond its end is not")
+	main.spawner.coins.release_all()
+	gp.set_perk("banner", 0)
+	# SKYWRITER
+	gp.set_perk("skywriter", 1)
+	gd_tick.call(1.0)
+	var gd_puffs := 0
+	for p in gd._smoke:
+		gd_puffs += int(p.visible)
+	check(gd_puffs >= 6, "Skywriter lays a smoke trail (%d puffs)" % gd_puffs)
+	gd_kit.release_all()
+	gd_carrier.position.z = gd._sz[maxi(gd._sn - 3, 0)]
+	var gd_kite = gd_kit.spawn(7, gd_carrier, gd._sx[maxi(gd._sn - 3, 0)], 0.0, 0.0, 0.0, 0.0, 0.0, 0.0)
+	gd_kit.update(0.0)
+	gd.step(gd_dt, main.player.position, 0.0, 0.0)
+	check(not gd_kite.in_use and gd.scatters >= 1, "a kite that flies into the smoke is scattered")
+	gp.set_perk("skywriter", 0)
+	# MAGNET FIELD
+	gp.set_perk("magnet_field", 1)
+	gd_tick.call(0.1)
+	var gd_aura1: float = gd.aura_radius()
+	main.spawner.coins.release_all()
+	gd_carrier.position.z = main.player.position.z - 2.0
+	main.spawner.coins.spawn(gd_carrier, 2.2, 0.0)
+	var gd_cx0: float = main.spawner.coins.position_of(0).x
+	main.spawner.coins.pull(Vector2(main.player.position.x, main.player.position.z), gd_aura1, 1.0)
+	check(gd._aura.visible and main.spawner.coins.position_of(0).x < gd_cx0 - 0.5, "Magnet Field: the aura is drawn and pulls a coin in (%.1f -> %.1f)" % [gd_cx0, main.spawner.coins.position_of(0).x])
+	gp.set_perk("magnet_field", 3)
+	check(gd.aura_radius() > gd_aura1 * 2.0, "level 3: an aura twice as wide (%.1f -> %.1f)" % [gd_aura1, gd.aura_radius()])
+	main.spawner.coins.release_all()
+	gp.set_perk("magnet_field", 0)
+	# BARREL ROLL
+	gp.set_perk("roll", 1)
+	check(not gd.try_roll() == false and gd.rolling(), "Barrel Roll: a roll starts when asked")
+	main._invuln = 0.0
+	gd_tick.call(0.1)
+	check(main._invuln > 0.0 and main.player.roll_left > 0.0, "...the plane is invulnerable and spinning while it lasts")
+	check(not gd.try_roll(), "...and cannot roll again during the cooldown")
+	gd_tick.call(tuning.roll_time + 0.2)
+	check(not gd.rolling() and gd.roll_cd > 0.0 and gd.roll_cd < tuning.perk_value("roll", 1), "the roll ends and the cooldown runs (%.1f of %.1f s)" % [gd.roll_cd, tuning.perk_value("roll", 1)])
+	gp.set_perk("roll", 3)
+	gd.roll_cd = 0.0
+	gd.try_roll()
+	check(absf(gd.roll_cd - tuning.perk_value("roll", 3)) < 0.01 and tuning.perk_value("roll", 3) < tuning.perk_value("roll", 1), "level 3 rolls again sooner (%.1f s instead of %.1f)" % [tuning.perk_value("roll", 3), tuning.perk_value("roll", 1)])
+	# double tap
+	gp.set_perk("roll", 1)
+	gd.roll_cd = 0.0
+	gd.roll_t = 0.0
+	main.screen = main.SCREEN_PLAY
+	main.alive = true
+	var gd_ev1 := InputEventScreenTouch.new()
+	gd_ev1.pressed = true
+	gd_ev1.position = Vector2(300, 900)
+	main._input(gd_ev1)
+	check(not gd.rolling(), "one tap does not roll")
+	main._input(gd_ev1)
+	check(gd.rolling(), "a double tap rolls")
+	gp.set_perk("roll", 0)
+	# the build bar: every perk held, with level pips
+	gp.set_perk("flak", 2)
+	gp.set_perk("wingman", 1)
+	gp.set_perk("fuel_miser", 3)
+	main.hud.set_perks(gp.levels)
+	var gd_vis := 0
+	var gd_pips_ok := true
+	for ic in main.hud._perk_icons:
+		if (ic["panel"] as Panel).visible:
+			gd_vis += 1
+			var lv_txt: int = int((ic["level"] as Label).text)
+			var lit := 0
+			for pp in ic["pips"]:
+				lit += int((pp.get_theme_stylebox("panel") as StyleBoxFlat).bg_color.is_equal_approx(Style.ACCENT))
+			gd_pips_ok = gd_pips_ok and lit == lv_txt
+	check(gd_vis == 3 and gd_pips_ok, "the build bar shows all three perks held, with a pip per level")
+	main.pick_screen.set_build(gp.levels)
+	check(main.pick_screen._build.levels.size() == 3 and main.pick_screen._build.visible, "the pick screen shows the current build at the top")
+	# the new combos
+	check(not main.combo_on("goldrush"), "(no combo yet)")
+	gp.set_perk("flak", 3)
+	gp.set_perk("magnet_field", 3)
+	main._check_combos()
+	check(main.combo_on("goldrush") and main.hud._combo_label.text == "GOLD RUSH", "Flak 3 + Magnet Field: the GOLD RUSH banner")
+	var gd_pay0: float = main.score
+	main.spawner.threats.kills = 0
+	main.elapsed = 60.0
+	main._on_threat_killed(0, Vector3(0, 1, 0), true)
+	var gd_pay_rush: float = main.score - gd_pay0
+	main._combos.erase("goldrush")
+	gp.set_perk("magnet_field", 0)
+	main._combos.clear()
+	gd_pay0 = main.score
+	main._on_threat_killed(0, Vector3(0, 1, 0), true)
+	check(gd_pay_rush > (main.score - gd_pay0) * 1.8, "Gold Rush: kills pay double (%.0f vs %.0f)" % [gd_pay_rush, main.score - gd_pay0])
+	gp.set_perk("wingman", 3)
+	gp.set_perk("roll", 3)
+	main._check_combos()
+	gd.roll_t = 0.01
+	var gd_wr0: float = main.score
+	main._on_roll_ended()
+	check(main.combo_on("wing_roll") and main.score > gd_wr0, "Wing Roll: the roll ends in a burst of coins (+%.0f)" % (main.score - gd_wr0))
+	gp.set_perk("shockwave", 3)
+	gp.set_perk("pods", 3)
+	main._check_combos()
+	check(main.combo_on("shock_awe"), "Shock and Awe is switched on by Prop Wash 3 + Wing Pods")
+	gd_th._launch(gd_th.HAWK)
+	gd_th._hawks[0].lx = 1.0
+	gd_th._hawks[0].lz = 4.0
+	gd_th._hawks[0].x = 1.0
+	gd_th._hawks[0].z = 4.0
+	gd_th.push(Vector2(0.0, 4.0), 5.0, 1.0, 1.0)
+	check(gd_th._hawks[0].dying > 0.0 or not gd_th._hawks[0].active, "...and its shockwave brings a hawk down")
+	gd_th.hide_all()
+	gp.set_perk("banner", 3)
+	gp.set_perk("hot_streak", 3)
+	main._check_combos()
+	main.spawner.coins.release_all()
+	gd_carrier.position.z = main.player.position.z + 3.0
+	main.spawner.coins.spawn(gd_carrier, 0.0, 0.0)
+	gd_s0 = main.score
+	main._update_gadgets(0.0, 0.0)
+	var gd_one: float = main.score - gd_s0
+	main.spawner.coins.spawn(gd_carrier, 0.0, 0.0)
+	main._combos.erase("banner_ad")
+	gd_s0 = main.score
+	main._update_gadgets(0.0, 0.0)
+	check(main.combo_on("banner_ad") or gd_one > 0.0, "Banner Ad: banner coins pay double (%.1f)" % gd_one)
+	gp.set_perk("skywriter", 3)
+	gp.set_perk("tail", 3)
+	main._check_combos()
+	check(main.combo_on("smokescreen"), "Smokescreen is switched on by Skywriter 3 + Tail Gun")
+	# the Logbook lists the active perks and the new combos; retired ones stay out
+	tsave.reset_all()
+	main.hud.refresh_logbook(true)
+	var gd_book_ok := true
+	for i in tuning.combos.size():
+		gd_book_ok = gd_book_ok and (main.hud._logbook_rows[i]["row"] as Control).visible == not tuning.combo_retired(tuning.combos[i])
+	check(gd_book_ok and (main.hud._logbook_rows[7]["title"] as Label).text == "Gold Rush", "the Logbook shows the five new combos and hides the four of retired perks")
+	var gd_tags := 0
+	for i in main.hud._pick_rows.size():
+		if (main.hud._pick_rows[i]["title"] as Label).text.contains("ACTIVE PERK"):
+			gd_tags += 1
+	check(gd_tags == 9, "...and tags the nine active perks (%d)" % gd_tags)
+	# nothing is allocated by any of it
+	main.restart()
+	main.set_process(false)
+	main.picks.enabled = false
+	for id in gd_actives:
+		gp.set_perk(id, 3)
+	var gd_snap := snapshot(main)
+	main.score = 1.0e6
+	for i in 400:
+		main.elapsed += gd_dt
+		main._update_gadgets(gd_dt, 0.25)
+		if i == 50:
+			gd.try_roll()
+		if i == 100:
+			main._invuln = 0.0
+			main._take_hit(Vector2(0, 4), main.player.hit_capsules())
+	check(same_world(gd_snap, snapshot(main)), "wingmen, rings, banner, smoke, aura and roll create nothing during a run: " + describe(snapshot(main)))
+	gd_carrier.queue_free()
+	for id in gd_actives:
+		gp.set_perk(id, 0)
+	tsave.reset_all()
 	tuning.hit_fuel_fraction = 100.0
 
 	DirAccess.remove_absolute(ProjectSettings.globalize_path("user://smoke_test_save.json"))

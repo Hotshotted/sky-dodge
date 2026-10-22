@@ -32,7 +32,7 @@ var _map_cards: Array[Button] = []         # start screen: one card per map
 var _map_dots: Array = []                  # per card: its three medal dots
 var _distance_label: Label
 var _next_label: Label                    # "Next: 1.5K" (the score of the next pick)
-const PERK_ICONS := 12
+const PERK_ICONS := 14
 var _perk_ids: Array[String] = []           # the perk id shown in each icon slot (set_perks)
 var _perk_scale := PackedFloat32Array()
 var _perk_pulse_ms := PackedInt64Array()    # per slot: when its icon last pulsed
@@ -186,7 +186,16 @@ func _ready() -> void:
 		lv.position = Vector2(28, 26)
 		lv.size = Vector2(30, 32)
 		panel.add_child(lv)
-		_perk_icons.append({"panel": panel, "icon": iv, "glyph": iv, "level": lv})
+		var pips: Array[Panel] = []   # the level pips under the icon (the build bar)
+		for k in 3:
+			var pip := Panel.new()
+			pip.add_theme_stylebox_override("panel", Style.box(Style.ACCENT, Color(Style.INK, 0.9), 4, 2, false))
+			pip.position = Vector2(8.0 + 15.0 * k, 59.0)
+			pip.size = Vector2(12, 9)
+			pip.mouse_filter = Control.MOUSE_FILTER_IGNORE
+			panel.add_child(pip)
+			pips.append(pip)
+		_perk_icons.append({"panel": panel, "icon": iv, "glyph": iv, "level": lv, "pips": pips})
 		_perk_ids.append("")
 		_perk_pulse_ms.append(-100000)
 		_perk_scale.append(1.0)
@@ -629,6 +638,7 @@ func refresh_logbook(all_found: bool = false) -> void:
 	for i in Tuning.combos.size():
 		var c: Dictionary = Tuning.combos[i]
 		var r := _logbook_rows[i]
+		(r["row"] as Control).visible = not Tuning.combo_retired(c)   # (combos of perks that are no longer offered stay out of the book)
 		var found: bool = all_found or bool(Save.combos_found.get(c["id"], false))
 		var iv := r["icon"] as IconView
 		iv.plate = c["color"] if found else Color(0.22, 0.25, 0.33)
@@ -644,6 +654,7 @@ func _refresh_pick_rows() -> void:
 	for i in _pick_row_defs.size():
 		var d: Dictionary = _pick_row_defs[i]
 		var r := _pick_rows[i]
+		(r["row"] as Control).visible = not d.has("vals") or Tuning.in_pool(d["id"])
 		var line: String = d["line"]
 		var tag := ""
 		if d.has("vals"):   # a perk: show the values of its three levels
@@ -651,9 +662,9 @@ func _refresh_pick_rows() -> void:
 			for v in d["vals"]:
 				vs.append(("%d" % int(v)) if absf(v - round(v)) < 0.001 else ("%.1f" % v))
 			line = line.replace("{v}", " / ".join(vs))
-			tag = "   PERK"
+			tag = "   ACTIVE PERK" if d.get("active", false) else "   PERK"
 			if d["unlock"] != "" and not Save.milestones.has(d["unlock"]):
-				tag = "   PERK (locked: a milestone)"
+				tag += " (locked: a milestone)"
 		elif Tuning.boosts.has(d):
 			tag = "   BOOST %d s" % int(Tuning.boost_time)
 		else:
@@ -669,6 +680,7 @@ func _refresh_milestones() -> void:
 	for i in Tuning.milestones.size():
 		var m: Dictionary = Tuning.milestones[i]
 		var r := _milestone_rows[i]
+		(r["row"] as Control).visible = Tuning.in_pool(m["perk"])
 		var perk := Tuning.perk_def(m["perk"])
 		var done: bool = Save.milestones.has(m["id"])
 		var pr: Vector2 = Save.milestone_progress(m)
@@ -897,6 +909,10 @@ func set_perks(levels: Dictionary) -> void:
 			iv.plate = held[i]["color"]
 			iv.icon = held[i]["glyph"]
 			(ic["level"] as Label).text = str(int(levels[held[i]["id"]]))
+			var lvl_held := int(levels[held[i]["id"]])
+			for k in 3:
+				var pp := (ic["pips"] as Array)[k] as Panel
+				(pp.get_theme_stylebox("panel") as StyleBoxFlat).bg_color = Style.ACCENT if k < lvl_held else Color(Style.INK, 0.75)
 	_reposition_perks()
 
 func _reposition_perks() -> void:

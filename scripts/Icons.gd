@@ -10,7 +10,7 @@ const ICONS := ["coin", "star", "star_off", "clock", "pause", "play", "back", "h
 	"bolt", "arrow_up", "wrench", "trophy", "sparkle", "close", "plus", "quest",
 	# perks
 	"glide", "cloud_diver", "lucky_whiskers", "prop_wash", "battering_ram", "fuel_miser", "hot_streak", "scavenger", "tailwind", "daredevil",
-	"second_wind", "golden_touch", "flak", "pods", "tail",
+	"second_wind", "golden_touch", "flak", "pods", "tail", "wingman", "shockwave", "banner", "skywriter", "magnet_field", "roll",
 	# boosts and supplies
 	"double_coins", "magnet_storm", "whisker_window", "fuel_freeze", "full_tank", "patch", "crate_shower", "coin_bag",
 	# upgrades and gear
@@ -217,6 +217,30 @@ static func draw(ci: CanvasItem, id: String, c: Vector2, r: float, col: Color = 
 				var ang := k * PI + 0.5
 				ci.draw_line(c, c + Vector2(cos(ang), sin(ang)) * r * 0.8, col, w * 2.0, true)
 			ci.draw_arc(c, r * 0.95, PI * 0.9, PI * 1.9, 10, col, w * 0.8, true)
+		"wingman":   # a small drone: body and two rotors
+			ci.draw_circle(c, r * 0.32, col)
+			for sgn in [-1.0, 1.0]:
+				ci.draw_line(c + Vector2(sgn * r * 0.35, -r * 0.25), c + Vector2(sgn * r * 0.9, -r * 0.25), col, w * 1.3, true)
+				ci.draw_line(c + Vector2(sgn * r * 0.62, -r * 0.25), c + Vector2(sgn * r * 0.62, r * 0.15), col, w * 0.9, true)
+			ci.draw_circle(c, r * 0.13, Color(0.2, 0.9, 1.0, a))
+		"shockwave":   # a dot and widening rings
+			ci.draw_circle(c, r * 0.2, col)
+			ci.draw_arc(c, r * 0.55, 0.0, TAU, 20, col, w, true)
+			ci.draw_arc(c, r * 0.95, 0.0, TAU, 24, Color(col, a * 0.7), w * 0.8, true)
+		"banner":   # a pole and a streaming flag
+			ci.draw_line(c + Vector2(-r * 0.7, -r * 0.8), c + Vector2(-r * 0.7, r * 0.8), col, w * 1.1, true)
+			_poly(ci, [c + Vector2(-r * 0.7, -r * 0.7), c + Vector2(r * 0.9, -r * 0.45), c + Vector2(r * 0.3, -r * 0.05), c + Vector2(r * 0.9, r * 0.35), c + Vector2(-r * 0.7, r * 0.1)], col)
+		"skywriter":   # a plane's smoke squiggle
+			ci.draw_polyline(PackedVector2Array([c + Vector2(-r * 0.95, r * 0.5), c + Vector2(-r * 0.4, -r * 0.2), c + Vector2(r * 0.1, r * 0.4), c + Vector2(r * 0.6, -r * 0.3)]), col, w * 1.3, true)
+			ci.draw_circle(c + Vector2(r * 0.8, -r * 0.5), r * 0.22, col)
+		"magnet_field":   # a magnet inside a pulling ring
+			ci.draw_arc(c, r * 0.95, 0.0, TAU, 24, Color(col, a * 0.8), w * 0.8, true)
+			ci.draw_arc(c + Vector2(0, r * 0.1), r * 0.45, PI, TAU, 12, col, w * 1.5, true)
+			ci.draw_line(c + Vector2(-r * 0.45, r * 0.1), c + Vector2(-r * 0.45, r * 0.5), col, w * 1.5, true)
+			ci.draw_line(c + Vector2(r * 0.45, r * 0.1), c + Vector2(r * 0.45, r * 0.5), col, w * 1.5, true)
+		"roll":   # a circular arrow
+			ci.draw_arc(c, r * 0.7, -PI * 0.2, PI * 1.5, 20, col, w * 1.4, true)
+			_tri(ci, c + Vector2(r * 0.9, -r * 0.1), c + Vector2(r * 0.45, -r * 0.35), c + Vector2(r * 0.7, r * 0.25), col)
 		"flak", "pods", "tail":   # a gun barrel and its burst: forward, sideways or backward
 			var dir := Vector2(0, -1) if id == "flak" else (Vector2(1, 0) if id == "pods" else Vector2(0, 1))
 			var side := Vector2(-dir.y, dir.x)

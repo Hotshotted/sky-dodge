@@ -72,7 +72,7 @@ func _num(v: float) -> String:
 
 ## Is this perk offered at all? (Unlocked, not maxed, and crates exist if it needs them.)
 func perk_offered(d: Dictionary) -> bool:
-	if not Save.perk_unlocked(d["id"]):
+	if not Tuning.in_pool(d["id"]) or not Save.perk_unlocked(d["id"]):
 		return false
 	if d.get("needs", "") == "crates" and not Tuning.crates_enabled:
 		return false
@@ -81,15 +81,14 @@ func perk_offered(d: Dictionary) -> bool:
 ## Build the cards for a pick: `count` different ones, drawn by weight. Owned perks are offered more often; Full
 ## Tank and Patch Kit more often the emptier the tank is. Each card is a Dictionary (kind, id, name, glyph, color, line, level, owned).
 func roll(fuel_frac: float, count: int = 3, mode: String = "") -> Array[Dictionary]:
-	if mode == "first":   # the very first pick: the three gun perks, so the player starts with something that answers the hawks
-		var guns: Array[Dictionary] = []
-		for id in GUN_IDS:
-			var gd := Tuning.perk_def(id)
-			if perk_offered(gd):
-				guns.append(perk_card(gd, level(id) + 1, level(id) > 0))
-		if not guns.is_empty():
-			guns.shuffle()
-			return guns.slice(0, count)
+	if mode == "first":   # the very first pick: active, visible perks only (guns or gear), so the player starts with something that fights
+		var acts: Array[Dictionary] = []
+		for d in Tuning.perks:
+			if d.get("active", false) and perk_offered(d):
+				acts.append(perk_card(d, level(d["id"]) + 1, level(d["id"]) > 0))
+		if not acts.is_empty():
+			acts.shuffle()
+			return acts.slice(0, count)
 	if mode == "rare":
 		return _roll_rare(count)
 	var pool: Array[Dictionary] = []
@@ -99,7 +98,7 @@ func roll(fuel_frac: float, count: int = 3, mode: String = "") -> Array[Dictiona
 			continue
 		var lvl := level(d["id"])
 		pool.append(perk_card(d, lvl + 1, lvl > 0))
-		weights.append(1.0 + (Tuning.perk_owned_weight if lvl > 0 else 0.0))
+		weights.append((1.0 if d.get("active", false) else 0.6) + (Tuning.perk_owned_weight if lvl > 0 else 0.0))
 	for d in Tuning.boosts:
 		pool.append({"kind": "boost", "id": d["id"], "name": d["name"], "glyph": d["glyph"], "color": d["color"], "line": Tuning.pick_short[d["id"]], "level": 0, "owned": false})
 		weights.append(Tuning.boost_weight)
@@ -162,11 +161,12 @@ func roll(fuel_frac: float, count: int = 3, mode: String = "") -> Array[Dictiona
 
 const GUN_IDS := ["flak", "pods", "tail"]
 
-## The level-up card of the best gun held (empty when none is held or it is maxed).
+## The level-up card of the highest-level active perk held (empty when none is held or it is maxed).
 func gun_level_up_card() -> Dictionary:
 	var best := ""
-	for id in GUN_IDS:
-		if level(id) > 0 and level(id) < 3 and (best == "" or level(id) > level(best)):
+	for d in Tuning.perks:
+		var id: String = d["id"]
+		if d.get("active", false) and level(id) > 0 and level(id) < 3 and (best == "" or level(id) > level(best)):
 			best = id
 	if best == "":
 		return {}

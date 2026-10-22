@@ -109,11 +109,14 @@ func sync(plane_z: float) -> void:
 func collect(p: Vector2, caps: PackedFloat32Array, radius: float) -> int:
 	var got := 0
 	var k := 0
+	var window := 3.0   # coins further than this from the plane's z are skipped quickly (a long Tow Banner widens it)
+	for o in range(0, caps.size(), 5):
+		window = maxf(window, maxf(absf(caps[o + 1]), absf(caps[o + 3])) + caps[o + 4] + radius + 0.5)
 	while k < _alive.size():
 		var i := _alive[k]
 		var cz: float = _rows[i].position.z + _dz[i]
 		var hit := false
-		if absf(cz - p.y) < 3.0:
+		if absf(cz - p.y) < window:
 			var centre := Vector2(_x[i], cz)
 			for o in range(0, caps.size(), 5):
 				var a := Vector2(p.x + caps[o], p.y + caps[o + 1])
@@ -131,6 +134,20 @@ func collect(p: Vector2, caps: PackedFloat32Array, radius: float) -> int:
 	if got > 0:
 		sync(p.y)   # (the collected ones disappear this frame)
 	return got
+
+## Magnet Field: coins within `radius` of p move `move` units toward it.
+func pull(p: Vector2, radius: float, move: float) -> void:
+	for i in _alive:
+		var cz: float = _rows[i].position.z + _dz[i]
+		if absf(cz - p.y) > radius or absf(_x[i] - p.x) > radius:
+			continue
+		var pos := Vector2(_x[i], cz)
+		var d := pos.distance_to(p)
+		if d >= radius or d < 0.001:
+			continue
+		var np := pos.move_toward(p, move)
+		_x[i] = np.x
+		_dz[i] += np.y - cz
 
 ## Where coin number `n` (0 .. count-1) is now, for the tests.
 func position_of(n: int) -> Vector3:

@@ -1104,6 +1104,17 @@ func _make_gulls(row: Row, width: float) -> void:
 		row.gull_phase.append(randf() * TAU)
 
 ## Prop Wash: shove obstacle `k` of `row` sideways (dir = -1 / +1) at `speed` units/second. Gulls keep to their own drift.
+## Prop Wash on the cube rows (the other maps): the cubes within the ring are nudged away from its centre.
+func shove_rows(centre: Vector2, radius: float) -> void:
+	if kit_on:
+		return
+	for r in _rows:
+		if absf(r.position.z - centre.y) > radius:
+			continue
+		for k in r.xs.size():
+			if absf(r.xs[k] - centre.x) < radius and r.xs[k] < 1.0e5:
+				nudge_obstacle(r, k, 1 if r.xs[k] >= centre.x else -1, Tuning.wash_shove * 0.6)
+
 func nudge_obstacle(row: Row, k: int, dir: int, speed: float, depth: int = 0) -> void:
 	if k < 0 or k >= row.xs.size() or row.gull_k.has(k):
 		return

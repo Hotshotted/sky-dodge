@@ -13,14 +13,33 @@ material is created once at start-up and only shown / hidden), pre-warmed under 
 | Crows | a flock closes from behind, following the plane's x | chevron at the bottom edge for 1.3 s, caws | dash sideways when they are close (they commit and fly straight once near) |
 | Drone | hovers at the top tracking the plane, winds up, darts down a locked lane | the lane glows red and a whine climbs for 0.95 s | leave the lane (the lane obeys the lightning fairness rule) |
 
-All of them can be shot down by the gun perks, and a kill pays coins.
+All of them can be shot down by the guns or answered by the gear below, and a kill pays coins.
 
-## Gun perks (the first pick)
+## Active perks (the first pick)
 
-Flak Cannon (ahead), Wing Pods (sides), Tail Gun (behind). They fire by themselves at the nearest threat in their sector and
-range, once per cooldown (levels 1-3: 2.2 / 1.4 / 0.8 s for the Flak), and each shot costs coins (0.7 seconds of what you are
-currently earning, at least 2). A kill pays 2-5 seconds of earnings, so a gun that hits pays for itself. Level 3 does double damage
-and a wide blast. The first pick of every run offers only these three; the second always offers a level-up of the one you took.
+The perk pool is now mostly *active, visible* gear; each is max level 3 and each level changes what you see on the plane.
+A first pick offers only these. Four passives stay as the minority (Fuel Miser, Hot Streak, Lucky Whiskers, Scavenger); the rest of
+the old perks are defined but no longer offered (`Tuning.perk_pool`).
+
+| Perk | Unlock | What it does |
+| --- | --- | --- |
+| Flak Cannon / Wing Pods / Tail Gun | start | fire by themselves at the nearest threat ahead / at the sides / behind; **free**; a kill pays 2-5 s of earnings; cooldown 2.2/1.4/0.8 s, level 3 does double damage |
+| Wingman | 60 cans | a drone beside you collects nearby coins and cans and takes one hit, then recharges (22/15/10 s); level 3 has two |
+| Prop Wash | start | a shockwave ring every 8/5.5/3.5 s (radius 4/5.5/7) shoves obstacles and threats aside |
+| Tow Banner | 25 close calls | a banner 3.5/6/9 units long collects the coins it sweeps |
+| Skywriter | 6 Whisker closes | a smoke trail 4/7/11 long scatters birds and kites (and crows / geese threats) that fly into it |
+| Magnet Field | start | an aura 3/4.5/6.5 wide pulls coins and cans in |
+| Barrel Roll | 20 crates | double-tap for a 0.7 s invulnerable roll; ready every 8/5.5/3.5 s |
+
+The second pick always offers a level-up of the best active perk you hold. A build bar under the fuel gauge shows every perk held with level
+pips, and the pick screen shows the build at the top.
+
+## Combos (a perk at level 3 plus its partner)
+
+Gold Rush (Flak + Magnet Field: kills pay double and burst coins), Wing Roll (Wingman + Barrel Roll: the wingman rolls with you and each roll ends in a
+coin burst), Shock and Awe (Prop Wash + Wing Pods: the wave also knocks threats down), Banner Ad (Tow Banner + Hot Streak: banner coins pay double),
+Smokescreen (Skywriter + Tail Gun: smoke hurts every kind of threat), plus Barnstormer, Fuel Overflow and Golden Whiskers. Combos of retired perks stay
+defined but are hidden from the Logbook.
 
 ## Swarm pressure
 

@@ -12,6 +12,7 @@ var ground := GroundWorld.new()   # the countryside below (scrolls with the obst
 var goals := Goals.new()        # gates for your best, the next medal and the next map unlock
 var crash_fx := CrashFx.new()   # the crash sequence's smoke, debris and Whiskers
 var sfx := Sfx.new()   # all sound (see Sfx.gd)
+var gadgets := Gadgets.new()   # the active gear: wingmen, Prop Wash, banner, smoke, aura, roll (see Gadgets.gd)
 
 ## What ends a run, shown on the game-over screen as a big header plus a line under it.
 ## The plane's path each frame is tested in steps no longer than this (units), so a flick can't
@@ -102,6 +103,8 @@ var _pick_count := 0               # crates broken this run (Cat's Cradle counts
 var _last_any_pick := -100.0       # run time of the latest pick of any kind
 var _rare_picks := 0               # boss rewards waiting: each is a pick of three perks, level-ups favoured
 var _pick_rare := false
+var _last_tap_ms := -10000
+var _last_tap_pos := Vector2.ZERO
 var _gun_lv := {"flak": 0, "pods": 0, "tail": 0}   # the gun perks' levels (reused every frame)
 var threat_coins := 0.0            # coins shooting threats down paid this run
 var boss_coins := 0.0              # ...and the bosses' rewards
@@ -143,6 +146,19 @@ func _ready() -> void:
 	spawner.threats.boss_warning.connect(_on_boss_warning)
 	spawner.threats.boss_started.connect(_on_boss_started)
 	spawner.threats.boss_ended.connect(_on_boss_ended)
+	add_child(gadgets)
+	gadgets.spawner = spawner
+	gadgets.picks = picks
+	gadgets.wash_fired.connect(_on_wash)
+	gadgets.wingman_absorbed.connect(_on_wingman_absorbed)
+	gadgets.wingman_ready.connect(func(_i: int): _callout("wingman", "Wingman recharged"))
+	gadgets.roll_started.connect(_on_roll_started)
+	gadgets.roll_ended.connect(_on_roll_ended)
+	gadgets.roll_ready.connect(func(): _callout("roll", "Barrel Roll ready"))
+	gadgets.scattered.connect(func(pos: Vector3):
+		if not DebugFlags.off("sparks"):
+			fx.crate_burst(pos, 1)
+		sfx.play("whoosh", 0.5, 1.5))
 	if DebugFlags.tune_enabled():
 		tune_panel = TunePanel.new()
 		add_child(tune_panel)
@@ -200,6 +216,7 @@ func _prewarm() -> void:
 	sfx.prewarm_start()   # every sound decoded once, silently
 	crash_fx.prewarm_show(Vector3(0.0, 1.2, 1.0))   # smoke, debris, Whiskers and his parachute
 	spawner.prewarm_show(not DebugFlags.off("flash"), not DebugFlags.off("clouds"))
+	gadgets.prewarm_show()
 	pick_screen.prewarm_show()      # the pick cards are drawn too
 	if tune_panel:
 		tune_panel.prewarm_show(true)   # drawn under the splash like everything else
@@ -255,6 +272,7 @@ func _prewarm() -> void:
 	crash_fx.stop()
 	trail.clear()
 	spawner.prewarm_hide()
+	gadgets.prewarm_hide()
 	pick_screen.hide_cards()
 	hud.clear_bonus()
 	hud.set_splash_progress(1.0)
@@ -322,6 +340,7 @@ func restart() -> void:
 	hud.hide_boss()
 	spawner.chain_nudges = false
 	spawner.crate_shower_rows = 0
+	gadgets.reset()
 	_reset_bonus()
 	var head := Tuning.gear_value("head_start")   # Head Start: begin at x1.5 / x2 (it fades like any bonus)
 	if head > 1.0:
@@ -510,6 +529,7 @@ func _process(raw_delta: float) -> void:
 	t_pf = Time.get_ticks_usec()
 	spawner.update_hazards(delta)
 	_update_threats(delta)
+	_update_gadgets(delta, step)
 	spawner.coins.sync(player.position.z)
 	shadows.update_from(spawner, _tod_dark, true)
 	_pf("spawner.update_hazards (kit motion, colliders)", t_pf)
@@ -547,12 +567,16 @@ func _process(raw_delta: float) -> void:
 		reach = maxf(reach, Tuning.storm_radius)
 	if combo_on("deadstick") and _gliding:   # Deadstick: while gliding, cans come from anywhere on screen
 		reach = 60.0
+	var aura := gadgets.aura_radius()   # Magnet Field: coins and cans inside the aura are pulled in
+	if aura > 0.0:
+		reach = maxf(reach, aura)
+		spawner.coins.pull(plane, aura, Tuning.magnet_pull_speed * delta)
 	spawner.chain_nudges = combo_on("wingwalker") or picks.level("prop_wash") >= 3   # (Prop Wash 3: bumps chain)
 	if reach > 0.0 and spawner.pull_cans(plane, reach, Tuning.magnet_pull_speed * delta) and Tuning.gear_value("magnet") > 0.0:
 		_callout("magnet", "Can Magnet!")
 	if _invuln > 0.0:
 		_invuln = maxf(_invuln - delta, 0.0)
-		player.set_flicker(_invuln > 0.0 and int(_invuln * 14.0) % 2 == 0)   # the plane sputters
+		player.set_flicker(_invuln > 0.0 and not gadgets.rolling() and int(_invuln * 14.0) % 2 == 0)   # the plane sputters
 	if _invuln <= 0.0 and not DebugFlags.god and spawner.hazards.hit(player.position.x):   # lightning
 		if _hit_is_fatal():
 			_fatal_hit(REASON_STRUCK)
@@ -702,6 +726,7 @@ func _begin_pick(extra: bool = false, rare: bool = false) -> void:
 	var hints: Array = []
 	for c in _pick_cards:
 		hints.append(picks.would_complete(c))   # a card that would complete a combo is highlighted
+	pick_screen.set_build(picks.levels)
 	pick_screen.show_cards(_pick_cards, hints)
 	get_tree().paused = true
 
@@ -786,14 +811,69 @@ func _apply_card(card: Dictionary) -> void:
 		"crate_shower":
 			spawner.crate_shower_rows = Tuning.crate_shower_rows
 
+# ---------- Gadgets: the active gear ----------
+
+func try_roll() -> bool:
+	return gadgets.try_roll()
+
+func _update_gadgets(delta: float, step_dist: float) -> void:
+	gadgets.combo_shock_awe = combo_on("shock_awe")
+	gadgets.combo_smokescreen = combo_on("smokescreen")
+	gadgets.combo_wing_roll = combo_on("wing_roll")
+	gadgets.step(delta, player.position, player.velocity.x, step_dist)
+	if gadgets.rolling():
+		_invuln = maxf(_invuln, gadgets.roll_t + 0.05)   # a roll cannot be hit
+	# wingmen: they collect what is near them
+	var wcaps := PackedFloat32Array([0.0, 0.0, 0.0, 0.0, Tuning.wingman_collect])
+	for i in gadgets.wingman_count():
+		var wp := gadgets.wingman_pos(i)
+		var cans: Array[Vector3] = spawner.collect_cans(wp, wcaps)
+		for ci in cans.size():
+			_on_pickup(cans[ci], spawner.picked_golden[ci])
+		var got: int = spawner.coins.collect(wp, wcaps, Tuning.coin_pickup_radius)
+		if got > 0:
+			_on_coins(got, spawner.coins.last_pos)
+	# the banner: a net of coins behind the plane
+	if gadgets.level("banner") > 0:
+		var got2: int = spawner.coins.collect(Vector2(player.position.x, player.position.z), gadgets.banner_caps(), 0.1)
+		if got2 > 0:
+			_on_coins(got2 * (2 if combo_on("banner_ad") else 1), spawner.coins.last_pos)
+			hud.pulse_perk("banner")
+
+func gadget_level(id: String) -> int:
+	return picks.level(id)
+
+func _on_roll_started() -> void:
+	player.roll(Tuning.roll_time)
+	sfx.play("whoosh_big", 0.8, 1.3)
+	hud.pulse_perk("roll")
+	if not DebugFlags.off("haptic"):
+		Input.vibrate_handheld(Tuning.haptic_ms * 2)
+
+func _on_roll_ended() -> void:
+	if combo_on("wing_roll"):   # Wing Roll: the roll ends in a burst of coins from you and your wingmen
+		var burst := maxf(10.0, Tuning.combo_wingroll_burst * earn_rate()) * earn_mult() / maxf(coin_mult, 0.001)
+		score += burst
+		if not DebugFlags.off("popup"):
+			hud.coin_pop("+" + Tuning.fmt(floorf(burst)), camera.unproject_position(player.position + Vector3(0, 0, -1.5)))
+		if not DebugFlags.off("sparks"):
+			fx.coins(player.position + Vector3(0, 0, -0.8))
+			for i in gadgets.wingman_count():
+				fx.coins(Vector3(gadgets.wingman_pos(i).x, 1.0, gadgets.wingman_pos(i).y))
+		sfx.play("coin", 1.0, 1.2)
+
+func _on_wash(pos: Vector3, _radius: float) -> void:
+	sfx.play("whoosh", 0.7, 0.7)
+	hud.pulse_perk("shockwave")
+
+func _on_wingman_absorbed(pos: Vector3) -> void:
+	_invuln = Tuning.hit_invulnerable_time
+
 # ---------- Threats: hunting enemies, guns, bosses ----------
 
 ## What the earning rate is right now (coins per second this run, at least a little): guns and kills are priced in it.
 func earn_rate() -> float:
 	return maxf(score / maxf(elapsed, 10.0), 0.5)
-
-func gun_cost() -> float:
-	return maxf(Tuning.gun_cost_min, Tuning.gun_cost_seconds * earn_rate())
 
 func _update_threats(delta: float) -> void:
 	var th = spawner.threats
@@ -808,12 +888,7 @@ func _update_threats(delta: float) -> void:
 	for id in _gun_lv:
 		_gun_lv[id] = picks.level(id)
 	th.gun_levels = _gun_lv
-	th.coins_available = score
-	th.gun_cost = gun_cost()
 	th.update(delta)
-	if th.spent > 0.0:
-		score = maxf(score - th.spent, 0.0)
-		th.spent = 0.0
 	if th.boss_active:
 		hud.set_boss(th.boss_name, th.boss_hp / maxf(th.boss_hp_max, 0.001), Threats.BOSS_COLORS[clampi(th.boss_kind, 0, 2)] if not th.boss_mini else Color(1.0, 0.8, 0.25))
 	elif hud.boss_bar_visible():
@@ -845,10 +920,12 @@ func _on_threat_killed(kind: int, pos: Vector3, by_gun: bool) -> void:
 	if not DebugFlags.off("sparks"):
 		fx.crate_burst(pos, 0 if kind != Threats.DRONE else 1)
 	if by_gun:
+		if combo_on("goldrush") and not DebugFlags.off("sparks"):
+			fx.coins(pos)   # Gold Rush: the coins burst out and fly to you
 		sfx.play("boom", 0.6, 1.3)
 		var secs: float = Tuning.kill_pay_seconds[clampi(kind, 0, 3)] if kind <= Threats.DRONE else 0.0
 		if secs > 0.0:
-			var pay := maxf(Tuning.kill_pay_min, secs * earn_rate()) * 1.0
+			var pay := maxf(Tuning.kill_pay_min, secs * earn_rate()) * (Tuning.combo_goldrush_mult if combo_on("goldrush") else 1.0)
 			score += pay
 			threat_coins += pay
 			if not DebugFlags.off("popup"):
@@ -982,6 +1059,10 @@ func _take_hit(p: Vector2, caps: PackedFloat32Array, what: String = REASON_OBSTA
 		_callout("shield", "Shield!")
 		_hit_feedback(0.0)
 		return
+	if gadgets.absorb_hit():   # a wingman takes it
+		_callout("wingman", "Wingman took the hit!")
+		_hit_feedback(0.0)
+		return
 	if lives > 0:   # Nine Lives: ignore this hit
 		lives -= 1
 		_callout("nine_lives", "Nine Lives! Hit ignored")
@@ -1012,7 +1093,7 @@ func _hit_name(what: String) -> String:
 
 ## Would a hit now empty the tank for good (no Shield, no Nine Lives charge, no Reserve Tank, no Glide)?
 func _hit_is_fatal() -> bool:
-	if picks.has_boost("shield") or lives > 0 or reserve_left > 0 or picks.value("glide") > 0.0:
+	if picks.has_boost("shield") or lives > 0 or reserve_left > 0 or picks.value("glide") > 0.0 or gadgets.wingman_ready_count() > 0:
 		return false
 	return fuel - Tuning.hit_cost() <= 0.0
 
@@ -1122,7 +1203,7 @@ func _result_extra() -> String:
 		lines.append("Last hit: %s" % last_hit_name)
 	var th = spawner.threats
 	if th.kills > 0 or th.bosses_done > 0:
-		lines.append("Shot down %d (+%s coins), guns spent %s, bosses faced %d" % [th.kills, Tuning.fmt(threat_coins), Tuning.fmt(th.coins_spent_total), th.bosses_done])
+		lines.append("Shot down %d (+%s coins), bosses faced %d" % [th.kills, Tuning.fmt(threat_coins), th.bosses_done])
 	for k in last_result.get("medals", []):
 		lines.append("%s medal!  +%s coins" % [MEDAL_NAMES[k], Tuning.fmt(Tuning.map_def(map)["medals"][k][1])])
 	for j in last_result.get("unlocked", []):
@@ -1492,6 +1573,18 @@ func _input(event: InputEvent) -> void:
 			Input.vibrate_handheld(1)
 	if not sfx.unlocked and ((event is InputEventScreenTouch and event.pressed) or (event is InputEventMouseButton and event.pressed)):
 		sfx.unlock()
+	# Barrel Roll: a double tap (or double click) during a run.
+	if screen == SCREEN_PLAY and alive and not _picking:
+		var tapped: bool = (event is InputEventScreenTouch and event.pressed) or (event is InputEventMouseButton and event.pressed and event.button_index == MOUSE_BUTTON_LEFT)
+		if tapped:
+			var now := Time.get_ticks_msec()
+			var pos: Vector2 = event.position
+			if now - _last_tap_ms <= Tuning.roll_double_tap_ms and pos.distance_to(_last_tap_pos) < 140.0:
+				try_roll()
+				_last_tap_ms = -10000
+			else:
+				_last_tap_ms = now
+				_last_tap_pos = pos
 	# A tap on the results screen skips its build-up (PLAY AGAIN restarts).
 	if screen == SCREEN_OVER and event is InputEventScreenTouch and event.pressed and hud.results_visible():
 		hud.skip_results()

@@ -114,7 +114,14 @@ func plan(main: Node, t: float, target_x: float, base_z: float) -> Vector2:
 				best = cand
 	return best
 
-func choose_card(main: Node) -> int:
+const PRIORITY := {
+	"GUNS": ["flak", "pods", "tail"],
+	"UTILITY": ["wingman", "shockwave", "magnet_field", "skywriter", "banner", "roll"],
+	"MIXED": ["flak", "wingman", "shockwave", "magnet_field", "pods", "skywriter", "roll", "banner", "tail"],
+}
+
+func choose_card(main: Node, kind: String) -> int:
+	var order: Array = PRIORITY.get(kind, PRIORITY["MIXED"])
 	var best := 0
 	var best_s := -1.0
 	for i in main._pick_cards.size():
@@ -122,11 +129,13 @@ func choose_card(main: Node) -> int:
 		var s := 10.0
 		var id: String = c["id"]
 		if c["kind"] == "perk":
-			s = 50.0 + (10.0 if c["owned"] else 0.0)
-			if id in ["flak", "pods", "tail"]:
-				s = 90.0 + 5.0 * float(c["level"]) + (6.0 if c["owned"] else 0.0) + (8.0 if id == "flak" else (4.0 if id == "pods" else 0.0))
-			elif id in ["fuel_miser", "scavenger", "hot_streak", "daredevil", "tailwind"]:
-				s = 62.0
+			var pos := order.find(id)
+			if pos >= 0:
+				s = 100.0 - 6.0 * pos + (12.0 if c["owned"] else 0.0)   # the build's own perks first, level-ups favoured
+			elif id in ["fuel_miser", "scavenger", "hot_streak", "lucky_whiskers"]:
+				s = 50.0
+			else:
+				s = 30.0
 		elif c["kind"] == "supply" and (id == "full_tank" or id == "patch") and main.fuel < tn().fuel_max() * 0.55:
 			s = 85.0
 		elif c["kind"] == "boost":
@@ -136,6 +145,21 @@ func choose_card(main: Node) -> int:
 			best = i
 	return best
 
+## Is a telegraphed threat about to arm over the plane's spot? (The pilot rolls then.)
+func imminent(main: Node) -> bool:
+	var th = main.spawner.threats
+	th.zones(0.5, _zones)
+	var pp := Vector2(main.player.position.x, main.player.position.z)
+	for z in _zones:
+		if (z["rect"] as Rect2).grow_individual(0.9, 0.8, 0.9, 0.8).has_point(pp) and float(z["at"]) <= 0.3:
+			return true
+	if th.crow_danger(pp.x, pp.y) <= 0.45:
+		return true
+	for b in main.spawner.hazards.bolts_in_play():
+		if (b.state == 2 or (b.state == 1 and tn().lightning_warn - b.t <= 0.3)) and absf(pp.x - tn().column_center(b.col)) < tn().column_width() * 0.5 + 1.2:
+			return true
+	return false
+
 func simulate(kind: String, seed_value: int, trace: bool) -> Dictionary:
 	seed(seed_value)
 	var main: Node = load("res://scenes/main.tscn").instantiate()
@@ -144,6 +168,7 @@ func simulate(kind: String, seed_value: int, trace: bool) -> Dictionary:
 	main.player.set_process(false)
 	main.restart()
 	tn().boss_rare_pick = kind != "NOPERK"
+	root.get_node("Save").unlock_all_milestones()
 	if kind == "NOPERK":
 		main.picks.enabled = false
 		main.picks.next_pick = INF
@@ -187,6 +212,8 @@ func simulate(kind: String, seed_value: int, trace: bool) -> Dictionary:
 			if absf(r.can_x - pl.position.x) <= SPEED * maxf(time_left - 0.15, 0.0) + 0.5:
 				target_x = r.can_x
 				break
+		if main.gadgets.level("roll") > 0 and main.gadgets.roll_cd <= 0.0 and imminent(main):
+			main.try_roll()
 		if t >= next_plan:
 			next_plan = t + 0.08
 			goal = plan(main, t, target_x, base_z)
@@ -221,12 +248,12 @@ func simulate(kind: String, seed_value: int, trace: bool) -> Dictionary:
 					cols.append("%s(%.1f,%.1f,%.1f,%.1f)" % ["R" if kc[o] == 0.0 else "C", kc[o + 1], kc[o + 2] - pl.position.z, kc[o + 3], kc[o + 4]])
 			print("  HIT t=%.2f plane=(%.2f,%.2f) goal=(%.2f,%.2f) spd=%.1f kit near: %s" % [t, pl.position.x, pl.position.z, goal.x, goal.y, main.spawner.scroll_speed, " ".join(cols)])
 		if main._picking:
-			var idx := choose_card(main)
+			var idx := choose_card(main, kind)
 			if trace:
 				pick_log.append([snappedf(main.elapsed, 0.1), "PICK: " + String(main._pick_cards[idx]["name"]) + (" L%d" % main._pick_cards[idx]["level"] if main._pick_cards[idx]["kind"] == "perk" else "") + ("  (RARE)" if main._pick_rare else "")])
 			main._on_pick_chosen(idx)
 	var reason: String = "survived %ds" % int(max_seconds) if main.alive else String(main.hud._over.text.split("\n")[1] if main.hud._over.text.contains("\n") else main.hud._over.text)
-	var res := {"t": t, "hits": main.hits_taken, "kills": th.kills, "shots": th.shots, "spent": th.coins_spent_total, "bosses": th.bosses_done,
+	var res := {"t": t, "hits": main.hits_taken, "kills": th.kills, "shots": th.shots, "wing": main.gadgets.wingman_hits, "wash": main.gadgets.washes, "rolls": main.gadgets.rolls, "scatter": main.gadgets.scatters, "bosses": th.bosses_done,
 			"cans": main.run_cans, "reason": reason, "last": main.last_hit_name, "score": main.score, "meters": tn().meters(main.run_distance),
 			"timeline": th.timeline.duplicate(), "picks": pick_log, "launched": th.launched.duplicate(), "hits_by": {}}
 	for k in th.hits_by_kind:
@@ -251,14 +278,17 @@ func _initialize() -> void:
 		max_seconds = float(OS.get_environment("SIM_MAX"))
 	var only := OS.get_environment("SIM_ONLY")
 	var seed_base := int(OS.get_environment("SIM_SEED")) if OS.get_environment("SIM_SEED") != "" else 2000
-	for kind in ["NOPERK", "BUILD"]:
+	for kind in (OS.get_environment("SIM_KINDS").split(",", false) if OS.get_environment("SIM_KINDS") != "" else ["NOPERK", "GUNS", "UTILITY", "MIXED"]):
 		if only != "" and only != kind:
 			continue
 		var times: Array = []
 		var hits := 0
 		var kills := 0
 		var shots := 0
-		var spent := 0.0
+		var wing := 0
+		var rolls := 0
+		var washes := 0
+		var scat := 0
 		var bosses := 0
 		var reasons := {}
 		var metersum := 0.0
@@ -270,7 +300,10 @@ func _initialize() -> void:
 			hits += r["hits"]
 			kills += r["kills"]
 			shots += r["shots"]
-			spent += r["spent"]
+			wing += r["wing"]
+			rolls += r["rolls"]
+			washes += r["wash"]
+			scat += r["scatter"]
 			bosses += r["bosses"]
 			metersum += r["meters"]
 			reasons[r["last"] if r["last"] != "" else r["reason"]] = int(reasons.get(r["last"] if r["last"] != "" else r["reason"], 0)) + 1
@@ -285,7 +318,7 @@ func _initialize() -> void:
 				for e in merged:
 					if e[0] <= float(OS.get_environment("SIM_TRACE_UNTIL") if OS.get_environment("SIM_TRACE_UNTIL") != "" else "200"):
 						print("      %5.1f s  %s" % [e[0], e[1]])
-		print("%-6s survival s: min %.0f  median %.0f  max %.0f | hits/run %.1f | shots/run %.1f kills/run %.1f (coins spent %.0f) | bosses/run %.1f | m/run %.0f" % [
-				kind, times.min(), median(times), times.max(), float(hits) / runs, float(shots) / runs, float(kills) / runs, spent / runs, float(bosses) / runs, metersum / runs])
+		print("%-8s survival s: min %.0f  median %.0f  max %.0f | hits/run %.1f | shots/run %.1f kills/run %.1f | wingman hits %.1f, waves %.0f, rolls %.1f, smoke scatters %.1f | bosses/run %.1f | m/run %.0f" % [
+				kind, times.min(), median(times), times.max(), float(hits) / runs, float(shots) / runs, float(kills) / runs, float(wing) / runs, float(washes) / runs, float(rolls) / runs, float(scat) / runs, float(bosses) / runs, metersum / runs])
 		print("       ended by %s | hits by %s | launched (all runs) %s" % [str(reasons), str(hit_kinds), str(launched)])
 	quit()

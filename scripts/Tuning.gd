@@ -299,7 +299,7 @@ var threat_wave_factor: Array[float] = [0.5, 1.0, 1.7, 0.1]    # CALM, BUILD, PE
 var threat_cost: Array[float] = [1.4, 2.0, 3.0, 2.0]            # hawk, geese, crows, drone
 var threat_max_active_start := 1
 var threat_max_active_end := 5
-var threat_hp_growth := 2.0          # once the ramp has ended, each further ramp length adds this to a threat's hit points (guns need more shots)
+var threat_hp_growth := 3.5          # once the ramp has ended, each further ramp length adds this to a threat's hit points (guns need more shots)
 var threat_min_gap := 1.8            # seconds between two launches at least
 ## HAWK: its shadow grows for hawk_warn seconds (the aim follows the plane, then locks hawk_lock seconds before the dive).
 var hawk_warn := 1.1
@@ -347,9 +347,7 @@ var storm_strike_every := 1.7
 var storm_aim := 0.45                # chance a Thunderhead bolt is aimed at the plane's column
 var general_waves := 3
 var general_gap := 4.6               # the gap in the formation (units)
-## GUN PERKS (Flak Cannon, Wing Pods, Tail Gun): each shot costs gun_cost_seconds of your current earning rate (at least gun_cost_min).
-var gun_cost_seconds := 0.7
-var gun_cost_min := 2.0
+## GUN PERKS (Flak Cannon, Wing Pods, Tail Gun): they fire by themselves and cost nothing; kills pay.
 var gun_cooldown := {"flak": [2.2, 1.4, 0.8], "pods": [2.6, 1.7, 1.0], "tail": [2.4, 1.6, 0.9]}
 var gun_range := {"flak": [11.0, 14.0, 18.0], "pods": [7.0, 9.0, 12.0], "tail": [9.0, 12.0, 16.0]}
 var gun_blast := {"flak": [1.3, 1.8, 2.5], "pods": [1.2, 1.6, 2.2], "tail": [1.2, 1.7, 2.3]}
@@ -428,6 +426,24 @@ var prop_wash_friction := 5.0
 
 ## PERKS last the run (levels 1-3, `vals` = the effect at each level). `unlock`: "" = in the starting pool,
 ## otherwise the milestone that unlocks it. `needs`: "crates" = only offered once crates exist.
+## The perks the pick screens offer: the active, visible ones plus a few of the best passive ones (the rest of the old perks stay
+## defined, for old saves and tests, but are no longer offered).
+var perk_pool: Array[String] = ["flak", "pods", "tail", "wingman", "shockwave", "banner", "skywriter", "magnet_field", "roll",
+		"fuel_miser", "hot_streak", "lucky_whiskers", "scavenger"]
+## ACTIVE GEAR (Gadgets.gd): numbers by level 1-3.
+var wingman_offset := 2.2            # how far beside the plane a wingman flies
+var wingman_collect := 1.3           # coin / can reach around a wingman
+var wash_radius: Array[float] = [4.0, 5.5, 7.0]
+var wash_shove := 9.0                # units/second an obstacle is shoved at first (it slows quickly)
+var wash_push := 2.6                 # units a threat is pushed
+var banner_width := 0.5              # half width of the coin net
+var skywriter_radius := 0.9          # how close to the smoke a bird has to fly
+var skywriter_puff := [0.5, 0.8, 1.1]
+var roll_time := 0.7
+var roll_double_tap_ms := 320
+var combo_goldrush_mult := 2.0       # Flak + Magnet Field: kills pay this many times more
+var combo_wingroll_burst := 6.0      # Wingman + Barrel Roll: the roll ends in a burst worth this many seconds of earnings
+
 var perks: Array[Dictionary] = [
 	{"id": "glide", "name": "Glide", "glyph": "glide", "color": Color(0.6, 0.85, 1.0), "unlock": "", "vals": [4.0, 8.0, 14.0],
 			"line": "Fuel runs out? Glide {v} s instead of ending."},
@@ -435,7 +451,7 @@ var perks: Array[Dictionary] = [
 			"line": "Fly under a cloud: get {v} fuel back every second."},
 	{"id": "lucky_whiskers", "name": "Lucky Whiskers", "glyph": "lucky_whiskers", "color": Color(1.0, 0.4, 0.85), "unlock": "", "vals": [40, 75, 100],
 			"line": "A Whisker close drops a fuel can {v}% of the time."},
-	{"id": "prop_wash", "name": "Prop Wash", "glyph": "prop_wash", "color": Color(0.6, 0.9, 0.7), "unlock": "prop_wash", "vals": [25, 60, 120],
+	{"id": "prop_wash", "name": "Wake Shove", "glyph": "prop_wash", "color": Color(0.6, 0.9, 0.7), "unlock": "prop_wash", "vals": [25, 60, 120],
 			"line": "Close calls shove obstacles aside. Ones that bump others pay {v} coins."},
 	{"id": "battering_ram", "name": "Battering Ram", "glyph": "battering_ram", "color": Color(0.85, 0.6, 0.35), "unlock": "battering_ram", "needs": "crates", "vals": [1.5, 2.5, 4.0],
 			"line": "Crates break on any touch, not just rams. Crate coins x{v}."},
@@ -451,12 +467,24 @@ var perks: Array[Dictionary] = [
 			"line": "Close calls count from {v}% farther away."},
 	{"id": "second_wind", "name": "Second Wind", "glyph": "second_wind", "color": Color(0.5, 1.0, 0.8), "unlock": "second_wind", "vals": [40, 70, 100],
 			"line": "Once a run, refill {v}% of the tank when it runs low."},
+	{"id": "wingman", "name": "Wingman", "glyph": "wingman", "color": Color(0.55, 0.85, 1.0), "unlock": "wingman", "active": true, "vals": [22.0, 15.0, 10.0],
+			"line": "A wingman collects coins and cans and takes a hit for you, then recharges ({v} s). Level 3: two."},
+	{"id": "shockwave", "name": "Prop Wash", "glyph": "shockwave", "color": Color(0.6, 0.95, 0.75), "unlock": "", "active": true, "vals": [8.0, 5.5, 3.5],
+			"line": "A shockwave every {v} s shoves obstacles and threats aside."},
+	{"id": "banner", "name": "Tow Banner", "glyph": "banner", "color": Color(1.0, 0.6, 0.3), "unlock": "banner", "active": true, "vals": [3.5, 6.0, 9.0],
+			"line": "A banner {v} units long trails you and collects the coins it sweeps."},
+	{"id": "skywriter", "name": "Skywriter", "glyph": "skywriter", "color": Color(0.85, 0.85, 1.0), "unlock": "skywriter", "active": true, "vals": [4.0, 7.0, 11.0],
+			"line": "A smoke trail {v} units long scatters birds and kites that fly into it."},
+	{"id": "magnet_field", "name": "Magnet Field", "glyph": "magnet_field", "color": Color(0.8, 0.5, 1.0), "unlock": "", "active": true, "vals": [3.0, 4.5, 6.5],
+			"line": "An aura {v} units wide pulls coins and cans to you."},
+	{"id": "roll", "name": "Barrel Roll", "glyph": "roll", "color": Color(1.0, 0.85, 0.3), "unlock": "roll", "active": true, "vals": [8.0, 5.5, 3.5],
+			"line": "Double-tap to roll: invulnerable for a moment. Ready every {v} s."},
 	{"id": "flak", "name": "Flak Cannon", "glyph": "flak", "color": Color(1.0, 0.7, 0.25), "unlock": "", "active": true, "vals": [2.2, 1.4, 0.8],
-			"line": "Shoots down threats ahead, one shot every {v} s. Each shot costs coins."},
+			"line": "Shoots down threats ahead, one shot every {v} s."},
 	{"id": "pods", "name": "Wing Pods", "glyph": "pods", "color": Color(0.55, 0.9, 1.0), "unlock": "", "active": true, "vals": [2.6, 1.7, 1.0],
-			"line": "Shoots down threats at your sides, one shot every {v} s. Each shot costs coins."},
+			"line": "Shoots down threats at your sides, one shot every {v} s."},
 	{"id": "tail", "name": "Tail Gun", "glyph": "tail", "color": Color(1.0, 0.45, 0.45), "unlock": "", "active": true, "vals": [2.4, 1.6, 0.9],
-			"line": "Shoots down threats behind you, one shot every {v} s. Each shot costs coins."},
+			"line": "Shoots down threats behind you, one shot every {v} s."},
 	{"id": "golden_touch", "name": "Golden Touch", "glyph": "golden_touch", "color": Color(1.0, 0.8, 0.1), "unlock": "golden_touch", "needs": "crates", "vals": [3, 5, 8],
 			"line": "Crates pay x{v}."},
 ]
@@ -506,6 +534,21 @@ var combos: Array[Dictionary] = [
 	{"id": "wingwalker", "name": "Wingwalker", "perk": "prop_wash", "partner_kind": "perk", "partner": "daredevil", "color": Color(0.6, 0.9, 0.7),
 			"line": "Shoved obstacles chain-react, and every link in the chain pays more.",
 			"hint": "Blow obstacles around, and fly close enough to do it."},
+	{"id": "goldrush", "name": "Gold Rush", "perk": "flak", "partner_kind": "perk", "partner": "magnet_field", "color": Color(1.0, 0.8, 0.2),
+			"line": "Flak kills pay double, and their coins fly straight to you.",
+			"hint": "A gun that never misses, and an aura that pulls."},
+	{"id": "wing_roll", "name": "Wing Roll", "perk": "wingman", "partner_kind": "perk", "partner": "roll", "color": Color(0.55, 0.85, 1.0),
+			"line": "Your wingman rolls with you, and every roll ends in a burst of coins.",
+			"hint": "A friend in the air, and a roll to share."},
+	{"id": "shock_awe", "name": "Shock and Awe", "perk": "shockwave", "partner_kind": "perk", "partner": "pods", "color": Color(0.6, 0.95, 0.75),
+			"line": "The shockwave also knocks threats out of the sky.",
+			"hint": "A wave that shoves, and guns at your sides."},
+	{"id": "banner_ad", "name": "Banner Ad", "perk": "banner", "partner_kind": "perk", "partner": "hot_streak", "color": Color(1.0, 0.6, 0.3),
+			"line": "Coins the banner collects pay double.",
+			"hint": "A long net for coins, and a streak that stays hot."},
+	{"id": "smokescreen", "name": "Smokescreen", "perk": "skywriter", "partner_kind": "perk", "partner": "tail", "color": Color(0.85, 0.85, 1.0),
+			"line": "The smoke trail brings down every kind of threat that touches it.",
+			"hint": "A trail of smoke, and a gun at your back."},
 ]
 
 func combo_def(id: String) -> Dictionary:
@@ -539,6 +582,10 @@ var milestones: Array[Dictionary] = [
 	{"id": "second_wind", "perk": "second_wind", "goal": "Make 10 Whisker closes", "kind": "stat", "stat": "whiskers", "target": 10.0},
 	{"id": "battering_ram", "perk": "battering_ram", "goal": "Break 50 crates", "kind": "stat", "stat": "crates", "target": 50.0},
 	{"id": "golden_touch", "perk": "golden_touch", "goal": "Reach the Coast", "kind": "map", "map": 1},
+	{"id": "wingman", "perk": "wingman", "goal": "Collect 60 fuel cans", "kind": "stat", "stat": "cans", "target": 60.0},
+	{"id": "banner", "perk": "banner", "goal": "Make 25 close calls", "kind": "stat", "stat": "close_calls", "target": 25.0},
+	{"id": "skywriter", "perk": "skywriter", "goal": "Make 6 Whisker closes", "kind": "stat", "stat": "whiskers", "target": 6.0},
+	{"id": "roll", "perk": "roll", "goal": "Break 20 crates", "kind": "stat", "stat": "crates", "target": 20.0},
 ]
 
 ## The ONE short line shown on a pick card (max ~6 words; {v} = the value at that level). The long descriptions
@@ -547,6 +594,7 @@ var milestones: Array[Dictionary] = [
 var tailwind_speed_pct: Array[float] = [0.0, 10.0, 20.0, 30.0]
 ## Level 3 changes how a perk behaves, not just its numbers. The pick card shows this line at level 3 instead of the usual one.
 var pick_l3 := {
+	"wingman": "Two wingmen, each takes a hit ({v} s)", "shockwave": "Shockwave every {v} s, wide", "banner": "Banner {v} long: a coin net", "skywriter": "Smoke {v} long, thick", "magnet_field": "Pull aura {v} wide: coins fly in", "roll": "Roll ready every {v} s",
 	"flak": "Rapid fire, wide blast, 2 damage a shot", "pods": "Rapid fire, wide blast, 2 damage a shot", "tail": "Rapid fire, wide blast, 2 damage a shot",
 	"glide": "Glide {v} s, then refill 20% of the tank",
 	"cloud_diver": "+{v} fuel/s; close calls under clouds are Whiskers",
@@ -562,7 +610,8 @@ var pick_l3 := {
 	"golden_touch": "Crates pay x{v} and drop a can",
 }
 var pick_short := {
-	"flak": "Auto-shoots ahead, every {v} s", "pods": "Auto-shoots to the sides, every {v} s", "tail": "Auto-shoots behind, every {v} s",
+	"wingman": "A wingman: collects, takes a hit ({v} s)", "shockwave": "Shockwave every {v} s", "banner": "Banner {v} long collects coins", "skywriter": "Smoke {v} long scatters birds", "magnet_field": "Pull aura {v} wide", "roll": "Double-tap roll, ready every {v} s",
+	"flak": "Shoots ahead, every {v} s", "pods": "Shoots to the sides, every {v} s", "tail": "Shoots behind, every {v} s",
 	"glide": "Glide {v} s when empty", "cloud_diver": "+{v} fuel/s under clouds", "lucky_whiskers": "{v}% can on Whisker closes",
 	"prop_wash": "Bumped obstacles pay {v}", "battering_ram": "Crates break on touch", "fuel_miser": "{v}% less fuel burn",
 	"hot_streak": "Bonus fades {v}% slower", "scavenger": "+{v} coins per can", "tailwind": "Fly faster, earn more",
@@ -571,6 +620,18 @@ var pick_short := {
 	"whisker_window": "Every close call Whisker", "fuel_freeze": "No fuel burn, 20 s",
 	"full_tank": "Fill the tank", "patch": "Repairs a hit: +25% fuel", "crate_shower": "Next rows full of crates", "coin_bag": "+{v} coins now",
 }
+
+## Is this perk one the pick screens offer? (See perk_pool.)
+func in_pool(id: String) -> bool:
+	return perk_pool.has(id)
+
+## Is this perk one of the active, visible ones (a gun or a piece of gear on the plane)?
+func perk_is_active(id: String) -> bool:
+	return bool(perk_def(id).get("active", false))
+
+## A combo of a perk that is no longer offered (it can only happen through ?tune grants).
+func combo_retired(c: Dictionary) -> bool:
+	return not in_pool(c["perk"]) or (c["partner_kind"] == "perk" and not in_pool(c["partner"]))
 
 func perk_def(id: String) -> Dictionary:
 	for d in perks:

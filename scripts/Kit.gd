@@ -48,6 +48,7 @@ class Ent extends Node3D:
 	var rate := 0.0
 	var phase := 0.0
 	var dir := 1.0
+	var shove_v := 0.0                 # a shockwave is shoving it sideways (units/second, it slows quickly)
 	var leader: Ent = null             # crows: the first of the flock (its aim is shared)
 	var aim_x := 0.0
 	var aim_set := false
@@ -766,6 +767,12 @@ func update(delta: float) -> void:
 	for i in range(active.size() - 1, -1, -1):
 		var e := active[i]
 		e.age += delta
+		if e.shove_v != 0.0:   # a Prop Wash shockwave: carried sideways, slowing quickly
+			var dx := e.shove_v * delta
+			e.x0 = clampf(e.x0 + dx, -6.4, 6.4)
+			if e.kind == POWERLINE:
+				e.a = clampf(e.a + dx, -6.4, 6.4)
+			e.shove_v = move_toward(e.shove_v, 0.0, 12.0 * delta)
 		_pose(e, delta)
 		if e.kind != CROW and e.kind != DUSTER and e.pz - e.reach.y > plane_z + 12.0:   # long gone off the bottom
 			release(e)
@@ -776,6 +783,29 @@ func update(delta: float) -> void:
 		elif e.kind == TRACTOR and e.state == 2 and e.px * e.dir > Tuning.ortho_size * 0.5 + 1.8:
 			release(e)
 	_fill_colliders()
+
+# ---------- Prop Wash / Skywriter ----------
+
+## A shockwave from `centre` shoves every fixed obstacle (not the crows, tractors and dusters that fly on their own) within `radius`
+## away from it, sideways, at `speed` (it slows quickly). Returns how many were shoved.
+func shove(centre: Vector2, radius: float, speed: float) -> int:
+	var n := 0
+	for e in active:
+		if e.kind == CROW or e.kind == DUSTER or e.kind == TRACTOR:
+			continue
+		if Vector2(e.px - centre.x, e.pz - centre.y).length() - e.reach.x * 0.5 < radius:
+			e.shove_v = speed * (1.0 if e.px >= centre.x else -1.0)
+			n += 1
+	return n
+
+## Birds and kites (crows in flight, kites) touching a point of the smoke trail fly off: they are removed. Returns where they were.
+func scatter_near(p: Vector2, radius: float, out: Array[Vector2]) -> void:
+	for i in range(active.size() - 1, -1, -1):
+		var e := active[i]
+		if e.kind == KITE or (e.kind == CROW and e.state == 2):
+			if Vector2(e.px - p.x, e.pz - p.y).length() < radius + e.reach.x:
+				out.append(Vector2(e.px, e.pz))
+				release(e)
 
 # ---------- colliders ----------
 

@@ -95,13 +95,9 @@ var z_max := 0.0
 var elapsed := 0.0
 var meters := 0.0
 var wave_phase := 0
-var coins_available := 0.0               # Main: the run's coins (a gun only fires when it can pay)
-var gun_cost := 0.0                      # Main: coins one shot costs right now
-var spent := 0.0                         # coins the guns spent since Main last took them
 var kills := 0                           # threats shot down this run
 var kills_by_kind := {}
 var shots := 0
-var coins_spent_total := 0.0
 var hits_by_kind := {}                   # kind -> times the plane was hit
 var last_hit_kind := -1
 var timeline: Array = []                 # [run seconds, text]: what happened and when
@@ -445,8 +441,6 @@ func reset() -> void:
 	kills = 0
 	kills_by_kind.clear()
 	shots = 0
-	coins_spent_total = 0.0
-	spent = 0.0
 	hits_by_kind.clear()
 	last_hit_kind = -1
 	timeline.clear()
@@ -578,9 +572,9 @@ func _unlocked(kind: int) -> bool:
 			return elapsed >= Tuning.first_drone_time + 5.0
 	return false
 
-## How far into the ramp the run is: 0 before it starts, 1 at threat_ramp_end, and on past that (up to 2.5) so the pressure keeps rising.
+## How far into the ramp the run is: 0 before it starts, 1 at threat_ramp_end, and on past that (up to 4) so the pressure keeps rising.
 func _ramp() -> float:
-	return clampf((elapsed - Tuning.threat_ramp_start) / maxf(Tuning.threat_ramp_end - Tuning.threat_ramp_start, 1.0), 0.0, 2.5)
+	return clampf((elapsed - Tuning.threat_ramp_start) / maxf(Tuning.threat_ramp_end - Tuning.threat_ramp_start, 1.0), 0.0, 4.0)
 
 ## Hit points of a regular threat launched now: 1 until the ramp ends, then growing, so a gun build is not endless.
 func hp_scale() -> float:
@@ -1446,17 +1440,12 @@ func _update_guns(delta: float) -> void:
 			best_d = d
 		if best == null:
 			continue
-		if coins_available < gun_cost:
-			continue
 		_fire(gun, lvl, best)
 
 func _fire(gun: String, lvl: int, target: Th) -> void:
 	_gun_cd[gun] = float(Tuning.gun_cooldown[gun][lvl - 1])
-	coins_available -= gun_cost
-	spent += gun_cost
-	coins_spent_total += gun_cost
 	shots += 1
-	shot.emit(gun, gun_cost)
+	shot.emit(gun, 0.0)
 	var radius: float = Tuning.gun_blast[gun][lvl - 1]
 	var dmg: float = Tuning.gun_damage[lvl - 1]
 	var tx := target.x
@@ -1576,6 +1565,50 @@ func crow_danger(cx: float, cz: float) -> float:
 			if absf(mx - cx) < m.radius.x:
 				best = minf(best, tt)
 	return best
+
+## A Prop Wash shockwave from `centre`: every threat within `radius` is shoved away (a hawk's, bomb's and drone's aim, a squadron's lane,
+## the crows' x), and with `damage` > 0 it is hurt as well (the Shock and Awe combo).
+func push(centre: Vector2, radius: float, amount: float, damage: float) -> void:
+	var sgn := func(v: float) -> float:
+		return 1.0 if v >= 0.0 else -1.0
+	for h in _hawks:
+		if h.active and h.state <= 2 and Vector2(h.lx - centre.x, h.lz - centre.y).length() < radius:
+			h.lx = clampf(h.lx + amount * sgn.call(h.lx - centre.x), -5.4, 5.4)
+	for d in _drones:
+		if d.active and d.state <= 2 and Vector2(d.x - centre.x, d.z - centre.y).length() < radius + 3.0:
+			d.lx = clampf(d.lx + amount * sgn.call(d.x - centre.x), -5.2, 5.2)
+			d.x = clampf(d.x + amount * sgn.call(d.x - centre.x), -5.2, 5.2)
+	for b in _bombs:
+		if b.active and b.state == 1 and Vector2(b.lx - centre.x, b.lz - centre.y).length() < radius:
+			b.lx = clampf(b.lx + amount * sgn.call(b.lx - centre.x), -5.4, 5.4)
+			b.lz = _clamp_z(b.lz + amount * sgn.call(b.lz - centre.y))
+	for g in _groups:
+		if not g.active:
+			continue
+		if g.kind == GOOSE and absf(g.z - centre.y) < radius:
+			g.z = _clamp_z(g.z + amount * sgn.call(g.z - centre.y))
+		elif g.kind == CROW:
+			for m in g.members:
+				if m.active and Vector2(m.x - centre.x, m.z - centre.y).length() < radius:
+					m.x = clampf(m.x + amount * sgn.call(m.x - centre.x), -6.0, 6.0)
+	if damage > 0.0:
+		_targets(_tgt_buf)
+		for t in _tgt_buf:
+			if t.dying <= 0.0 and Vector2(t.x - centre.x, t.z - centre.y).length() <= radius:
+				_damage(t, damage)
+
+## Smoke at `p`: the crows and geese touching it are brought down (with `all_kinds`, every kind of threat). Returns how many were hit.
+func smoke_hit(p: Vector2, radius: float, all_kinds: bool) -> int:
+	var n := 0
+	_targets(_tgt_buf)
+	for t in _tgt_buf:
+		if t.dying > 0.0 or not t.shown:
+			continue
+		var bird := t.kind == GOOSE or t.kind == CROW
+		if (bird or (all_kinds and (t.kind == HAWK or t.kind == DRONE))) and Vector2(t.x - p.x, t.z - p.y).length() < radius + 0.7:
+			_damage(t, 1.0)
+			n += 1
+	return n
 
 ## The same, for a plane that flies from `cur` to `cand` at `speed` and holds there: seconds until the first touch (INF: none).
 func crow_danger_path(cur: Vector2, cand: Vector2, speed: float) -> float:

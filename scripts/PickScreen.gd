@@ -40,6 +40,10 @@ func _ready() -> void:
 	_root.add_child(dim)
 	_title = _label("PICK ONE", 96, 0, 150, 1080, 120, HORIZONTAL_ALIGNMENT_CENTER)
 	_root.add_child(_title)
+	_build = BuildStrip.new()
+	_build.size = Vector2(1080, 150)
+	_build.mouse_filter = Control.MOUSE_FILTER_IGNORE
+	_root.add_child(_build)
 	for i in CARDS:
 		var b := Button.new()
 		b.focus_mode = Control.FOCUS_NONE
@@ -119,8 +123,16 @@ func relayout() -> void:
 	var block := 3.0 * CARD_H + 2.0 * 30.0
 	_top = maxf((vp.y - block) * 0.5 + 50.0, Style.safe_top + 300.0)
 	_title.position.y = _top - 190.0
+	if _build != null:
+		_build.position = Vector2((vp.x - 1080.0) * 0.5, maxf(_top - 345.0, Style.safe_top + 6.0))
 
 var _title: Label
+var _build: BuildStrip
+
+## The build held so far, shown above the title (Main calls it before show_cards).
+func set_build(levels: Dictionary) -> void:
+	if _build != null:
+		_build.set_build(levels)
 var _top := 400.0
 
 func _label(text: String, size: int, x: float, y: float, w: float, h: float, align: HorizontalAlignment) -> Label:

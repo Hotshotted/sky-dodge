@@ -13,6 +13,9 @@ const WING_THICKNESS := 0.08
 const BEAD_SPACING := 0.12               # collision circles along the wing (units apart)
 const CAP_STRIDE := 5                    # hit_capsules() floats per shape: ax, az, bx, bz, radius
 
+var roll_left := 0.0           # seconds of barrel roll left (the plane turns once about its nose)
+var roll_total := 0.7
+var roll_dir := 1.0
 var velocity := Vector2.ZERO   # (x, z) the plane's ACTUAL velocity in units/s (how far it really moved); drives banking
 var prev_xz := Vector2.ZERO    # (x, z) at the start of the latest step: the start of the path Main sweeps for collisions
 var active := true             # false once crashed
@@ -44,6 +47,12 @@ const ITEM_PARTS := {
 	"tailwind": [[Vector3(0.6, 0.02, 0.1), Vector3(-0.72, 0.05, 0.02)], [Vector3(0.6, 0.02, 0.1), Vector3(0.72, 0.05, 0.02)]],
 	"daredevil": [[Vector3(0.4, 0.02, 0.1), Vector3(-0.8, 0.05, 0.26)], [Vector3(0.4, 0.02, 0.1), Vector3(0.8, 0.05, 0.26)]],
 	"second_wind": [[Vector3(0.34, 0.04, 0.08), Vector3(0.0, 0.1, 0.97)]],
+	"wingman": [[Vector3(0.12, 0.1, 0.3), Vector3(-0.62, 0.14, 0.55)], [Vector3(0.12, 0.1, 0.3), Vector3(0.62, 0.14, 0.55)]],
+	"shockwave": [[Vector3(0.5, 0.03, 0.06), Vector3(0.0, 0.1, 0.55)], [Vector3(0.06, 0.03, 0.4), Vector3(-0.28, 0.1, 0.35)], [Vector3(0.06, 0.03, 0.4), Vector3(0.28, 0.1, 0.35)]],
+	"banner": [[Vector3(0.1, 0.1, 0.2), Vector3(0.0, 0.1, 1.2)]],
+	"skywriter": [[Vector3(0.14, 0.14, 0.25), Vector3(0.0, 0.12, 1.15)], [Vector3(0.1, 0.1, 0.18), Vector3(0.0, 0.2, 0.95)]],
+	"magnet_field": [[Vector3(0.7, 0.04, 0.12), Vector3(0.0, 0.17, -0.1)], [Vector3(0.12, 0.04, 0.6), Vector3(-0.35, 0.17, 0.1)], [Vector3(0.12, 0.04, 0.6), Vector3(0.35, 0.17, 0.1)]],
+	"roll": [[Vector3(0.3, 0.04, 0.14), Vector3(-1.0, 0.1, 0.35)], [Vector3(0.3, 0.04, 0.14), Vector3(1.0, 0.1, 0.35)]],
 	"flak": [[Vector3(0.07, 0.07, 0.5), Vector3(-0.3, 0.16, -0.9)], [Vector3(0.07, 0.07, 0.5), Vector3(0.3, 0.16, -0.9)]],
 	"pods": [[Vector3(0.16, 0.12, 0.5), Vector3(-0.95, 0.12, 0.0)], [Vector3(0.16, 0.12, 0.5), Vector3(0.95, 0.12, 0.0)]],
 	"tail": [[Vector3(0.08, 0.08, 0.4), Vector3(0.0, 0.14, 1.3)]],
@@ -124,7 +133,13 @@ func step(delta: float) -> void:
 	# Banking and yaw come from how fast the plane ACTUALLY moved, smoothed so it still looks like a plane.
 	velocity = (Vector2(x, z) - prev_xz) / delta
 	var k := 1.0 - exp(-Tuning.tilt_smoothing * delta)
-	_model.rotation.z = lerpf(_model.rotation.z, clampf(-velocity.x * Tuning.bank_amount, -Tuning.bank_max, Tuning.bank_max), k)
+	if roll_left > 0.0:   # a barrel roll: one full turn about the nose axis
+		roll_left = maxf(roll_left - delta, 0.0)
+		_model.rotation.z = TAU * (1.0 - roll_left / maxf(roll_total, 0.01)) * roll_dir
+		if roll_left <= 0.0:
+			_model.rotation.z = 0.0
+	else:
+		_model.rotation.z = lerpf(_model.rotation.z, clampf(-velocity.x * Tuning.bank_amount, -Tuning.bank_max, Tuning.bank_max), k)
 	_model.rotation.y = lerpf(_model.rotation.y, clampf(-velocity.x * Tuning.yaw_amount, -Tuning.yaw_max, Tuning.yaw_max), k)
 	# Visual polish: the drawn plane may trail its true position very slightly. Collision never uses this.
 	if Tuning.visual_smoothing > 0.0:
@@ -239,8 +254,14 @@ func collision_half_span() -> float:
 	return m
 
 ## Back to the start of a run (restart in place): centred, stopped, upright, controls live.
+func roll(seconds: float) -> void:
+	roll_total = seconds
+	roll_left = seconds
+	roll_dir = 1.0 if velocity.x >= 0.0 else -1.0
+
 func reset() -> void:
 	active = true
+	roll_left = 0.0
 	velocity = Vector2.ZERO
 	touching = false
 	_pending_drag = Vector2.ZERO
