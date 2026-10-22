@@ -1193,7 +1193,7 @@ func _initialize() -> void:
 		main.hud._select_tab(t)
 		var vis := 0
 		for row in main.hud._upg_rows:
-			if (row["title"] as Label).visible:
+			if (row["panel"] as Control).visible:
 				vis += 1
 				tab_ok = tab_ok and row["tab"] == t and (row["line"] as Label).text.contains("->") or (row["line"] as Label).text.contains("MAX")
 		tab_ok = tab_ok and vis == tuning.upgrades_in_tab(t).size()
@@ -1204,7 +1204,7 @@ func _initialize() -> void:
 	var cv_row: Dictionary = main.hud._upg_rows[0]
 	check((cv_row["buy"] as Button).disabled and (cv_row["buy"] as Button).text == "280", "Coin Value costs 280 and is greyed out with 50 coins")
 	tsave.add_coins(1000000.0)
-	check(main.hud._hangar_coins.text == "Coins: 1M" and not (cv_row["buy"] as Button).disabled, "balance shows with suffixes (Coins: 1M)")
+	check(main.hud._hangar_coins.text == "1M" and not (cv_row["buy"] as Button).disabled, "balance shows with suffixes (1M)")
 	(cv_row["buy"] as Button).pressed.emit()
 	check(tsave.level("coin_value") == 1 and is_equal_approx(tuning.coin_value_mult(), 1.3) and tsave.coins == 1000050.0 - 280.0 and (cv_row["title"] as Label).text.contains("Lv 1"), "buying Coin Value: level 1, coins x1.3, cost deducted")
 	for id in ["can_bounty", "close_call_pay", "bonus_cap", "fuel_tank", "efficiency", "refill"]:
@@ -1804,7 +1804,7 @@ func _initialize() -> void:
 	main.pick_screen.show_cards(two_cards, ["Combo", ""])
 	var pips_lit := 0
 	for pip in main.pick_screen._parts[0]["pips"]:
-		pips_lit += int((pip.get_theme_stylebox("panel") as StyleBoxFlat).bg_color.is_equal_approx(Color.WHITE))
+		pips_lit += int((pip.get_theme_stylebox("panel") as StyleBoxFlat).bg_color.is_equal_approx(Style.ACCENT))
 	check(pips_lit == 3 and main.pick_screen._parts[0]["line"].text == "Cans pay 250 and add a bonus step" and main.pick_screen._parts[0]["combo"].visible and not main.pick_screen._parts[1]["combo"].visible,
 			"a card is a big icon, a name, ONE short line (\"%s\") and level pips; a combo card is highlighted" % main.pick_screen._parts[0]["line"].text)
 	main.pick_screen.hide_cards()
@@ -3949,7 +3949,7 @@ func _initialize() -> void:
 	var parents_ok := true
 	for key in main.hud._res_nodes:
 		var rn: Node = main.hud._res_nodes[key]
-		parents_ok = parents_ok and (rn.get_parent() == main.hud._res)
+		parents_ok = parents_ok and (rn.get_parent() == main.hud._res or rn.get_parent().get_parent() == main.hud._res)   # (a bar's fill rides in its trough)
 	for cn in main.hud._call_nodes:
 		parents_ok = parents_ok and cn["glyph"].get_parent() == cn["holder"] and cn["text"].get_parent() == cn["holder"]
 	check(parents_ok and not main.hud._res.visible, "the results screen and the callouts hold their own parts (hiding them hides everything)")
@@ -4235,6 +4235,77 @@ func _initialize() -> void:
 	main.restart()
 	main.set_process(false)
 	ct_save.reset_all()
+
+	print("18. the shared style: tokens, fonts, icons, buttons, safe areas, the studio, the build stamp")
+	var st_save := root.get_node("Save")
+	st_save.reset_all()
+	main.set_process(false)
+	check(Style.contrast(Style.TEXT, Style.SURFACE_DARK) >= 4.5 and Style.contrast(Style.TEXT_SOFT, Style.SURFACE_DARK) >= 4.5 and Style.contrast(Style.ACCENT, Style.SURFACE_DARK) >= 4.5 and Style.contrast(Style.TEXT_ON_LIGHT, Style.SURFACE_LIGHT) >= 4.5, "text, soft text and gold on the dark surface, and dark text on the light one, are at least 4.5:1")
+	check(Style.display() != null and Style.text() != null and FileAccess.file_exists("res://assets/fonts/OFL.txt") and FileAccess.file_exists("res://assets/fonts/OFL-Nunito.txt"), "Fredoka (display) and Nunito (text) are bundled with their OFL licences")
+	check(Style.font_for("PLAY", Style.SZ_XL) == Style.display() and Style.font_for("12,300", Style.SZ_S) == Style.display() and Style.font_for("Fly faster", Style.SZ_S) == Style.text(), "big text and numbers use the display face, the rest the text face")
+	var st_bad: Array[String] = []
+	for list in [tuning.perks, tuning.boosts, tuning.supplies, tuning.upgrades]:
+		for d in list:
+			if not Icons.has(String(d["glyph"])):
+				st_bad.append("%s: %s" % [d["id"], d["glyph"]])
+	for c in tuning.combos:
+		if not Icons.has(String(tuning.perk_def(c["perk"])["glyph"])):
+			st_bad.append(c["id"])
+	check(st_bad.is_empty(), "every perk, boost, supply, upgrade and gear item has a vector icon (no letters or emoji stand in) %s" % str(st_bad))
+	var st_ids_ok := true
+	for ic in ["coin", "star", "clock", "play", "pause", "restart", "home", "back", "speaker", "note", "lock", "check", "plane", "can", "cat", "hangar", "logbook", "map"]:
+		st_ids_ok = st_ids_ok and Icons.has(ic)
+	check(st_ids_ok and Icons.for_id("nonsense") == "quest", "the UI icons exist, and an unknown id shows a question mark")
+	var st_btn := UiButton.new()
+	st_btn.text = "PLAY"
+	st_btn.size = Vector2(500, 200)
+	main.add_child(st_btn)
+	st_btn.kind = UiButton.Kind.PRIMARY
+	st_btn.button_down.emit()
+	for i in 12:
+		st_btn._process(0.016)
+	var st_pressed: float = st_btn.squash()
+	st_btn.button_up.emit()
+	var st_bounce := 0.0
+	for i in 8:
+		st_btn._process(0.016)
+		st_bounce = minf(st_bounce, st_btn.squash())
+	check(st_pressed > 0.99 and st_bounce < -0.05, "a button squashes down when pressed (%.2f) and bounces past rest when released (%.2f)" % [st_pressed, st_bounce])
+	st_btn.disabled = true
+	st_btn.button_down.emit()
+	check(st_btn.text == "PLAY" and st_btn.disabled, "a disabled button stays itself")
+	st_btn.queue_free()
+	# safe areas: everything pinned to the top moves down by the inset
+	var st_y0: float = main.hud._score_pill.position.y
+	Style.set_safe(90.0, 40.0, 0.0, 0.0)
+	main.hud.relayout()
+	var st_y1: float = main.hud._score_pill.position.y
+	var st_menu_y: float = main.hud._map_cards[0].position.y
+	Style.set_safe(0.0, 0.0)
+	main.hud.relayout()
+	check(absf((st_y1 - st_y0) - 90.0) < 0.5 and absf(main.hud._score_pill.position.y - st_y0) < 0.5 and st_menu_y > main.hud._map_cards[0].position.y + 80.0, "the HUD and the screens sit below a 90 px notch inset and come back when it goes (%.0f -> %.0f)" % [st_y0, st_y1])
+	# the studio
+	check(Logo.NAME == "Clear Prop Games" and FileAccess.file_exists("res://assets/studio_mark.svg") and FileAccess.file_exists("res://web/shell.html"), "the studio is Clear Prop Games: its mark, the wordmark and the web loading page exist")
+	var st_shell := FileAccess.get_file_as_string("res://web/shell.html")
+	check(st_shell.contains("Clear Prop Games") and st_shell.contains("<svg") and st_shell.contains("$GODOT_CONFIG") and st_shell.contains("$GODOT_URL") and st_shell.contains("id=\"fill\"") and st_shell.contains("<head>"), "the web shell draws the mark as an SVG with a progress bar, keeps Godot's placeholders and a plain <head> for the cache-bust snippet")
+	check(not st_shell.to_lower().contains("godot engine") and not st_shell.contains("status-notice"), "...and shows no raw Godot text")
+	check(FileAccess.get_file_as_string("res://export_presets.cfg").contains("web/shell.html"), "the web export uses it")
+	# the build stamp: only for ?debug, ?tune or ?perf
+	DebugFlags.parse([])
+	check(not DebugFlags.stamp_enabled(), "players do not get the build stamp")
+	var st_all := true
+	for fl in ["debug", "tune", "perf"]:
+		DebugFlags.parse([fl])
+		st_all = st_all and DebugFlags.stamp_enabled()
+	check(st_all, "?debug, ?tune and ?perf show it")
+	DebugFlags.parse(["tune"])
+	var st_stamps := 0
+	for ch in main.hud.get_children():
+		if ch is Label and (ch as Label).text.begins_with(BuildInfo.COMMIT):
+			st_stamps += 1
+			check((ch as Label).get_theme_font_size("font_size") <= 24 and (ch as Label).modulate.a < 0.7, "...small and faint, in a corner")
+	check(st_stamps == 1, "?tune: the stamp is on screen once")
+	st_save.reset_all()
 
 	DirAccess.remove_absolute(ProjectSettings.globalize_path("user://smoke_test_save.json"))
 	print("")

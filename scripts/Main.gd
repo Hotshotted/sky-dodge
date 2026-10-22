@@ -224,6 +224,7 @@ func _prewarm() -> void:
 		calm_frames = calm_frames + 1 if (t - t_last) < Tuning.prewarm_stable_ms else 0
 		t_last = t
 		var elapsed_s := (t - t_start) / 1000.0
+		hud.set_splash_progress(minf(elapsed_s / maxf(Tuning.prewarm_min_seconds, 0.1), 0.95))
 		if elapsed_s >= Tuning.prewarm_max_seconds:
 			break
 		if elapsed_s >= Tuning.prewarm_min_seconds and calm_frames >= Tuning.prewarm_stable_frames:
@@ -240,6 +241,7 @@ func _prewarm() -> void:
 	spawner.prewarm_hide()
 	pick_screen.hide_cards()
 	hud.clear_bonus()
+	hud.set_splash_progress(1.0)
 	hud.end_prewarm()
 	if tune_panel:
 		tune_panel.prewarm_show(false)

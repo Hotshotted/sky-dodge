@@ -55,7 +55,7 @@ var _logbook_rows: Array[Dictionary] = [] # per combo: icon style, glyph, title,
 var _last_meters := -1
 var _hangar: Control                 # upgrade screen
 var _hangar_coins: Label
-var _over_hangar: Button             # small "Hangar" button on the game-over screen
+var _over_hangar: Button             # the old game-over "Hangar" button (kept hidden: the results screen has its own)
 signal equip_pressed(id: String, slot: int)
 signal buy_slot_pressed
 const TABS := ["earnings", "plane", "gear"]
@@ -66,7 +66,7 @@ var _tab_buttons := {}
 var _slot_buttons: Array[Button] = []
 var _upg_rows: Array[Dictionary] = []     # per upgrade: id, tab, title, line, buy, equip, nodes
 const LIVES_POOL := 8
-var _lives_pips: Array[ColorRect] = []
+var _lives_pips: Array[Control] = []
 const COIN_POP_POOL := 4
 var _coin_pops: Array[Label] = []
 var _coin_born := PackedInt64Array()
@@ -77,14 +77,22 @@ var _pop_labels: Array[Label] = []
 var _pop_born := PackedInt64Array()   # real ms when started; 0 = idle
 var _pop_base_y := PackedFloat32Array()
 var _next_pop := 0
-var _fuel_bg: ColorRect
-var _fuel_fill: ColorRect
-var _fuel_label: Label
+var _fuel_bg: Control
+var _fuel_fill: Panel
+var _fuel_sb: StyleBoxFlat
+var _fuel_icon: IconView
+var _fuel_label: Control
 var _fuel_frac := 1.0
 var _fuel_pulse_ms := -10000        # when a pickup last made the gauge flash
 const FUEL_BAR_W := 560.0
 const FUEL_BAR_H := 30.0
-const FUEL_BAR_TOP := 255.0
+var _fuel_top := 255.0              # the gauge's top edge (below the safe area)
+var _vp := Vector2(1080, 1920)      # the view size the layout was made for
+var _lays: Array[Callable] = []     # every screen's layout, re-run when the view or its safe area changes
+var _score_pill: UiPanel
+var _score_coin: IconView
+var _dist_pill: UiPanel
+var _dist_icon: IconView
 const FUEL_PULSE_TIME := 0.35
 var _splash: Control
 # ---- the results screen (built once; Main passes a data dictionary, see show_results)
@@ -123,57 +131,62 @@ const POPUP_TIME := 0.9
 const COIN_POP_TIME := 0.8
 
 func _ready() -> void:
-	_score = _make_label(72)
-	_score.set_anchors_and_offsets_preset(Control.PRESET_TOP_WIDE)
-	_score.offset_top = 80
-	_bonus_label = _make_label(64)
+	ThemeDB.get_default_theme().default_font = Style.text()   # (every label that does not pick a face uses Nunito Bold)
+	_vp = get_viewport().get_visible_rect().size
+	Style.detect_safe(_vp)
+	_score_pill = UiPanel.new()
+	_score_pill.fill = Color(Style.INK, 0.62)
+	_score_pill.radius = Style.R_PILL
+	_score_pill.shadow = false
+	_score_pill.sheen_alpha = 0.0
+	add_child(_score_pill)
+	_score_coin = IconView.new()
+	_score_coin.icon = "coin"
+	add_child(_score_coin)
+	_dist_pill = UiPanel.new()
+	_dist_pill.fill = Color(Style.INK, 0.5)
+	_dist_pill.radius = Style.R_PILL
+	_dist_pill.shadow = false
+	_dist_pill.sheen_alpha = 0.0
+	add_child(_dist_pill)
+	_dist_icon = IconView.new()
+	_dist_icon.icon = "map"
+	_dist_icon.tint = Color(Style.TEXT_SOFT)
+	add_child(_dist_icon)
+	_score = _make_label(72, true)
+	_score.horizontal_alignment = HORIZONTAL_ALIGNMENT_CENTER
+	_bonus_label = _make_label(64, true)
 	_bonus_label.set_anchors_and_offsets_preset(Control.PRESET_TOP_WIDE)
-	_bonus_label.offset_top = 170
 	clear_bonus()
-	_distance_label = _make_label(40)
+	_distance_label = _make_label(40, true)
 	_distance_label.horizontal_alignment = HORIZONTAL_ALIGNMENT_LEFT
-	_distance_label.position = Vector2(24, 26)
-	_distance_label.modulate = Color(1, 1, 1, 0.8)
-	_next_label = _make_label(34)
+	_distance_label.modulate = Color(1, 1, 1, 0.9)
+	_next_label = _make_label(34, true)
 	_next_label.set_anchors_and_offsets_preset(Control.PRESET_TOP_WIDE)
-	_next_label.offset_top = 335
-	_next_label.modulate = Color(1, 1, 1, 0.8)
+	_next_label.modulate = Color(1, 1, 1, 0.85)
 	for i in PERK_ICONS:
-		var panel := Panel.new()
-		var sb := StyleBoxFlat.new()
-		sb.set_corner_radius_all(26)
-		panel.add_theme_stylebox_override("panel", sb)
-		panel.size = Vector2(52, 52)
+		var panel := Panel.new()   # (an empty frame the icon and its level ride in: it scales when the perk pulses)
+		panel.add_theme_stylebox_override("panel", StyleBoxEmpty.new())
+		panel.size = Vector2(56, 56)
 		panel.mouse_filter = Control.MOUSE_FILTER_IGNORE
 		panel.visible = false
 		add_child(panel)
-		var gl := Label.new()
-		gl.add_theme_font_size_override("font_size", 30)
-		gl.add_theme_constant_override("outline_size", 6)
-		gl.add_theme_color_override("font_outline_color", Color.BLACK)
-		gl.horizontal_alignment = HORIZONTAL_ALIGNMENT_CENTER
-		gl.vertical_alignment = VERTICAL_ALIGNMENT_CENTER
-		gl.size = Vector2(52, 44)
-		gl.mouse_filter = Control.MOUSE_FILTER_IGNORE
-		panel.add_child(gl)
-		var lv := Label.new()
-		lv.add_theme_font_size_override("font_size", 22)
-		lv.add_theme_constant_override("outline_size", 6)
-		lv.add_theme_color_override("font_outline_color", Color.BLACK)
+		var iv := IconView.new()
+		iv.size = Vector2(56, 56)
+		panel.add_child(iv)
+		var lv := _loose_label(24, true)
 		lv.horizontal_alignment = HORIZONTAL_ALIGNMENT_RIGHT
 		lv.position = Vector2(28, 26)
-		lv.size = Vector2(24, 26)
-		lv.mouse_filter = Control.MOUSE_FILTER_IGNORE
+		lv.size = Vector2(30, 32)
 		panel.add_child(lv)
-		_perk_icons.append({"panel": panel, "style": sb, "glyph": gl, "level": lv})
+		_perk_icons.append({"panel": panel, "icon": iv, "glyph": iv, "level": lv})
 		_perk_ids.append("")
 		_perk_pulse_ms.append(-100000)
 		_perk_scale.append(1.0)
-		panel.pivot_offset = Vector2(26.0, 26.0)
+		panel.pivot_offset = Vector2(28.0, 28.0)
 	for i in EFFECT_LABELS:
 		var el := _make_label(34)
 		el.horizontal_alignment = HORIZONTAL_ALIGNMENT_LEFT
-		el.position = Vector2(24, 450 + 44.0 * i)
 		el.visible = false
 		_effect_labels.append(el)
 	_effect_shown.resize(EFFECT_LABELS)
@@ -182,37 +195,34 @@ func _ready() -> void:
 	_flash_rect.set_anchors_and_offsets_preset(Control.PRESET_FULL_RECT)
 	_flash_rect.mouse_filter = Control.MOUSE_FILTER_IGNORE
 	add_child(_flash_rect)
-	_combo_sub = _make_label(48)
+	_combo_sub = _make_label(48, true)
 	_combo_sub.set_anchors_and_offsets_preset(Control.PRESET_TOP_WIDE)
-	_combo_sub.offset_top = 560
 	_combo_sub.visible = false
-	_combo_label = _make_label(104)
+	_combo_label = _make_label(104, true)
 	_combo_label.set_anchors_and_offsets_preset(Control.PRESET_TOP_WIDE)
-	_combo_label.offset_top = 620
 	_combo_label.add_theme_constant_override("outline_size", 22)
 	_combo_label.visible = false
 	_build_fuel_gauge()
 	for i in POPUP_POOL:
-		var l := _make_label(64)
+		var l := _make_label(64, true)
 		l.visible = false
 		_pop_labels.append(l)
 	_pop_born.resize(POPUP_POOL)
 	_pop_base_y.resize(POPUP_POOL)
 	for i in COIN_POP_POOL:
-		var cl := _make_label(46)
-		cl.add_theme_color_override("font_color", Color(1.0, 0.85, 0.25))
+		var cl := _make_label(46, true)
+		cl.add_theme_color_override("font_color", Style.ACCENT)
 		cl.visible = false
 		_coin_pops.append(cl)
 	_coin_born.resize(COIN_POP_POOL)
 	_coin_base_y.resize(COIN_POP_POOL)
 	for i in LIVES_POOL:
-		var pip := ColorRect.new()
-		pip.color = Color(1.0, 0.3, 0.3)
-		pip.mouse_filter = Control.MOUSE_FILTER_IGNORE
+		var pip := IconView.new()
+		pip.icon = "heart"
+		pip.tint = Style.DANGER
 		pip.anchor_left = 0.5
 		pip.anchor_right = 0.5
-		pip.offset_top = FUEL_BAR_TOP + 46.0
-		pip.offset_bottom = FUEL_BAR_TOP + 72.0
+		pip.size = Vector2(34, 34)
 		pip.visible = false
 		add_child(pip)
 		_lives_pips.append(pip)
@@ -223,26 +233,68 @@ func _ready() -> void:
 	_over.visible = false
 	_build_menus()
 	Save.changed.connect(refresh_menus)
+	get_viewport().size_changed.connect(relayout)
 	refresh_menus()
+	_lay(_layout_run_hud)
+
+## Run every screen's layout again (the view or its safe area changed: a notch, a rotation, browser bars).
+func relayout() -> void:
+	_vp = get_viewport().get_visible_rect().size
+	Style.detect_safe(_vp)
+	for c in _lays:
+		c.call()
+
+func _lay(c: Callable) -> void:
+	_lays.append(c)
+	c.call()
+
+## Everything pinned to the top of the view sits below the safe area (notch, status bar).
+func _layout_run_hud() -> void:
+	var sy := Style.safe_top
+	var sl := Style.safe_left
+	_dist_pill.position = Vector2(24.0 + sl, 24.0 + sy)
+	_dist_pill.size = Vector2(300, 84)
+	_dist_icon.position = _dist_pill.position + Vector2(18, 20)
+	_dist_icon.size = Vector2(44, 44)
+	_distance_label.position = _dist_pill.position + Vector2(76, 6)
+	_distance_label.size = Vector2(216, 72)
+	_distance_label.vertical_alignment = VERTICAL_ALIGNMENT_CENTER
+	_score_pill.position = Vector2((_vp.x - 440.0) * 0.5, 14.0 + sy)
+	_score_pill.size = Vector2(440, 108)
+	_score_coin.position = _score_pill.position + Vector2(26, 26)
+	_score_coin.size = Vector2(56, 56)
+	_score.set_anchors_and_offsets_preset(Control.PRESET_TOP_WIDE)
+	_score.offset_top = 14.0 + sy
+	_score.offset_bottom = 122.0 + sy
+	_score.offset_left = 80.0
+	_score.offset_right = -20.0
+	_score.vertical_alignment = VERTICAL_ALIGNMENT_CENTER
+	_bonus_label.offset_top = 128.0 + sy
+	_fuel_top = 224.0 + sy
+	_layout_fuel()
+	_next_label.offset_top = _fuel_top + 70.0
+	for i in EFFECT_LABELS:
+		(_effect_labels[i] as Label).position = Vector2(24.0 + sl, _fuel_top + 200.0 + 44.0 * i)
+	_combo_sub.offset_top = _fuel_top + 300.0
+	_combo_label.offset_top = _fuel_top + 360.0
+	for pip in _lives_pips:
+		pip.offset_top = _fuel_top + 50.0
+		pip.offset_bottom = pip.offset_top + 34.0
+	_reposition_perks()
 
 # ---------- Start screen, Hangar, game-over button ----------
-# All of it is created once here; screens are only shown / hidden afterwards.
+# All of it is created once here; screens are only shown / hidden afterwards. Positions come from the view size and the safe
+# area (see _lay), so nothing is pinned to a 1920-high guess.
 
-func _make_button(text: String, font_size: int, size: Vector2) -> Button:
-	var b := Button.new()
+func _make_button(text: String, font_size: int, size: Vector2, kind: UiButton.Kind = UiButton.Kind.SECONDARY, icon: String = "") -> UiButton:
+	var b := UiButton.new()
 	b.pressed.connect(func(): if sfx != null: sfx.play("tap", 0.8))   # every button clicks
+	b.kind = kind
+	b.icon_id = icon
 	b.text = text
-	b.add_theme_font_size_override("font_size", font_size)
+	b.font_px = font_size
 	b.custom_minimum_size = size
 	b.size = size
-	for state in ["normal", "hover", "pressed", "disabled", "focus"]:
-		var sb := StyleBoxFlat.new()
-		sb.set_corner_radius_all(24)
-		sb.bg_color = {"normal": Color(0.2, 0.55, 0.9), "hover": Color(0.25, 0.6, 0.95), "pressed": Color(0.12, 0.4, 0.75),
-				"disabled": Color(0.22, 0.26, 0.34), "focus": Color(0.2, 0.55, 0.9)}[state]
-		b.add_theme_stylebox_override(state, sb)
-	b.add_theme_color_override("font_disabled_color", Color(0.6, 0.65, 0.75))
-	b.focus_mode = Control.FOCUS_NONE
 	return b
 
 func _place(c: Control, x: float, y: float, w: float, h: float) -> void:
@@ -250,7 +302,7 @@ func _place(c: Control, x: float, y: float, w: float, h: float) -> void:
 	c.size = Vector2(w, h)
 
 func _screen_label(parent: Control, text: String, font_size: int, x: float, y: float, w: float, h: float, align: HorizontalAlignment) -> Label:
-	var l := _make_label(font_size)
+	var l := _make_label(font_size, font_size >= Style.SZ_M)
 	remove_child(l)
 	parent.add_child(l)
 	l.text = text
@@ -263,8 +315,9 @@ func _screen_root() -> Control:
 	var root := Control.new()
 	root.set_anchors_and_offsets_preset(Control.PRESET_FULL_RECT)
 	root.mouse_filter = Control.MOUSE_FILTER_STOP   # taps on the screen don't reach the game
-	var bg := ColorRect.new()
-	bg.color = Color(0.08, 0.1, 0.16, 1.0)   # (opaque: nothing of the run shows through)
+	var bg := TextureRect.new()
+	bg.texture = Style.screen_gradient()
+	bg.stretch_mode = TextureRect.STRETCH_SCALE
 	bg.set_anchors_and_offsets_preset(Control.PRESET_FULL_RECT)
 	bg.mouse_filter = Control.MOUSE_FILTER_IGNORE
 	root.add_child(bg)
@@ -272,16 +325,54 @@ func _screen_root() -> Control:
 	add_child(root)
 	return root
 
+## A coins pill (coin icon + number) in a screen's top corner; returns the number label.
+func _coins_pill(parent: Control) -> Label:
+	var pill := UiPanel.new()
+	pill.fill = Color(Style.INK, 0.7)
+	pill.radius = Style.R_PILL
+	pill.shadow = false
+	pill.sheen_alpha = 0.0
+	parent.add_child(pill)
+	var icon := IconView.new()
+	icon.icon = "coin"
+	parent.add_child(icon)
+	var l := _make_label(44, true)
+	remove_child(l)
+	parent.add_child(l)
+	l.horizontal_alignment = HORIZONTAL_ALIGNMENT_RIGHT
+	l.vertical_alignment = VERTICAL_ALIGNMENT_CENTER
+	l.add_theme_color_override("font_color", Style.ACCENT)
+	_lay(func():
+		var x := _vp.x - Style.GUTTER * 0.5 - Style.safe_right - 300.0
+		var y := 20.0 + Style.safe_top
+		pill.position = Vector2(x, y)
+		pill.size = Vector2(300, 84)
+		icon.position = Vector2(x + 18.0, y + 18.0)
+		icon.size = Vector2(48, 48)
+		l.position = Vector2(x + 76.0, y + 6.0)
+		l.size = Vector2(206, 72))
+	return l
+
+## A round-cornered ghost icon button in a screen's top-left corner (back, home).
+func _corner_button(parent: Control, icon: String, on_press: Callable) -> UiButton:
+	var b := _make_button("", 40, Vector2(96, 96), UiButton.Kind.GHOST, icon)
+	b.pressed.connect(on_press)
+	parent.add_child(b)
+	_lay(func():
+		b.position = Vector2(Style.GUTTER * 0.5 + Style.safe_left, 14.0 + Style.safe_top)
+		b.size = Vector2(96, 96))
+	return b
+
 func _build_menus() -> void:
 	const W := 1080.0
 	_menu = _screen_root()
-	_screen_label(_menu, "SKY DODGE", 130, 0, 90, W, 160, HORIZONTAL_ALIGNMENT_CENTER)
-	_menu_best = _screen_label(_menu, "", 44, 0, 260, W, 70, HORIZONTAL_ALIGNMENT_CENTER)
-	_menu_coins = _screen_label(_menu, "", 52, 0, 335, W, 80, HORIZONTAL_ALIGNMENT_CENTER)
+	_menu_coins = _coins_pill(_menu)
+	var title := _screen_label(_menu, "SKY DODGE", Style.SZ_XL, 0, 0, W, 150, HORIZONTAL_ALIGNMENT_CENTER)
+	title.add_theme_color_override("font_color", Color.WHITE)
+	_menu_best = _screen_label(_menu, "", 36, 0, 0, W, 60, HORIZONTAL_ALIGNMENT_CENTER)
+	_menu_best.add_theme_color_override("font_color", Style.TEXT_SOFT)
 	for i in Tuning.maps.size():
-		var card := _make_button("", 36, Vector2(960, 150))
-		_place(card, 60, 450 + 165.0 * i, 960, 150)
-		card.alignment = HORIZONTAL_ALIGNMENT_LEFT
+		var card := _make_button("", 46, Vector2(960, 150), UiButton.Kind.CARD, "map")
 		card.pressed.connect(func(): map_pressed.emit(i))
 		_menu.add_child(card)
 		_map_cards.append(card)
@@ -290,31 +381,37 @@ func _build_menus() -> void:
 			var dot := Panel.new()
 			var sbd := StyleBoxFlat.new()
 			sbd.set_corner_radius_all(15)
+			sbd.border_color = Style.INK
+			sbd.set_border_width_all(3)
 			dot.add_theme_stylebox_override("panel", sbd)
-			_place(dot, 960 - 60 - 36.0 * (3 - k), 60, 30, 30)
+			_place(dot, 960 - 60 - 40.0 * (3 - k), 60, 30, 30)
 			dot.mouse_filter = Control.MOUSE_FILTER_IGNORE
 			card.add_child(dot)
 			dots.append(dot)
 		_map_dots.append(dots)
-	var play := _make_button("PLAY", 84, Vector2(560, 170))
-	_place(play, (W - 560.0) * 0.5, 1150, 560, 170)
+	var play := _make_button("PLAY", 104, Vector2(900, 230), UiButton.Kind.PRIMARY, "play")
 	play.pressed.connect(func(): play_pressed.emit())
 	_menu.add_child(play)
-	var hangar := _make_button("HANGAR", 60, Vector2(560, 130))
-	_place(hangar, (W - 560.0) * 0.5, 1350, 560, 130)
+	var hangar := _make_button("HANGAR", 52, Vector2(440, 120), UiButton.Kind.SECONDARY, "hangar")
 	hangar.pressed.connect(func(): hangar_pressed.emit())
 	_menu.add_child(hangar)
+	var logbook := _make_button("LOGBOOK", 52, Vector2(440, 120), UiButton.Kind.SECONDARY, "logbook")
+	logbook.pressed.connect(func(): logbook_pressed.emit())
+	_menu.add_child(logbook)
 	# volume settings: Music and Sound, one slider each
+	var vol_icons: Array[IconView] = []
 	for vi in 2:
-		var vl := _screen_label(_menu, ["Music", "Sound"][vi], 40, 90, 1660 + 90.0 * vi, 200, 70, HORIZONTAL_ALIGNMENT_LEFT)
-		vl.add_theme_font_size_override("font_size", 40)
+		var vic := IconView.new()
+		vic.icon = ["note", "speaker"][vi]
+		vic.tint = Style.TEXT_SOFT
+		_menu.add_child(vic)
+		vol_icons.append(vic)
 		var sl := HSlider.new()
 		sl.min_value = 0.0
 		sl.max_value = 1.0
 		sl.step = 0.05
 		sl.value = Save.audio_music if vi == 0 else Save.audio_sound
-		sl.position = Vector2(310, 1660 + 90.0 * vi)
-		sl.size = Vector2(680, 70)
+		Style.style_slider(sl)
 		sl.value_changed.connect(func(v: float):
 			if vi == 0:
 				Save.audio_music = v
@@ -327,26 +424,44 @@ func _build_menus() -> void:
 				sfx.play("tap", 0.8))
 		_menu.add_child(sl)
 		_volume_sliders.append(sl)
-	var logbook := _make_button("LOGBOOK", 50, Vector2(560, 110))
-	_place(logbook, (W - 560.0) * 0.5, 1510, 560, 110)
-	logbook.pressed.connect(func(): logbook_pressed.emit())
-	_menu.add_child(logbook)
+	_lay(func():
+		var sy := Style.safe_top
+		var sb := Style.safe_bottom
+		title.position = Vector2(0, sy + 130.0)
+		_menu_best.position = Vector2(0, sy + 285.0)
+		for i in _map_cards.size():
+			_map_cards[i].position = Vector2(60, sy + 380.0 + 164.0 * i)
+		var y := _vp.y - sb - 36.0
+		y -= 150.0   # the sliders
+		for vi in 2:
+			vol_icons[vi].position = Vector2(110, y + 8.0 + 72.0 * vi)
+			vol_icons[vi].size = Vector2(52, 52)
+			_volume_sliders[vi].position = Vector2(190, y + 72.0 * vi)
+			_volume_sliders[vi].size = Vector2(780, 64)
+		y -= 144.0
+		hangar.position = Vector2(60 + 10, y)
+		hangar.size = Vector2(440, 120)
+		logbook.position = Vector2(W - 70.0 - 440.0, y)
+		logbook.size = Vector2(440, 120)
+		y -= 254.0
+		play.position = Vector2((W - 900.0) * 0.5, y)
+		play.size = Vector2(900, 230))
 
 	_hangar = _screen_root()
-	_screen_label(_hangar, "HANGAR", 100, 0, 60, W, 120, HORIZONTAL_ALIGNMENT_CENTER)
-	_hangar_coins = _screen_label(_hangar, "", 56, 0, 175, W, 80, HORIZONTAL_ALIGNMENT_CENTER)
+	_hangar_coins = _coins_pill(_hangar)
+	_corner_button(_hangar, "back", func(): back_pressed.emit())
+	var htitle := _screen_label(_hangar, "HANGAR", 90, 0, 0, W, 110, HORIZONTAL_ALIGNMENT_CENTER)
 	# Tabs.
+	var tab_y := 150.0
 	for i in TABS.size():
 		var tab: String = TABS[i]
-		var tb := _make_button(TAB_NAMES[i], 40, Vector2(330, 90))
-		_place(tb, 30.0 + 350.0 * i, 270, 330, 90)
+		var tb := _make_button(TAB_NAMES[i], 40, Vector2(310, 92), UiButton.Kind.TAB)
 		tb.pressed.connect(func(): _select_tab(tab))
 		_hangar.add_child(tb)
 		_tab_buttons[tab] = tb
 	# Gear slots (only on the GEAR tab).
 	for i in 3:
-		var sb := _make_button("", 36, Vector2(330, 90))
-		_place(sb, 30.0 + 350.0 * i, 380, 330, 90)
+		var sb := _make_button("", 34, Vector2(310, 92), UiButton.Kind.SECONDARY)
 		sb.pressed.connect(func(): _on_slot_button(i))
 		_hangar.add_child(sb)
 		_slot_buttons.append(sb)
@@ -357,64 +472,68 @@ func _build_menus() -> void:
 		var tab: String = u["tab"]
 		var n: int = counts.get(tab, 0)
 		counts[tab] = n + 1
-		var y: float = (390.0 + 200.0 * n) if tab != "gear" else (490.0 + 175.0 * n)
-		var row := {"id": id, "tab": tab, "nodes": []}
-		var panel := ColorRect.new()
-		panel.color = Color(1, 1, 1, 0.07)
-		_place(panel, 30, y, W - 60.0, 160 if tab == "gear" else 185)
-		panel.mouse_filter = Control.MOUSE_FILTER_IGNORE
+		var row := {"id": id, "tab": tab, "nodes": [], "n": n}
+		var h := 160.0 if tab == "gear" else 185.0
+		var panel := UiPanel.new()
+		panel.size = Vector2(W - 60.0, h)
 		_hangar.add_child(panel)
+		row["panel"] = panel
 		row["nodes"].append(panel)
-		var icon := Panel.new()
-		var sbox := StyleBoxFlat.new()
-		sbox.bg_color = u["color"]
-		sbox.set_corner_radius_all(48)
-		icon.add_theme_stylebox_override("panel", sbox)
-		_place(icon, 50, y + 20, 96, 96)
-		icon.mouse_filter = Control.MOUSE_FILTER_IGNORE
-		_hangar.add_child(icon)
-		row["nodes"].append(icon)
-		var glyph := _screen_label(_hangar, u["glyph"], 56, 50, y + 20, 96, 96, HORIZONTAL_ALIGNMENT_CENTER)
-		row["nodes"].append(glyph)
-		var title := _screen_label(_hangar, "", 40, 170, y + 8, 480, 56, HORIZONTAL_ALIGNMENT_LEFT)
-		row["title"] = title
-		row["nodes"].append(title)
-		var line := _screen_label(_hangar, "", 25, 170, y + 56, 490, 110, HORIZONTAL_ALIGNMENT_LEFT)
+		var icon := IconView.new()
+		icon.icon = u["glyph"]
+		icon.plate = u["color"]
+		icon.position = Vector2(24, (h - 104.0) * 0.5)
+		icon.size = Vector2(104, 104)
+		panel.add_child(icon)
+		row["icon"] = icon
+		var title_l := _loose_label(40, true)
+		title_l.position = Vector2(150, 10)
+		title_l.size = Vector2(500, 56)
+		title_l.horizontal_alignment = HORIZONTAL_ALIGNMENT_LEFT
+		title_l.vertical_alignment = VERTICAL_ALIGNMENT_CENTER
+		panel.add_child(title_l)
+		row["title"] = title_l
+		var line := _loose_label(26)
+		line.position = Vector2(150, 64)
+		line.size = Vector2(500 if tab == "gear" else 520, h - 72.0)
+		line.horizontal_alignment = HORIZONTAL_ALIGNMENT_LEFT
+		line.vertical_alignment = VERTICAL_ALIGNMENT_TOP
 		line.autowrap_mode = TextServer.AUTOWRAP_WORD_SMART
-		line.add_theme_color_override("font_color", Color(0.8, 0.9, 1.0))
-		line.add_theme_constant_override("outline_size", 6)
+		line.add_theme_font_size_override("font_size", 24)
+		line.max_lines_visible = 3 if tab == "gear" else 4
+		line.clip_text = true
+		line.add_theme_color_override("font_color", Style.TEXT_SOFT)
+		panel.add_child(line)
 		row["line"] = line
-		row["nodes"].append(line)
-		var buy := _make_button("", 40, Vector2(220, 120))
-		_place(buy, W - 30.0 - 235.0, y + 20, 220, 120)
+		var buy := _make_button("", 40, Vector2(230, 112), UiButton.Kind.SECONDARY, "coin")
+		buy.position = Vector2(W - 60.0 - 250.0, (h - 112.0) * 0.5)
 		buy.pressed.connect(func(): upgrade_pressed.emit(id))
-		_hangar.add_child(buy)
+		panel.add_child(buy)
 		row["buy"] = buy
-		row["nodes"].append(buy)
 		if tab == "gear":
-			var eq := _make_button("", 30, Vector2(170, 120))
-			_place(eq, W - 30.0 - 235.0 - 185.0, y + 20, 170, 120)
+			var eq := _make_button("", 30, Vector2(170, 112), UiButton.Kind.SECONDARY)
+			eq.position = Vector2(W - 60.0 - 250.0 - 186.0, (h - 112.0) * 0.5)
 			eq.pressed.connect(func(): equip_pressed.emit(id, _sel_slot))
-			_hangar.add_child(eq)
+			panel.add_child(eq)
 			row["equip"] = eq
-			row["nodes"].append(eq)
 		_upg_rows.append(row)
-	var back := _make_button("BACK", 56, Vector2(380, 110))
-	_place(back, 70, 1730, 380, 110)
-	back.pressed.connect(func(): back_pressed.emit())
-	_hangar.add_child(back)
-	var go := _make_button("PLAY", 56, Vector2(380, 110))
-	_place(go, W - 70.0 - 380.0, 1730, 380, 110)
+	var go := _make_button("PLAY", 70, Vector2(560, 150), UiButton.Kind.PRIMARY, "play")
 	go.pressed.connect(func(): play_pressed.emit())
 	_hangar.add_child(go)
+	_lay(func():
+		var sy := Style.safe_top
+		htitle.position = Vector2(0, sy + 10.0)
+		for i in TABS.size():
+			(_tab_buttons[TABS[i]] as Control).position = Vector2(30.0 + 340.0 * i, sy + tab_y)
+		for i in 3:
+			_slot_buttons[i].position = Vector2(30.0 + 340.0 * i, sy + 256.0)
+		for row in _upg_rows:
+			var gear: bool = row["tab"] == "gear"
+			(row["panel"] as Control).position = Vector2(30, sy + (372.0 + 172.0 * row["n"]) if gear else sy + (262.0 + 200.0 * row["n"]))
+		go.position = Vector2((W - 560.0) * 0.5, _vp.y - Style.safe_bottom - 36.0 - 150.0))
 
 	_build_logbook()
 	_over_hangar = _make_button("Hangar", 48, Vector2(320, 100))
-	_over_hangar.set_anchors_and_offsets_preset(Control.PRESET_CENTER_BOTTOM)
-	_over_hangar.offset_left = -160.0
-	_over_hangar.offset_right = 160.0
-	_over_hangar.offset_top = -330.0
-	_over_hangar.offset_bottom = -230.0
 	_over_hangar.visible = false
 	_over_hangar.pressed.connect(func(): hangar_pressed.emit())
 	add_child(_over_hangar)
@@ -426,22 +545,22 @@ func _build_menus() -> void:
 func _build_logbook() -> void:
 	const W := 1080.0
 	_logbook = _screen_root()
-	_screen_label(_logbook, "LOGBOOK", 100, 0, 50, W, 120, HORIZONTAL_ALIGNMENT_CENTER)
+	_corner_button(_logbook, "back", func(): back_pressed.emit())
+	var ltitle := _screen_label(_logbook, "LOGBOOK", 90, 0, 0, W, 110, HORIZONTAL_ALIGNMENT_CENTER)
 	var scroll := ScrollContainer.new()
-	_place(scroll, 30, 190, W - 60.0, 1480)
 	scroll.horizontal_scroll_mode = ScrollContainer.SCROLL_MODE_DISABLED
 	_logbook.add_child(scroll)
 	_logbook_box = VBoxContainer.new()
 	_logbook_box.custom_minimum_size = Vector2(W - 80.0, 0)
 	_logbook_box.add_theme_constant_override("separation", 14)
 	scroll.add_child(_logbook_box)
-	_logbook_heading("COMBOS  (pick a perk to level 3 with the right partner)")
+	_logbook_heading("COMBOS  (a perk at level 3 with the right partner)")
 	for c in Tuning.combos:
 		_logbook_rows.append(_logbook_row(150.0))
-	_logbook_heading("MILESTONES  (they unlock more perks for the pick screen)")
+	_logbook_heading("MILESTONES  (they unlock more perks)")
 	for m in Tuning.milestones:
 		_milestone_rows.append(_logbook_row(120.0))
-	_logbook_heading("PERKS, BOOSTS & SUPPLIES  (what the pick cards do)")
+	_logbook_heading("PERKS, BOOSTS & SUPPLIES")
 	for d in Tuning.perks:
 		_pick_row_defs.append(d)
 	for d in Tuning.boosts:
@@ -450,10 +569,10 @@ func _build_logbook() -> void:
 		_pick_row_defs.append(d)
 	for d in _pick_row_defs:
 		_pick_rows.append(_logbook_row(130.0))
-	var back := _make_button("BACK", 56, Vector2(380, 110))
-	_place(back, (W - 380.0) * 0.5, 1730, 380, 110)
-	back.pressed.connect(func(): back_pressed.emit())
-	_logbook.add_child(back)
+	_lay(func():
+		ltitle.position = Vector2(0, Style.safe_top + 10.0)
+		scroll.position = Vector2(30, Style.safe_top + 130.0)
+		scroll.size = Vector2(W - 60.0, _vp.y - Style.safe_top - Style.safe_bottom - 130.0 - 20.0))
 
 func _logbook_heading(text: String) -> Label:
 	var l := _make_label(30)
@@ -461,56 +580,37 @@ func _logbook_heading(text: String) -> Label:
 	_logbook_box.add_child(l)
 	l.text = text
 	l.horizontal_alignment = HORIZONTAL_ALIGNMENT_LEFT
-	l.custom_minimum_size = Vector2(0, 50)
-	l.add_theme_color_override("font_color", Color(0.75, 0.88, 1.0))
+	l.custom_minimum_size = Vector2(0, 56)
+	l.vertical_alignment = VERTICAL_ALIGNMENT_BOTTOM
+	l.add_theme_color_override("font_color", Style.TEXT_SOFT)
 	return l
 
-## One list row (a panel, a round icon with a letter, a title and a description).
+## One list row (a raised panel, a round icon, a title and a description).
 func _logbook_row(height: float) -> Dictionary:
 	var row := Control.new()
 	row.custom_minimum_size = Vector2(960, height)
-	var panel := ColorRect.new()
-	panel.color = Color(1, 1, 1, 0.07)
+	var panel := UiPanel.new()
 	panel.size = Vector2(960, height)
-	panel.mouse_filter = Control.MOUSE_FILTER_IGNORE
 	row.add_child(panel)
-	var icon := Panel.new()
-	var sbox := StyleBoxFlat.new()
-	sbox.set_corner_radius_all(42)
-	icon.add_theme_stylebox_override("panel", sbox)
-	icon.position = Vector2(24, (height - 84.0) * 0.5)
-	icon.size = Vector2(84, 84)
-	icon.mouse_filter = Control.MOUSE_FILTER_IGNORE
+	var icon := IconView.new()
+	icon.position = Vector2(20, (height - 90.0) * 0.5)
+	icon.size = Vector2(90, 90)
 	row.add_child(icon)
-	var glyph := Label.new()
-	glyph.add_theme_font_size_override("font_size", 50)
-	glyph.add_theme_constant_override("outline_size", 8)
-	glyph.add_theme_color_override("font_outline_color", Color.BLACK)
-	glyph.horizontal_alignment = HORIZONTAL_ALIGNMENT_CENTER
-	glyph.vertical_alignment = VERTICAL_ALIGNMENT_CENTER
-	glyph.position = icon.position
-	glyph.size = icon.size
-	glyph.mouse_filter = Control.MOUSE_FILTER_IGNORE
-	row.add_child(glyph)
-	var title := Label.new()
-	title.add_theme_font_size_override("font_size", 44)
-	title.add_theme_constant_override("outline_size", 8)
-	title.add_theme_color_override("font_outline_color", Color.BLACK)
-	title.position = Vector2(132, 10)
-	title.size = Vector2(800, 56)
-	title.mouse_filter = Control.MOUSE_FILTER_IGNORE
+	var title := _loose_label(40, true)
+	title.horizontal_alignment = HORIZONTAL_ALIGNMENT_LEFT
+	title.position = Vector2(132, 8)
+	title.size = Vector2(800, 52)
+	title.vertical_alignment = VERTICAL_ALIGNMENT_CENTER
 	row.add_child(title)
-	var line := Label.new()
-	line.add_theme_font_size_override("font_size", 30)
-	line.add_theme_constant_override("outline_size", 6)
-	line.add_theme_color_override("font_outline_color", Color.BLACK)
+	var line := _loose_label(28)
+	line.horizontal_alignment = HORIZONTAL_ALIGNMENT_LEFT
 	line.autowrap_mode = TextServer.AUTOWRAP_WORD_SMART
-	line.position = Vector2(132, 68)
-	line.size = Vector2(800, height - 76.0)
-	line.mouse_filter = Control.MOUSE_FILTER_IGNORE
+	line.position = Vector2(132, 60)
+	line.size = Vector2(800, height - 66.0)
+	line.add_theme_color_override("font_color", Style.TEXT_SOFT)
 	row.add_child(line)
 	_logbook_box.add_child(row)
-	return {"row": row, "style": sbox, "glyph": glyph, "title": title, "line": line}
+	return {"row": row, "panel": panel, "icon": icon, "title": title, "line": line}
 
 ## Redraw the Logbook from the save.
 func refresh_logbook(all_found: bool = false) -> void:
@@ -522,12 +622,14 @@ func refresh_logbook(all_found: bool = false) -> void:
 		var c: Dictionary = Tuning.combos[i]
 		var r := _logbook_rows[i]
 		var found: bool = all_found or bool(Save.combos_found.get(c["id"], false))
-		(r["style"] as StyleBoxFlat).bg_color = c["color"] if found else Color(0.16, 0.18, 0.24)
-		(r["glyph"] as Label).text = String(c["name"]).substr(0, 1) if found else "?"
+		var iv := r["icon"] as IconView
+		iv.plate = c["color"] if found else Color(0.22, 0.25, 0.33)
+		iv.icon = Tuning.perk_def(c["perk"])["glyph"] if found else "lock"
+		iv.tint = Color.WHITE if found else Style.TEXT_QUIET
 		(r["title"] as Label).text = c["name"] if found else "???"
-		(r["title"] as Label).add_theme_color_override("font_color", Color.WHITE if found else Color(0.55, 0.6, 0.7))
+		(r["title"] as Label).add_theme_color_override("font_color", Color.WHITE if found else Style.TEXT_QUIET)
 		(r["line"] as Label).text = c["line"] if found else "Hint: %s" % c["hint"]
-		(r["line"] as Label).add_theme_color_override("font_color", Color(0.85, 0.93, 1.0) if found else Color(0.5, 0.55, 0.65))
+		(r["line"] as Label).add_theme_color_override("font_color", Style.TEXT_SOFT if found else Style.TEXT_QUIET)
 
 ## The long descriptions: every perk (with its three levels), boost and supply.
 func _refresh_pick_rows() -> void:
@@ -549,11 +651,11 @@ func _refresh_pick_rows() -> void:
 		else:
 			tag = "   SUPPLY"
 			line = line.replace("{v}", "30% of the next pick's price")
-		(r["style"] as StyleBoxFlat).bg_color = d["color"]
-		(r["glyph"] as Label).text = d["glyph"]
+		var iv := r["icon"] as IconView
+		iv.plate = d["color"]
+		iv.icon = d["glyph"]
 		(r["title"] as Label).text = String(d["name"]) + tag
 		(r["line"] as Label).text = line
-		(r["line"] as Label).add_theme_color_override("font_color", Color(0.85, 0.93, 1.0))
 
 func _refresh_milestones() -> void:
 	for i in Tuning.milestones.size():
@@ -562,12 +664,14 @@ func _refresh_milestones() -> void:
 		var perk := Tuning.perk_def(m["perk"])
 		var done: bool = Save.milestones.has(m["id"])
 		var pr: Vector2 = Save.milestone_progress(m)
-		(r["style"] as StyleBoxFlat).bg_color = perk["color"] if done else Color(0.16, 0.18, 0.24)
-		(r["glyph"] as Label).text = perk["glyph"] if done else "?"
+		var iv := r["icon"] as IconView
+		iv.plate = perk["color"] if done else Color(0.22, 0.25, 0.33)
+		iv.icon = perk["glyph"] if done else "lock"
+		iv.tint = Color.WHITE if done else Style.TEXT_QUIET
 		(r["title"] as Label).text = ("%s  (perk unlocked)" % perk["name"]) if done else ("%s  locked" % perk["name"])
-		(r["title"] as Label).add_theme_color_override("font_color", Color.WHITE if done else Color(0.6, 0.65, 0.75))
+		(r["title"] as Label).add_theme_color_override("font_color", Color.WHITE if done else Style.TEXT_QUIET)
 		(r["line"] as Label).text = ("%s: done" % m["goal"]) if done else ("%s  (%s / %s)" % [m["goal"], Tuning.fmt(pr.x), Tuning.fmt(pr.y)])
-		(r["line"] as Label).add_theme_color_override("font_color", Color(0.85, 0.93, 1.0) if done else Color(0.7, 0.75, 0.85))
+		(r["line"] as Label).add_theme_color_override("font_color", Style.TEXT_SOFT if done else Style.TEXT_QUIET)
 
 func show_logbook() -> void:
 	hide_results()
@@ -599,40 +703,47 @@ func refresh_menus(all_tabs: bool = false) -> void:
 	_menu_best.text = "%s best: %s  |  %s" % [Tuning.map_def(Save.selected_map)["name"], Tuning.fmt(sel_stat["best_score"]), Tuning.fmt_m(sel_stat["best_distance"])]
 	for i in Tuning.maps.size():
 		var m := Tuning.map_def(i)
-		var card := _map_cards[i]
+		var card := _map_cards[i] as UiButton
 		var st: Dictionary = Save.map_stat(i)
 		if Save.map_unlocked(i):
-			card.text = "  %s    x%s coins\n  Best %s   Score %s" % [m["name"], Tuning.fmt(Tuning.map_coin_mult[i]), Tuning.fmt_m(st["best_distance"]), Tuning.fmt(st["best_score"])]
+			card.text = "%s    x%s coins\nBest %s   Score %s" % [m["name"], Tuning.fmt(Tuning.map_coin_mult[i]), Tuning.fmt_m(st["best_distance"]), Tuning.fmt(st["best_score"])]
 			card.disabled = false
-			card.modulate = Color(1.4, 1.4, 0.75) if i == Save.selected_map else Color(0.9, 0.95, 1.0)
+			card.accent = i == Save.selected_map
+			card.icon_id = "map"
+			card.icon_plate = Style.SUCCESS if i == Save.selected_map else Style.PRIMARY
 		else:
 			var from_name: String = Tuning.map_def(m["unlock_from"])["name"]
-			card.text = "  %s    LOCKED\n  Reach %s on %s" % [m["name"], Tuning.fmt_m(m["unlock_meters"]), from_name]
+			card.text = "%s    LOCKED\nReach %s on %s" % [m["name"], Tuning.fmt_m(m["unlock_meters"]), from_name]
 			card.disabled = true
-			card.modulate = Color.WHITE
+			card.accent = false
+			card.icon_id = "lock"
+			card.icon_plate = Color(0.25, 0.28, 0.36)
 		for k in 3:
 			var sbx := (_map_dots[i][k] as Panel).get_theme_stylebox("panel") as StyleBoxFlat
-			sbx.bg_color = [Color(0.8, 0.5, 0.25), Color(0.82, 0.86, 0.92), Color(1.0, 0.85, 0.2)][k] if k < int(st["medals"]) else Color(0.2, 0.24, 0.32)
-	_menu_coins.text = "Coins: %s" % Tuning.fmt(Save.coins)
-	_hangar_coins.text = "Coins: %s" % Tuning.fmt(Save.coins)
+			sbx.bg_color = [Color(0.8, 0.5, 0.25), Color(0.82, 0.86, 0.92), Style.ACCENT][k] if k < int(st["medals"]) else Color(0.2, 0.24, 0.32)
+	_menu_coins.text = Tuning.fmt(Save.coins)
+	_hangar_coins.text = Tuning.fmt(Save.coins)
 	for t in TABS:
-		(_tab_buttons[t] as Button).modulate = Color(1.35, 1.35, 0.8) if t == _tab else Color(0.7, 0.75, 0.9)
+		(_tab_buttons[t] as UiButton).accent = t == _tab
 	for i in 3:
-		var sb := _slot_buttons[i]
+		var sb := _slot_buttons[i] as UiButton
 		sb.visible = _tab == "gear" or all_tabs
 		if i < Save.slots:
 			var g: String = Save.loadout[i]
 			sb.text = "%d: %s" % [i + 1, Tuning.upgrade_def(g)["name"] if g != "" else "empty"]
 			sb.disabled = false
-			sb.modulate = Color(1.4, 1.4, 0.7) if i == _sel_slot else Color(0.85, 0.9, 1.0)
+			sb.accent = i == _sel_slot
+			sb.icon_id = ""
 		elif i == Save.slots:
 			sb.text = "Unlock %s" % Tuning.fmt(Tuning.gear_slot_costs[i])
 			sb.disabled = Save.coins < Tuning.gear_slot_costs[i]
-			sb.modulate = Color.WHITE
+			sb.accent = false
+			sb.icon_id = "coin"
 		else:
 			sb.text = "Locked"
 			sb.disabled = true
-			sb.modulate = Color.WHITE
+			sb.accent = false
+			sb.icon_id = "lock"
 	for row in _upg_rows:
 		var id: String = row["id"]
 		var show: bool = all_tabs or row["tab"] == _tab
@@ -642,14 +753,19 @@ func refresh_menus(all_tabs: bool = false) -> void:
 		var m := Tuning.max_level(id)
 		(row["title"] as Label).text = "%s   Lv %d%s" % [Tuning.upgrade_def(id)["name"], lv, ("/%d" % m) if m >= 0 else ""]
 		(row["line"] as Label).text = Tuning.upgrade_line(id, lv)
-		var b := row["buy"] as Button
-		b.text = "MAX" if Save.is_maxed(id) else Tuning.fmt(Save.cost_of_next(id))
+		var b := row["buy"] as UiButton
+		var maxed := Save.is_maxed(id)
+		b.text = "MAX" if maxed else Tuning.fmt(Save.cost_of_next(id))
+		b.icon_id = "" if maxed else "coin"
+		b.kind = UiButton.Kind.GOLD if maxed else UiButton.Kind.SECONDARY
 		b.disabled = not Save.can_buy(id)
+		b.accent = not maxed and not b.disabled
 		if row.has("equip"):
-			var eq := row["equip"] as Button
+			var eq := row["equip"] as UiButton
 			eq.visible = show and lv > 0
 			eq.text = "REMOVE" if (_sel_slot < 3 and Save.loadout[_sel_slot] == id) else ("IN SLOT\n%d" % (Save.loadout.find(id) + 1) if Save.is_equipped(id) else "EQUIP")
 			eq.disabled = false
+			eq.accent = Save.is_equipped(id)
 
 ## The start screen's sliders show the saved volumes.
 func set_volume_sliders(music: float, sound: float) -> void:
@@ -740,7 +856,7 @@ func set_run_hud(on: bool) -> void:
 		c.visible = on
 
 func _run_hud_nodes() -> Array:
-	var list: Array = [_score, _distance_label, _fuel_bg, _fuel_fill, _fuel_label, _next_label]
+	var list: Array = [_score, _score_pill, _score_coin, _distance_label, _dist_pill, _dist_icon, _fuel_bg, _fuel_fill, _fuel_label, _next_label]
 	return list
 
 ## Is a touch at `pos` on the game-over "Hangar" button? (Main uses it so that tap doesn't restart.)
@@ -752,21 +868,29 @@ func set_next(score_needed: float) -> void:
 	_next_label.text = ("Next: %s" % Tuning.fmt(score_needed)) if (score_needed > 0.0 and score_needed < 1e300) else ""
 
 ## The perks held this run, as small icons in a row under the fuel gauge (a perk id -> level dictionary).
+var _perk_count := 0
+
 func set_perks(levels: Dictionary) -> void:
 	var held: Array[Dictionary] = []
 	for d in Tuning.perks:
 		if int(levels.get(d["id"], 0)) > 0:
 			held.append(d)
+	_perk_count = held.size()
 	for i in PERK_ICONS:
 		var ic := _perk_icons[i]
 		var panel := ic["panel"] as Panel
 		panel.visible = i < held.size()
 		_perk_ids[i] = held[i]["id"] if i < held.size() else ""
 		if i < held.size():
-			(ic["style"] as StyleBoxFlat).bg_color = held[i]["color"]
-			(ic["glyph"] as Label).text = held[i]["glyph"]
+			var iv := ic["icon"] as IconView
+			iv.plate = held[i]["color"]
+			iv.icon = held[i]["glyph"]
 			(ic["level"] as Label).text = str(int(levels[held[i]["id"]]))
-			panel.position = Vector2(540.0 + 58.0 * (i - (held.size() - 1) * 0.5) - 26.0, 384)
+	_reposition_perks()
+
+func _reposition_perks() -> void:
+	for i in mini(_perk_count, PERK_ICONS):
+		(_perk_icons[i]["panel"] as Panel).position = Vector2(_vp.x * 0.5 + 66.0 * (i - (_perk_count - 1) * 0.5) - 28.0, _fuel_top + 124.0)
 
 ## A held perk's icon pulses briefly (the perk just did something: Tailwind paid, sped the plane up ...).
 func pulse_perk(id: String) -> void:
@@ -820,13 +944,13 @@ func show_combo(combo_name: String, color: Color, sub: String = "COMBO!") -> voi
 	_combo_label.visible = true
 	_combo_sub.visible = true
 
-## Lives (Nine Lives, Patch): small red pips under the fuel gauge.
+## Lives (Nine Lives, Patch): small red hearts under the fuel gauge.
 func set_lives(n: int) -> void:
 	for i in LIVES_POOL:
 		var pip := _lives_pips[i]
 		pip.visible = i < n
-		pip.offset_left = -13.0 + 40.0 * (i - (n - 1) * 0.5)
-		pip.offset_right = pip.offset_left + 26.0
+		pip.offset_left = -17.0 + 44.0 * (i - (n - 1) * 0.5)
+		pip.offset_right = pip.offset_left + 34.0
 
 ## A floating "+coins" next to something (a can, a close call).
 func coin_pop(text: String, pos: Vector2) -> void:
@@ -844,40 +968,43 @@ func coin_pop(text: String, pos: Vector2) -> void:
 	_coin_base_y[i] = l.position.y
 	_coin_born[i] = Time.get_ticks_msec()
 
-## The play-time readouts (score, bonus, fuel gauge) only show while a run is on screen.
-
-## Fuel gauge under the bonus: dark trough + a fill that shrinks, green -> amber -> red.
+## Fuel gauge under the bonus: a pill-shaped trough, a fill that shrinks (green -> amber -> red), a can icon at its end.
 func _build_fuel_gauge() -> void:
-	_fuel_bg = ColorRect.new()
-	_fuel_bg.color = Color(0, 0, 0, 0.45)
-	_fuel_bg.mouse_filter = Control.MOUSE_FILTER_IGNORE
-	_fuel_fill = ColorRect.new()
+	var trough := UiPanel.new()
+	trough.fill = Color(Style.INK, 0.72)
+	trough.border = Color(Style.LINE, 0.4)
+	trough.radius = 22
+	trough.border_w = 3
+	trough.shadow = false
+	trough.sheen_alpha = 0.0
+	_fuel_bg = trough
+	add_child(trough)
+	_fuel_sb = Style.box(Color(0.25, 0.9, 0.35), Color(1, 1, 1, 0.0), 16, 0, false)
+	_fuel_fill = Panel.new()
+	_fuel_fill.add_theme_stylebox_override("panel", _fuel_sb)
 	_fuel_fill.mouse_filter = Control.MOUSE_FILTER_IGNORE
-	for r in [_fuel_bg, _fuel_fill]:
-		r.anchor_left = 0.5
-		r.anchor_right = 0.5
-		r.offset_top = FUEL_BAR_TOP
-		r.offset_bottom = FUEL_BAR_TOP + FUEL_BAR_H
-		add_child(r)
-	_fuel_bg.offset_left = -FUEL_BAR_W * 0.5 - 4.0
-	_fuel_bg.offset_right = FUEL_BAR_W * 0.5 + 4.0
-	_fuel_bg.offset_top = FUEL_BAR_TOP - 4.0
-	_fuel_bg.offset_bottom = FUEL_BAR_TOP + FUEL_BAR_H + 4.0
-	_fuel_label = _make_label(26)
-	_fuel_label.text = "FUEL"
-	_fuel_label.horizontal_alignment = HORIZONTAL_ALIGNMENT_RIGHT
-	_fuel_label.anchor_left = 0.5
-	_fuel_label.anchor_right = 0.5
-	_fuel_label.offset_left = -FUEL_BAR_W * 0.5 - 140.0
-	_fuel_label.offset_right = -FUEL_BAR_W * 0.5 - 16.0
-	_fuel_label.offset_top = FUEL_BAR_TOP - 4.0
+	add_child(_fuel_fill)
+	_fuel_icon = IconView.new()
+	_fuel_icon.icon = "can"
+	_fuel_icon.plate = Color(0.2, 0.62, 0.3)
+	_fuel_label = _fuel_icon
+	add_child(_fuel_icon)
 	set_fuel(1.0)
+
+func _layout_fuel() -> void:
+	var x0 := (_vp.x - FUEL_BAR_W) * 0.5
+	_fuel_bg.position = Vector2(x0 - 8.0, _fuel_top - 8.0)
+	_fuel_bg.size = Vector2(FUEL_BAR_W + 16.0, FUEL_BAR_H + 16.0)
+	_fuel_icon.position = Vector2(x0 - 78.0, _fuel_top - 18.0)
+	_fuel_icon.size = Vector2(68, 68)
+	set_fuel(_fuel_frac)
 
 ## Show the tank level (0..1).
 func set_fuel(frac: float) -> void:
 	_fuel_frac = clampf(frac, 0.0, 1.0)
-	_fuel_fill.offset_left = -FUEL_BAR_W * 0.5
-	_fuel_fill.offset_right = -FUEL_BAR_W * 0.5 + FUEL_BAR_W * _fuel_frac
+	var x0 := (_vp.x - FUEL_BAR_W) * 0.5
+	_fuel_fill.position = Vector2(x0, _fuel_top)
+	_fuel_fill.size = Vector2(maxf(FUEL_BAR_W * _fuel_frac, 12.0 if _fuel_frac > 0.0 else 0.0), FUEL_BAR_H)
 
 ## A pickup: the gauge flashes bright and swells for a moment.
 func fuel_pulse() -> void:
@@ -886,19 +1013,22 @@ func fuel_pulse() -> void:
 func _update_fuel_look(now: int) -> void:
 	var c: Color
 	if _fuel_frac > 0.5:
-		c = Color(0.25, 0.9, 0.35)
+		c = Style.SUCCESS
 	elif _fuel_frac > Tuning.fuel_low_fraction:
-		c = Color(1.0, 0.75, 0.15)
+		c = Style.WARNING
 	else:
-		c = Color(1.0, 0.2, 0.15)
+		c = Style.DANGER
 		if int(now / 180) % 2 == 0:   # low fuel: blink
 			c = c.lightened(0.45)
 	var pt := clampf((now - _fuel_pulse_ms) / 1000.0 / FUEL_PULSE_TIME, 0.0, 1.0)
 	c = c.lerp(Color.WHITE, 0.7 * (1.0 - pt))
-	_fuel_fill.color = c
+	_fuel_sb.bg_color = c
+	_fuel_fill.queue_redraw()
 	var swell := 5.0 * (1.0 - pt)
-	_fuel_fill.offset_top = FUEL_BAR_TOP - swell
-	_fuel_fill.offset_bottom = FUEL_BAR_TOP + FUEL_BAR_H + swell
+	_fuel_fill.position.y = _fuel_top - swell
+	_fuel_fill.size.y = FUEL_BAR_H + 2.0 * swell
+	_fuel_icon.scale = Vector2.ONE * (1.0 + 0.25 * (1.0 - pt))
+	_fuel_icon.pivot_offset = _fuel_icon.size * 0.5
 
 ## The score. While a points bonus is active it takes the bonus colour (gold at the cap), swells with
 ## the bonus (clamped), and gives a little pulse every time the number ticks up, so the faster scoring
@@ -1069,35 +1199,31 @@ func _build_callouts() -> void:
 	for i in CALLOUTS:
 		var holder := Control.new()
 		holder.mouse_filter = Control.MOUSE_FILTER_IGNORE
-		holder.position = Vector2(540, 470 + 100.0 * i)
 		holder.size = Vector2(1, 1)
 		holder.visible = false
-		var icon := Panel.new()
-		var sb := StyleBoxFlat.new()
-		sb.set_corner_radius_all(40)
-		sb.set_border_width_all(5)
-		sb.border_color = Color.WHITE
-		icon.add_theme_stylebox_override("panel", sb)
-		icon.size = Vector2(80, 80)
-		icon.position = Vector2(-380, -40)
-		icon.mouse_filter = Control.MOUSE_FILTER_IGNORE
-		icon.pivot_offset = Vector2(40, 40)
-		holder.add_child(icon)
-		var glyph := _loose_label(52)
+		var pill := UiPanel.new()
+		pill.fill = Color(Style.INK, 0.82)
+		pill.border = Color(1, 1, 1, 0.75)
+		pill.radius = Style.R_PILL
+		pill.sheen_alpha = 0.06
+		pill.size = Vector2(740, 96)
+		pill.position = Vector2(-370, -48)
+		pill.pivot_offset = Vector2(370, 48)
+		holder.add_child(pill)
+		var glyph := IconView.new()
 		glyph.size = Vector2(80, 80)
-		glyph.position = Vector2(-380, -40)
-		glyph.vertical_alignment = VERTICAL_ALIGNMENT_CENTER
-		glyph.mouse_filter = Control.MOUSE_FILTER_IGNORE
+		glyph.position = Vector2(-356, -40)
+		glyph.pivot_offset = Vector2(40, 40)
 		holder.add_child(glyph)
-		var text := _loose_label(50)
-		text.size = Vector2(800, 80)
-		text.position = Vector2(-280, -40)
+		var text := _loose_label(42, true)
+		text.size = Vector2(620, 96)
+		text.position = Vector2(-258, -48)
 		text.horizontal_alignment = HORIZONTAL_ALIGNMENT_LEFT
 		text.vertical_alignment = VERTICAL_ALIGNMENT_CENTER
-		text.mouse_filter = Control.MOUSE_FILTER_IGNORE
+		text.clip_text = true
 		holder.add_child(text)
 		add_child(holder)
-		_call_nodes.append({"holder": holder, "icon": icon, "sb": sb, "glyph": glyph, "text": text})
+		_call_nodes.append({"holder": holder, "icon": pill, "glyph": glyph, "text": text})
 		_call_born.append(0)
 
 ## A perk or gear item acted: its icon pops in with a line. `id` = the item's id (icon colour and glyph come from it).
@@ -1106,10 +1232,12 @@ func callout(id: String, text: String) -> void:
 	var i := _call_next
 	_call_next = (_call_next + 1) % CALLOUTS
 	var n := _call_nodes[i]
-	(n["sb"] as StyleBoxFlat).bg_color = d["color"]
-	(n["glyph"] as Label).text = d["glyph"]
+	var gl := n["glyph"] as IconView
+	gl.icon = d["glyph"]
+	gl.plate = d["color"]
 	(n["text"] as Label).text = text
 	(n["text"] as Label).add_theme_color_override("font_color", Color(1.0, 0.97, 0.8))
+	(n["holder"] as Control).position = Vector2(_vp.x * 0.5, _fuel_top + 215.0 + 106.0 * i)
 	(n["holder"] as Control).visible = true
 	_call_born[i] = Time.get_ticks_msec()
 	_update_callouts()
@@ -1127,10 +1255,11 @@ func _update_callouts() -> void:
 			_call_born[i] = 0
 			continue
 		var pop := 1.0 + 0.5 * sin(PI * clampf(t / 0.28, 0.0, 1.0)) if t < 0.28 else 1.0   # the icon pops
-		(n["icon"] as Control).scale = Vector2(pop, pop)
 		(n["glyph"] as Control).scale = Vector2(pop, pop)
+		var slide := Style.ease_out_back(clampf(t / 0.25, 0.0, 1.0))   # the pill lands with a little overshoot
+		(n["icon"] as Control).scale = Vector2(slide, 0.6 + 0.4 * slide)
 		holder.modulate.a = 1.0 if t < CALLOUT_LIFE - 0.4 else (CALLOUT_LIFE - t) / 0.4
-		holder.position.y = 470.0 + 100.0 * i - 30.0 * clampf(t / CALLOUT_LIFE, 0.0, 1.0)
+		holder.position.y = _fuel_top + 215.0 + 106.0 * i - 30.0 * clampf(t / CALLOUT_LIFE, 0.0, 1.0)
 
 ## Pre-warm: show every callout slot once (glyphs and text), then hide them.
 func prewarm_callouts() -> void:
@@ -1141,14 +1270,14 @@ func prewarm_callouts() -> void:
 # ---------- The results screen ----------
 
 ## A label from _make_label (which already hangs it on the HUD), taken off again so it can go into a panel.
-func _loose_label(font_size: int) -> Label:
-	var l := _make_label(font_size)
+func _loose_label(font_size: int, display: bool = false) -> Label:
+	var l := _make_label(font_size, display)
 	if l.get_parent() != null:
 		l.get_parent().remove_child(l)
 	return l
 
-func _res_label(key: String, size: int, y: float, h: float, color: Color = Color.WHITE, x: float = 0.0, w: float = 1080.0) -> Label:
-	var l := _loose_label(size)
+func _res_label(key: String, size: int, y: float, h: float, color: Color = Color.WHITE, x: float = 0.0, w: float = 1080.0, display: bool = false) -> Label:
+	var l := _loose_label(size, display or size >= Style.SZ_M)
 	l.position = Vector2(x, y)
 	l.size = Vector2(w, h)
 	l.vertical_alignment = VERTICAL_ALIGNMENT_CENTER
@@ -1158,25 +1287,22 @@ func _res_label(key: String, size: int, y: float, h: float, color: Color = Color
 	_res_nodes[key] = l
 	return l
 
+## A progress bar: a dark trough with a rounded fill that grows (the fill rides inside the trough).
 func _res_bar(key: String, y: float, h: float, color: Color) -> void:
 	var back := Panel.new()
-	var bsb := StyleBoxFlat.new()
-	bsb.bg_color = Color(0.2, 0.25, 0.36)
-	bsb.set_corner_radius_all(int(h * 0.5))
+	var bsb := Style.box(Color(Style.INK, 0.85), Color(Style.LINE, 0.3), int(h * 0.5), 2, false)
 	back.add_theme_stylebox_override("panel", bsb)
 	back.position = Vector2(90, y)
 	back.size = Vector2(900, h)
 	back.mouse_filter = Control.MOUSE_FILTER_IGNORE
 	_res.add_child(back)
 	var fill := Panel.new()
-	var fsb := StyleBoxFlat.new()
-	fsb.bg_color = color
-	fsb.set_corner_radius_all(int(h * 0.5))
+	var fsb := Style.box(color, Color(1, 1, 1, 0.0), int(h * 0.5), 0, false)
 	fill.add_theme_stylebox_override("panel", fsb)
-	fill.position = Vector2(90, y)
+	fill.position = Vector2(0, 0)
 	fill.size = Vector2(h, h)
 	fill.mouse_filter = Control.MOUSE_FILTER_IGNORE
-	_res.add_child(fill)
+	back.add_child(fill)
 	_res_nodes[key + "_back"] = back
 	_res_nodes[key + "_fill"] = fill
 
@@ -1186,42 +1312,50 @@ func _build_results() -> void:
 	_res.mouse_filter = Control.MOUSE_FILTER_STOP
 	_res.visible = false
 	var dim := ColorRect.new()
-	dim.color = Color(0.04, 0.05, 0.1, 0.82)
+	dim.color = Color(Style.SCRIM, 0.84)
 	dim.set_anchors_and_offsets_preset(Control.PRESET_FULL_RECT)
 	dim.mouse_filter = Control.MOUSE_FILTER_IGNORE
 	_res.add_child(dim)
-	_res_label("header", 100, 80, 120, Color(1.0, 0.45, 0.3))
-	_res_label("cause", 54, 195, 80, Color(0.9, 0.95, 1.0))
-	_res_label("coins", 170, 285, 200, Color(1.0, 0.85, 0.25))
-	_res_label("coins_cap", 48, 480, 60, Color(0.9, 0.8, 0.5))
-	_res_label("dist", 52, 575, 70, Color.WHITE)
-	_res_bar("dist_bar", 650, 46, Color(0.35, 0.85, 0.5))
-	_res_label("pct", 46, 705, 64, Color(0.8, 1.0, 0.85))
-	_res_label("unlock", 46, 800, 60, Color(0.6, 0.85, 1.0))
-	_res_bar("unlock_bar", 862, 30, Color(0.4, 0.7, 1.0))
-	_res_label("medal", 46, 915, 60, Color(1.0, 0.8, 0.45))
-	_res_bar("medal_bar", 977, 30, Color(1.0, 0.75, 0.3))
-	_res_label("extra", 40, 1040, 190, Color(1.0, 0.95, 0.6))
-	_res_label("afford", 48, 1235, 70, Color(0.6, 1.0, 0.7))
-	var go := _make_button("", 46, Vector2(820, 110))
-	go.position = Vector2(130, 1310)
-	go.size = Vector2(820, 110)
+	_res_label("header", 100, 80, 120, Style.DANGER)
+	_res_label("cause", 50, 195, 80, Style.TEXT_SOFT)
+	var coin_icon := IconView.new()
+	coin_icon.icon = "coin"
+	coin_icon.size = Vector2(130, 130)
+	_res.add_child(coin_icon)
+	_res_nodes["coin_icon"] = coin_icon
+	_res_label("coins", 170, 285, 200, Style.ACCENT)
+	_res_label("coins_cap", 46, 480, 60, Style.TEXT_SOFT)
+	_res_label("dist", 56, 575, 70, Color.WHITE)
+	_res_bar("dist_bar", 650, 46, Style.SUCCESS)
+	_res_label("pct", 44, 705, 64, Color(0.8, 1.0, 0.85))
+	_res_label("unlock", 44, 800, 60, Style.SKY)
+	_res_bar("unlock_bar", 862, 30, Style.PRIMARY)
+	_res_label("medal", 44, 915, 60, Style.ACCENT)
+	_res_bar("medal_bar", 977, 30, Style.ACCENT)
+	_res_label("extra", 38, 1040, 190, Color(1.0, 0.95, 0.6))
+	_res_label("afford", 44, 1235, 70, Style.SUCCESS.lightened(0.3))
+	var go := _make_button("", 44, Vector2(860, 110), UiButton.Kind.GOLD, "wrench")
 	go.pressed.connect(func(): if _res_data.has("afford_id"): hangar_goto.emit(_res_data["afford_id"]))
 	_res.add_child(go)
 	_res_nodes["afford_btn"] = go
-	var again := _make_button("PLAY AGAIN", 110, Vector2(840, 240))
-	again.position = Vector2(120, 1480)
-	again.size = Vector2(840, 240)
+	var again := _make_button("PLAY AGAIN", 100, Vector2(900, 240), UiButton.Kind.PRIMARY, "play")
 	again.pressed.connect(func(): play_again_pressed.emit())
 	_res.add_child(again)
 	_res_nodes["again"] = again
-	var hg := _make_button("HANGAR", 50, Vector2(420, 110))
-	hg.position = Vector2(330, 1750)
-	hg.size = Vector2(420, 110)
+	var hg := _make_button("HANGAR", 50, Vector2(440, 110), UiButton.Kind.SECONDARY, "hangar")
 	hg.pressed.connect(func(): hangar_pressed.emit())
 	_res.add_child(hg)
 	_res_nodes["hangar"] = hg
 	add_child(_res)
+	_lay(func():
+		var sy := Style.safe_top
+		var sb := Style.safe_bottom
+		(_res_nodes["header"] as Control).position.y = sy + 70.0
+		(_res_nodes["cause"] as Control).position.y = sy + 185.0
+		(go as Control).position = Vector2((1080.0 - 860.0) * 0.5, _vp.y - sb - 36.0 - 110.0 - 24.0 - 240.0 - 24.0 - 110.0)
+		(again as Control).position = Vector2((1080.0 - 900.0) * 0.5, _vp.y - sb - 36.0 - 110.0 - 24.0 - 240.0)
+		(hg as Control).position = Vector2((1080.0 - 440.0) * 0.5, _vp.y - sb - 36.0 - 110.0)
+		(_res_nodes["afford"] as Control).position.y = go.position.y - 78.0)
 
 ## Show the results: `d` = {header, cause, coins, meters, best_m (before this run), new_best, pct, unlock {text, frac},
 ## medal {text, frac}, extra (lines), afford {id, text} }. The screen builds up over about 5 s (a tap skips to the end).
@@ -1269,7 +1403,6 @@ func _res_fill(key: String, frac: float, start: float, length: float) -> void:
 	var back := _res_nodes[key + "_back"] as Panel
 	var fill := _res_nodes[key + "_fill"] as Panel
 	var shown := _res_fade(key + "_back", start)
-	fill.modulate.a = back.modulate.a
 	var k := clampf((_res_t - start) / length, 0.0, 1.0)
 	k = 1.0 - pow(1.0 - k, 3.0)
 	fill.size.x = maxf(back.size.y, back.size.x * clampf(frac, 0.0, 1.0) * k)
@@ -1287,6 +1420,10 @@ func _update_results(delta: float) -> void:
 	coins_label.text = "+" + Tuning.fmt(floorf(float(d["coins"]) * ck))
 	_res_fade("coins", 0.45)
 	_res_fade("coins_cap", 0.45)
+	var cw := Style.text_width(coins_label.text, 170)   # the coin sits just left of the number
+	var cicon := _res_nodes["coin_icon"] as Control
+	cicon.position = Vector2(_vp.x * 0.5 - cw * 0.5 - 150.0, coins_label.position.y + 35.0)
+	cicon.modulate.a = coins_label.modulate.a
 	var ticks := int(ck * 32.0)
 	if ticks > _res_ticks and _res_t < 3.0:
 		_res_ticks = ticks
@@ -1321,12 +1458,12 @@ func _game_over_text(header: String, reason: String, earned: float, new_best: bo
 	var best_line := "NEW BEST!" if new_best else "Best: %s" % Tuning.fmt(best)
 	return "%s\n%s\n\n+%s coins\n%s\n%s\n\nTap to restart" % [header, reason, Tuning.fmt(earned), best_line, extra]
 
-func _make_label(font_size: int) -> Label:
+func _make_label(font_size: int, display: bool = false) -> Label:
 	var l := Label.new()
 	l.horizontal_alignment = HORIZONTAL_ALIGNMENT_CENTER
-	l.add_theme_font_size_override("font_size", font_size)
-	l.add_theme_constant_override("outline_size", 12)
-	l.add_theme_color_override("font_outline_color", Color.BLACK)
+	Style.style_label(l, font_size)
+	if display:
+		l.add_theme_font_override("font", Style.display())
 	l.mouse_filter = Control.MOUSE_FILTER_IGNORE
 	add_child(l)
 	return l
@@ -1335,17 +1472,18 @@ func _make_label(font_size: int) -> Label:
 ## with any active ?debug flags on a second line. BuildInfo.gd is rewritten by the GitHub Actions
 ## workflow at export time.
 func _build_stamp() -> void:
-	var l := _make_label(26)
-	l.text = "%s  %s" % [BuildInfo.COMMIT, BuildInfo.TIME]
-	var flags := DebugFlags.summary()
-	if flags != "":
-		l.text += "\n" + flags
-	l.horizontal_alignment = HORIZONTAL_ALIGNMENT_LEFT
-	l.set_anchors_and_offsets_preset(Control.PRESET_BOTTOM_LEFT)
-	l.offset_left = 14
-	l.offset_top = -48 if flags == "" else -84
-	l.modulate = Color(1, 1, 1, 0.55)
-	l.add_theme_constant_override("outline_size", 6)
+	if DebugFlags.stamp_enabled():   # (players never see it: only ?debug, ?tune or ?perf)
+		var l := _make_label(22)
+		l.text = "%s  %s" % [BuildInfo.COMMIT, BuildInfo.TIME]
+		var flags := DebugFlags.summary()
+		if flags != "":
+			l.text += "\n" + flags
+		l.horizontal_alignment = HORIZONTAL_ALIGNMENT_LEFT
+		l.set_anchors_and_offsets_preset(Control.PRESET_BOTTOM_LEFT)
+		l.offset_left = 14.0 + Style.safe_left
+		l.offset_top = (-40.0 if flags == "" else -68.0) - Style.safe_bottom
+		l.modulate = Color(1, 1, 1, 0.5)
+		l.add_theme_constant_override("outline_size", 4)
 	if DebugFlags.perf_enabled():
 		_perf_label = _make_label(26)
 		_perf_label.horizontal_alignment = HORIZONTAL_ALIGNMENT_LEFT
@@ -1465,23 +1603,13 @@ func begin_prewarm(with_popups: bool) -> void:
 	_menu.visible = true      # the start screen, Hangar and Hangar button are drawn too (under the splash)
 	_hangar.visible = true
 	_over_hangar.visible = true
-	_splash = Control.new()
-	_splash.set_anchors_and_offsets_preset(Control.PRESET_FULL_RECT)
-	_splash.mouse_filter = Control.MOUSE_FILTER_IGNORE
-	var bg := ColorRect.new()
-	bg.color = Color(0.08, 0.1, 0.16, 0.93)
-	bg.set_anchors_and_offsets_preset(Control.PRESET_FULL_RECT)
-	bg.mouse_filter = Control.MOUSE_FILTER_IGNORE
-	_splash.add_child(bg)
-	var title := Label.new()
-	title.text = "SKY DODGE\nloading..."
-	title.horizontal_alignment = HORIZONTAL_ALIGNMENT_CENTER
-	title.vertical_alignment = VERTICAL_ALIGNMENT_CENTER
-	title.add_theme_font_size_override("font_size", 90)
-	title.set_anchors_and_offsets_preset(Control.PRESET_FULL_RECT)
-	title.mouse_filter = Control.MOUSE_FILTER_IGNORE
-	_splash.add_child(title)
+	_splash = SplashView.new()
 	add_child(_splash)  # last child = drawn on top
+
+## How far the start-up is (0..1): the splash screen's bar.
+func set_splash_progress(f: float) -> void:
+	if is_instance_valid(_splash) and _splash is SplashView:
+		(_splash as SplashView).progress = f
 
 ## Show every pooled popup label, cycling through every tier's text and size. The pre-warm calls
 ## this again every so often because popups fade out after a second.

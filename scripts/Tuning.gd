@@ -332,44 +332,44 @@ var prop_wash_friction := 5.0
 ## PERKS last the run (levels 1-3, `vals` = the effect at each level). `unlock`: "" = in the starting pool,
 ## otherwise the milestone that unlocks it. `needs`: "crates" = only offered once crates exist.
 var perks: Array[Dictionary] = [
-	{"id": "glide", "name": "Glide", "glyph": "G", "color": Color(0.6, 0.85, 1.0), "unlock": "", "vals": [4.0, 8.0, 14.0],
+	{"id": "glide", "name": "Glide", "glyph": "glide", "color": Color(0.6, 0.85, 1.0), "unlock": "", "vals": [4.0, 8.0, 14.0],
 			"line": "Fuel runs out? Glide {v} s instead of ending."},
-	{"id": "cloud_diver", "name": "Cloud Diver", "glyph": "D", "color": Color(0.9, 0.95, 1.0), "unlock": "", "vals": [3.0, 7.0, 12.0],
+	{"id": "cloud_diver", "name": "Cloud Diver", "glyph": "cloud_diver", "color": Color(0.9, 0.95, 1.0), "unlock": "", "vals": [3.0, 7.0, 12.0],
 			"line": "Fly under a cloud: get {v} fuel back every second."},
-	{"id": "lucky_whiskers", "name": "Lucky Whiskers", "glyph": "W", "color": Color(1.0, 0.4, 0.85), "unlock": "", "vals": [40, 75, 100],
+	{"id": "lucky_whiskers", "name": "Lucky Whiskers", "glyph": "lucky_whiskers", "color": Color(1.0, 0.4, 0.85), "unlock": "", "vals": [40, 75, 100],
 			"line": "A Whisker close drops a fuel can {v}% of the time."},
-	{"id": "prop_wash", "name": "Prop Wash", "glyph": "P", "color": Color(0.6, 0.9, 0.7), "unlock": "prop_wash", "vals": [25, 60, 120],
+	{"id": "prop_wash", "name": "Prop Wash", "glyph": "prop_wash", "color": Color(0.6, 0.9, 0.7), "unlock": "prop_wash", "vals": [25, 60, 120],
 			"line": "Close calls shove obstacles aside. Ones that bump others pay {v} coins."},
-	{"id": "battering_ram", "name": "Battering Ram", "glyph": "B", "color": Color(0.85, 0.6, 0.35), "unlock": "battering_ram", "needs": "crates", "vals": [1.5, 2.5, 4.0],
+	{"id": "battering_ram", "name": "Battering Ram", "glyph": "battering_ram", "color": Color(0.85, 0.6, 0.35), "unlock": "battering_ram", "needs": "crates", "vals": [1.5, 2.5, 4.0],
 			"line": "Crates break on any touch, not just rams. Crate coins x{v}."},
-	{"id": "fuel_miser", "name": "Fuel Miser", "glyph": "M", "color": Color(0.4, 0.9, 0.5), "unlock": "", "vals": [25, 45, 65],
+	{"id": "fuel_miser", "name": "Fuel Miser", "glyph": "fuel_miser", "color": Color(0.4, 0.9, 0.5), "unlock": "", "vals": [25, 45, 65],
 			"line": "Burn {v}% less fuel."},
-	{"id": "hot_streak", "name": "Hot Streak", "glyph": "H", "color": Color(1.0, 0.55, 0.2), "unlock": "", "vals": [60, 150, 300],
+	{"id": "hot_streak", "name": "Hot Streak", "glyph": "hot_streak", "color": Color(1.0, 0.55, 0.2), "unlock": "", "vals": [60, 150, 300],
 			"line": "Your close-call bonus fades {v}% slower."},
-	{"id": "scavenger", "name": "Scavenger", "glyph": "S", "color": Color(1.0, 0.85, 0.3), "unlock": "", "vals": [30, 90, 250],
+	{"id": "scavenger", "name": "Scavenger", "glyph": "scavenger", "color": Color(1.0, 0.85, 0.3), "unlock": "", "vals": [30, 90, 250],
 			"line": "Each fuel can pays {v} extra coins."},
-	{"id": "tailwind", "name": "Tailwind", "glyph": "T", "color": Color(0.5, 0.8, 1.0), "unlock": "", "vals": [30, 60, 90],
+	{"id": "tailwind", "name": "Tailwind", "glyph": "tailwind", "color": Color(0.5, 0.8, 1.0), "unlock": "", "vals": [30, 60, 90],
 			"line": "Fly faster, earn more: +{v}% coins (and a little speed)."},
-	{"id": "daredevil", "name": "Daredevil", "glyph": "!", "color": Color(1.0, 0.35, 0.35), "unlock": "", "vals": [30, 60, 100],
+	{"id": "daredevil", "name": "Daredevil", "glyph": "daredevil", "color": Color(1.0, 0.35, 0.35), "unlock": "", "vals": [30, 60, 100],
 			"line": "Close calls count from {v}% farther away."},
-	{"id": "second_wind", "name": "Second Wind", "glyph": "2", "color": Color(0.5, 1.0, 0.8), "unlock": "second_wind", "vals": [40, 70, 100],
+	{"id": "second_wind", "name": "Second Wind", "glyph": "second_wind", "color": Color(0.5, 1.0, 0.8), "unlock": "second_wind", "vals": [40, 70, 100],
 			"line": "Once a run, refill {v}% of the tank when it runs low."},
-	{"id": "golden_touch", "name": "Golden Touch", "glyph": "$", "color": Color(1.0, 0.8, 0.1), "unlock": "golden_touch", "needs": "crates", "vals": [3, 5, 8],
+	{"id": "golden_touch", "name": "Golden Touch", "glyph": "golden_touch", "color": Color(1.0, 0.8, 0.1), "unlock": "golden_touch", "needs": "crates", "vals": [3, 5, 8],
 			"line": "Crates pay x{v}."},
 ]
 ## BOOSTS (boost_time seconds) and SUPPLIES (instant).
 var boosts: Array[Dictionary] = [
-	{"id": "double_coins", "name": "Double Coins", "glyph": "x", "color": Color(1.0, 0.85, 0.2), "line": "Everything you earn pays double."},
-	{"id": "shield", "name": "Shield", "glyph": "O", "color": Color(0.4, 0.8, 1.0), "line": "One free hit."},
-	{"id": "magnet_storm", "name": "Magnet Storm", "glyph": "M", "color": Color(0.8, 0.5, 1.0), "line": "Fuel cans fly to you from far away."},
-	{"id": "whisker_window", "name": "Whisker Window", "glyph": "W", "color": Color(1.0, 0.4, 0.85), "line": "Every close call counts as a Whisker close."},
-	{"id": "fuel_freeze", "name": "Fuel Freeze", "glyph": "*", "color": Color(0.7, 0.95, 1.0), "line": "No fuel burns."},
+	{"id": "double_coins", "name": "Double Coins", "glyph": "double_coins", "color": Color(1.0, 0.85, 0.2), "line": "Everything you earn pays double."},
+	{"id": "shield", "name": "Shield", "glyph": "shield", "color": Color(0.4, 0.8, 1.0), "line": "One free hit."},
+	{"id": "magnet_storm", "name": "Magnet Storm", "glyph": "magnet_storm", "color": Color(0.8, 0.5, 1.0), "line": "Fuel cans fly to you from far away."},
+	{"id": "whisker_window", "name": "Whisker Window", "glyph": "whisker_window", "color": Color(1.0, 0.4, 0.85), "line": "Every close call counts as a Whisker close."},
+	{"id": "fuel_freeze", "name": "Fuel Freeze", "glyph": "fuel_freeze", "color": Color(0.7, 0.95, 1.0), "line": "No fuel burns."},
 ]
 var supplies: Array[Dictionary] = [
-	{"id": "full_tank", "name": "Full Tank", "glyph": "F", "color": Color(0.3, 0.9, 0.4), "line": "Fill the tank right now."},
-	{"id": "patch", "name": "Patch", "glyph": "+", "color": Color(1.0, 0.4, 0.4), "line": "+1 hit you can survive this run."},
-	{"id": "crate_shower", "name": "Crate Shower", "glyph": "C", "color": Color(0.9, 0.7, 0.3), "needs": "crates", "line": "The next rows are full of crates."},
-	{"id": "coin_bag", "name": "Coin Bag", "glyph": "$", "color": Color(1.0, 0.8, 0.2), "line": "Instant coins: {v}."},
+	{"id": "full_tank", "name": "Full Tank", "glyph": "full_tank", "color": Color(0.3, 0.9, 0.4), "line": "Fill the tank right now."},
+	{"id": "patch", "name": "Patch", "glyph": "patch", "color": Color(1.0, 0.4, 0.4), "line": "+1 hit you can survive this run."},
+	{"id": "crate_shower", "name": "Crate Shower", "glyph": "crate_shower", "color": Color(0.9, 0.7, 0.3), "needs": "crates", "line": "The next rows are full of crates."},
+	{"id": "coin_bag", "name": "Coin Bag", "glyph": "coin_bag", "color": Color(1.0, 0.8, 0.2), "line": "Instant coins: {v}."},
 ]
 ## COMBOS: a combo switches on the moment its perk reaches level 3 AND its partner is there (partner gear
 ## equipped, or partner perk held). A banner announces it. `partner_kind` is "gear" or "perk".
@@ -512,31 +512,31 @@ var magnet_pull_speed := 16.0
 ##   per / falloff (the effect per level; plane upgrades shrink by `falloff` each level),
 ##   steps (gear: the value at level 0, 1, 2 ...).
 var upgrades: Array[Dictionary] = [
-	{"id": "coin_value", "tab": "earnings", "name": "Coin Value", "glyph": "$", "color": Color(1.0, 0.8, 0.2),
+	{"id": "coin_value", "tab": "earnings", "name": "Coin Value", "glyph": "coin_value", "color": Color(1.0, 0.8, 0.2),
 			"line": "Every coin worth more: {a} -> {b}", "fmt": "x", "max": -1, "cost_base": 280.0, "per": 0.10, "notice": "Every coin is worth more, everywhere."},
-	{"id": "can_bounty", "tab": "earnings", "name": "Can Bounty", "glyph": "C", "color": Color(0.35, 0.85, 0.45),
+	{"id": "can_bounty", "tab": "earnings", "name": "Can Bounty", "glyph": "can_bounty", "color": Color(0.35, 0.85, 0.45),
 			"line": "Each fuel can pays {a} -> {b} coins", "fmt": "big", "max": -1, "cost_base": 420.0, "per": 8.0, "notice": "Every fuel can is a little jackpot."},
-	{"id": "close_call_pay", "tab": "earnings", "name": "Close Call Pay", "glyph": "!", "color": Color(1.0, 0.55, 0.2),
+	{"id": "close_call_pay", "tab": "earnings", "name": "Close Call Pay", "glyph": "close_call_pay", "color": Color(1.0, 0.55, 0.2),
 			"line": "Each close call pays {a} -> {b} coins", "fmt": "big", "max": -1, "cost_base": 560.0, "per": 4.0, "notice": "Skimming obstacles pays right away."},
-	{"id": "bonus_cap", "tab": "earnings", "name": "Bonus Cap", "glyph": "^", "color": Color(1.0, 0.4, 0.6),
+	{"id": "bonus_cap", "tab": "earnings", "name": "Bonus Cap", "glyph": "bonus_cap", "color": Color(1.0, 0.4, 0.6),
 			"line": "Close-call bonus can reach {a} -> {b}", "fmt": "x1", "max": -1, "cost_base": 840.0, "per": 0.5, "front": [2.0, 1.6, 1.3, 1.1, 1.0], "notice": "Long streaks keep climbing."},
-	{"id": "fuel_tank", "tab": "plane", "name": "Fuel Tank", "glyph": "F", "color": Color(0.3, 0.7, 1.0),
+	{"id": "fuel_tank", "tab": "plane", "name": "Fuel Tank", "glyph": "fuel_tank", "color": Color(0.3, 0.7, 1.0),
 			"line": "Hold {d} more fuel ({a} -> {b})", "fmt": "int", "max": 12, "cost_base": 80.0, "per": 30.0, "falloff": 0.9, "notice": "You fly longer between cans."},
-	{"id": "efficiency", "tab": "plane", "name": "Efficiency", "glyph": "E", "color": Color(0.4, 0.9, 0.8),
+	{"id": "efficiency", "tab": "plane", "name": "Efficiency", "glyph": "efficiency", "color": Color(0.4, 0.9, 0.8),
 			"line": "Burn fuel slower: {a}/s -> {b}/s", "fmt": "dec1", "max": 10, "cost_base": 100.0, "per": 0.09, "falloff": 0.88, "notice": "The tank lasts noticeably longer."},
-	{"id": "refill", "tab": "plane", "name": "Refill", "glyph": "R", "color": Color(0.6, 0.8, 0.3),
+	{"id": "refill", "tab": "plane", "name": "Refill", "glyph": "refill", "color": Color(0.6, 0.8, 0.3),
 			"line": "Each can gives {d} more fuel ({a} -> {b})", "fmt": "dec1", "max": 12, "cost_base": 120.0, "per": 7.0, "falloff": 0.9, "notice": "Each can buys more time in the air."},
-	{"id": "nine_lives", "tab": "gear", "name": "Nine Lives", "glyph": "9", "color": Color(1.0, 0.35, 0.35),
+	{"id": "nine_lives", "tab": "gear", "name": "Nine Lives", "glyph": "nine_lives", "color": Color(1.0, 0.35, 0.35),
 			"line": "Survive hits per run: {a} -> {b}", "fmt": "int", "max": 3, "costs": [1400.0, 42000.0, 1680000.0], "steps": [0, 1, 2, 3], "notice": "A crash costs a life, not the run."},
-	{"id": "reserve_tank", "tab": "gear", "name": "Reserve Tank", "glyph": "T", "color": Color(0.5, 0.6, 1.0),
+	{"id": "reserve_tank", "tab": "gear", "name": "Reserve Tank", "glyph": "reserve_tank", "color": Color(0.5, 0.6, 1.0),
 			"line": "Refill the tank when empty: {a} -> {b} times", "fmt": "int", "max": 2, "costs": [2100.0, 84000.0], "steps": [0, 1, 2], "notice": "Run dry? The tank refills itself."},
-	{"id": "magnet", "name": "Can Magnet", "tab": "gear", "glyph": "M", "color": Color(0.8, 0.5, 1.0),
+	{"id": "magnet", "name": "Can Magnet", "tab": "gear", "glyph": "magnet", "color": Color(0.8, 0.5, 1.0),
 			"line": "Pull cans from {a} -> {b} units away", "fmt": "dec1", "max": 3, "costs": [1050.0, 31500.0, 1260000.0], "steps": [0.0, 1.5, 2.5, 3.5], "notice": "Cans drift toward you."},
-	{"id": "cloud_eye", "tab": "gear", "name": "Cloud Eye", "glyph": "O", "color": Color(0.8, 0.9, 1.0),
+	{"id": "cloud_eye", "tab": "gear", "name": "Cloud Eye", "glyph": "cloud_eye", "color": Color(0.8, 0.9, 1.0),
 			"line": "Outlines show obstacles under clouds: {a} -> {b}", "fmt": "onoff", "max": 1, "costs": [3500.0], "steps": [0, 1], "notice": "See what hides in the clouds."},
-	{"id": "steady_nerves", "tab": "gear", "name": "Steady Nerves", "glyph": "S", "color": Color(0.95, 0.75, 0.5),
+	{"id": "steady_nerves", "tab": "gear", "name": "Steady Nerves", "glyph": "steady_nerves", "color": Color(0.95, 0.75, 0.5),
 			"line": "A hit keeps {a} -> {b} of your close-call bonus", "fmt": "pct", "max": 2, "costs": [2800.0, 84000.0], "steps": [0.0, 0.5, 1.0], "notice": "A hit no longer wipes your streak."},
-	{"id": "head_start", "tab": "gear", "name": "Head Start", "glyph": "H", "color": Color(1.0, 0.9, 0.3),
+	{"id": "head_start", "tab": "gear", "name": "Head Start", "glyph": "head_start", "color": Color(1.0, 0.9, 0.3),
 			"line": "Begin each run at bonus {a} -> {b}", "fmt": "x1", "max": 2, "costs": [1750.0, 52500.0], "steps": [1.0, 1.5, 2.0], "notice": "Every run starts already hot."},
 ]
 
@@ -546,7 +546,7 @@ func icon_def(id: String) -> Dictionary:
 		for d in list:
 			if d["id"] == id:
 				return d
-	return {"name": id, "glyph": "?", "color": Color.WHITE}
+	return {"name": id, "glyph": "quest", "color": Color.WHITE}
 
 func upgrade_def(id: String) -> Dictionary:
 	for u in upgrades:

@@ -7,10 +7,11 @@ extends RefCounted
 ##   ?noprewarm                                            skip the start-up pre-warm and splash
 ##   ?perf                                                 show a worst-frame-time readout
 ##   ?tune                                                 show the on-screen tuning panel (TUNE button, top-right)
+##   ?debug                                                show the build stamp and the active flags (also shown with ?tune or ?perf)
 ##   ?map=N                                                play map N (0-3) whatever is unlocked / selected
 ##   ?god                                                  nothing can hurt the plane (to look at hazards)
 ## Combine with "&", e.g.  ?nofx=sparks&noprewarm&perf
-## The active flags are printed under the build stamp.
+## The build stamp and the active flags are only shown to players who ask for them (?debug, ?tune or ?perf).
 
 const EFFECTS := ["sparks", "streaks", "flash", "popup", "trail", "haptic", "punch", "pickup", "clouds", "hazards", "crates", "kit", "sound", "music", "ground", "shadows", "coins"]
 
@@ -19,6 +20,7 @@ static var _off := {}                  # effect name -> true
 static var _bad: Array[String] = []    # unknown names (typos), shown in the summary
 static var noprewarm := false
 static var perf := false
+static var debug := false
 static var tune := false
 static var start_map := -1
 static var god := false
@@ -38,6 +40,11 @@ static func perf_enabled() -> bool:
 	_load()
 	return perf
 
+## Should the build stamp (and the flags under it) show? Only for ?debug, ?tune or ?perf: players never see it.
+static func stamp_enabled() -> bool:
+	_load()
+	return debug or tune or perf
+
 static func tune_enabled() -> bool:
 	_load()
 	return tune
@@ -54,6 +61,8 @@ static func summary() -> String:
 		parts.append("nofx=" + ",".join(names))
 	if noprewarm:
 		parts.append("noprewarm")
+	if debug:
+		parts.append("debug")
 	if perf:
 		parts.append("perf")
 	if tune:
@@ -88,6 +97,7 @@ static func parse(args: Array[String]) -> void:
 	_bad.clear()
 	noprewarm = false
 	perf = false
+	debug = false
 	tune = false
 	start_map = -1
 	god = false
@@ -112,6 +122,8 @@ static func parse(args: Array[String]) -> void:
 				noprewarm = true
 			"perf":
 				perf = true
+			"debug":
+				debug = true
 			"tune":
 				tune = true
 			"map":

@@ -34,35 +34,33 @@ func _ready() -> void:
 	_root.visible = false
 	add_child(_root)
 	var dim := ColorRect.new()
-	dim.color = Color(0.03, 0.04, 0.08, 0.78)
+	dim.color = Color(Style.SCRIM, 0.84)
 	dim.set_anchors_and_offsets_preset(Control.PRESET_FULL_RECT)
 	dim.mouse_filter = Control.MOUSE_FILTER_IGNORE
 	_root.add_child(dim)
-	var title := _label("PICK ONE", 90, 0, 170, 1080, 120, HORIZONTAL_ALIGNMENT_CENTER)
-	_root.add_child(title)
+	_title = _label("PICK ONE", 96, 0, 150, 1080, 120, HORIZONTAL_ALIGNMENT_CENTER)
+	_root.add_child(_title)
 	for i in CARDS:
 		var b := Button.new()
 		b.focus_mode = Control.FOCUS_NONE
 		b.size = Vector2(CARD_W, CARD_H)
 		for state in ["normal", "hover", "pressed", "disabled", "focus"]:
-			var sb := StyleBoxFlat.new()
-			sb.set_corner_radius_all(28)
-			sb.set_border_width_all(FRAME)
-			b.add_theme_stylebox_override(state, sb)   # (colours are set per card kind in show_cards)
+			b.add_theme_stylebox_override(state, Style.box(Style.SURFACE_DARK, Style.PRIMARY, Style.R_M + 4, 6, true))   # (colours are set per card kind in show_cards)
 		b.pressed.connect(func(): _on_card(i))
 		_root.add_child(b)
 		_cards.append(b)
 		# The banner across the top: PERK / BOOST / SUPPLY on the kind's colour, with its own facts on the right.
 		var banner := Panel.new()
 		var bsb := StyleBoxFlat.new()
-		bsb.corner_radius_top_left = 20
-		bsb.corner_radius_top_right = 20
+		bsb.corner_radius_top_left = Style.R_M - 2
+		bsb.corner_radius_top_right = Style.R_M - 2
+		bsb.anti_aliasing = true
 		banner.add_theme_stylebox_override("panel", bsb)
 		banner.position = Vector2(FRAME, FRAME)
 		banner.size = Vector2(CARD_W - 2.0 * FRAME, BANNER_H)
 		banner.mouse_filter = Control.MOUSE_FILTER_IGNORE
 		b.add_child(banner)
-		var kind_label := _label("PERK", 46, 28, 0, 300, BANNER_H, HORIZONTAL_ALIGNMENT_LEFT)
+		var kind_label := _label("PERK", 40, 28, 0, 300, BANNER_H, HORIZONTAL_ALIGNMENT_LEFT)
 		banner.add_child(kind_label)
 		var pips: Array[Panel] = []
 		for k in 3:
@@ -70,7 +68,7 @@ func _ready() -> void:
 			var psb := StyleBoxFlat.new()
 			psb.set_corner_radius_all(16)
 			psb.set_border_width_all(3)
-			psb.border_color = Color(0, 0, 0, 0.6)
+			psb.border_color = Style.INK
 			pip.add_theme_stylebox_override("panel", psb)
 			pip.position = Vector2(CARD_W - 2.0 * FRAME - 40.0 - 50.0 * (2 - k) - 32.0, (BANNER_H - 32.0) * 0.5)
 			pip.size = Vector2(32, 32)
@@ -78,76 +76,57 @@ func _ready() -> void:
 			banner.add_child(pip)
 			pips.append(pip)
 		# a stopwatch (boosts) with the time it lasts, and INSTANT (supplies)
-		var watch := Control.new()
+		var watch := IconView.new()
+		watch.icon = "clock"
 		watch.position = Vector2(CARD_W - 2.0 * FRAME - 250.0, (BANNER_H - 44.0) * 0.5)
 		watch.size = Vector2(44, 44)
-		watch.mouse_filter = Control.MOUSE_FILTER_IGNORE
-		var face := Panel.new()
-		var fsb := StyleBoxFlat.new()
-		fsb.set_corner_radius_all(22)
-		fsb.bg_color = Color(1, 1, 1, 0.15)
-		fsb.set_border_width_all(5)
-		fsb.border_color = Color.WHITE
-		face.add_theme_stylebox_override("panel", fsb)
-		face.position = Vector2(0, 6)
-		face.size = Vector2(44, 40)
-		face.mouse_filter = Control.MOUSE_FILTER_IGNORE
-		watch.add_child(face)
-		for hand in [[Vector2(20, 12), Vector2(4, 14)], [Vector2(20, 24), Vector2(12, 4)], [Vector2(15, 0), Vector2(14, 6)]]:   # minute hand, hour hand, the button on top
-			var hp := Panel.new()
-			var hsb := StyleBoxFlat.new()
-			hsb.bg_color = Color.WHITE
-			hp.add_theme_stylebox_override("panel", hsb)
-			hp.position = hand[0]
-			hp.size = hand[1]
-			hp.mouse_filter = Control.MOUSE_FILTER_IGNORE
-			watch.add_child(hp)
 		banner.add_child(watch)
-		var tag := _label("", 44, CARD_W - 2.0 * FRAME - 200.0, 0, 180, BANNER_H, HORIZONTAL_ALIGNMENT_RIGHT)   # "20 s" / "INSTANT"
+		var tag := _label("", 40, CARD_W - 2.0 * FRAME - 200.0, 0, 180, BANNER_H, HORIZONTAL_ALIGNMENT_RIGHT)   # "20 s" / "INSTANT"
 		banner.add_child(tag)
 		# the one-line explainer under the banner (the first time each kind shows up)
-		var explain := _label("", 34, 28, BANNER_H + FRAME, CARD_W - 56.0, 44, HORIZONTAL_ALIGNMENT_LEFT)
-		explain.add_theme_color_override("font_color", Color(1.0, 0.97, 0.8))
+		var explain := _label("", 30, 28, BANNER_H + FRAME, CARD_W - 56.0, 44, HORIZONTAL_ALIGNMENT_LEFT)
+		explain.add_theme_color_override("font_color", Style.TEXT_SOFT)
 		b.add_child(explain)
-		var icon := Panel.new()
-		var isb := StyleBoxFlat.new()
-		isb.set_corner_radius_all(75)
-		icon.add_theme_stylebox_override("panel", isb)
+		var icon := IconView.new()
 		icon.position = Vector2(30, 138)
 		icon.size = Vector2(150, 150)
-		icon.mouse_filter = Control.MOUSE_FILTER_IGNORE
 		b.add_child(icon)
-		var glyph := _label("", 90, 30, 138, 150, 150, HORIZONTAL_ALIGNMENT_CENTER)
-		b.add_child(glyph)
 		var nm := _label("", 62, 205, 112, 520, 90, HORIZONTAL_ALIGNMENT_LEFT)
 		b.add_child(nm)
-		var line := _label("", 44, 205, 198, CARD_W - 230.0, 60, HORIZONTAL_ALIGNMENT_LEFT)
-		line.add_theme_color_override("font_color", Color(0.85, 0.93, 1.0))
+		var line := _label("", 40, 205, 198, CARD_W - 230.0, 60, HORIZONTAL_ALIGNMENT_LEFT)
+		line.add_theme_color_override("font_color", Style.TEXT_SOFT)
 		b.add_child(line)
-		var level_up := _label("", 52, 205, 250, 600, 62, HORIZONTAL_ALIGNMENT_LEFT)   # "LEVEL UP 2 -> 3"
-		level_up.add_theme_color_override("font_color", Color(1.0, 0.6, 0.15))
+		var level_up := _label("", 48, 205, 250, 600, 62, HORIZONTAL_ALIGNMENT_LEFT)   # "LEVEL UP 2 -> 3"
+		level_up.add_theme_color_override("font_color", Style.WARNING)
 		b.add_child(level_up)
 		var combo := _label("COMBO!", 44, CARD_W - 270.0, 118, 240, 70, HORIZONTAL_ALIGNMENT_CENTER)
-		var csb := StyleBoxFlat.new()   # a pill: it reads even before the word does
-		csb.bg_color = Color(1.0, 0.85, 0.2)
-		csb.set_corner_radius_all(30)
+		var csb := Style.box(Style.ACCENT, Color(1, 1, 1, 0.9), Style.R_PILL, 3, true)   # a pill: it reads even before the word does
+		csb.content_margin_left = 12
+		csb.content_margin_right = 12
 		combo.add_theme_stylebox_override("normal", csb)
-		combo.add_theme_color_override("font_color", Color(0.25, 0.1, 0.0))
-		combo.add_theme_constant_override("outline_size", 0)
+		combo.add_theme_color_override("font_color", Style.TEXT_ON_LIGHT)
+		combo.add_theme_color_override("font_outline_color", Color(1, 1, 1, 0.0))
 		combo.visible = false
 		b.add_child(combo)
-		var tag_unused := _label("", 1, 0, 0, 1, 1, HORIZONTAL_ALIGNMENT_LEFT)   # (kept so the card parts stay the same; unused)
-		tag_unused.visible = false
-		b.add_child(tag_unused)
-		_parts.append({"icon": icon, "isb": isb, "glyph": glyph, "name": nm, "tag": tag, "pips": pips, "line": line, "combo": combo,
+		_parts.append({"icon": icon, "glyph": icon, "name": nm, "tag": tag, "pips": pips, "line": line, "combo": combo,
 				"banner": banner, "bsb": bsb, "kind": kind_label, "watch": watch, "explain": explain, "level_up": level_up})
+	relayout()
+	get_viewport().size_changed.connect(relayout)
+
+## The cards sit in the middle of the view (whatever its height), the title above them, below the safe area.
+func relayout() -> void:
+	var vp := get_viewport().get_visible_rect().size
+	var block := 3.0 * CARD_H + 2.0 * 30.0
+	_top = maxf((vp.y - block) * 0.5 + 50.0, Style.safe_top + 300.0)
+	_title.position.y = _top - 190.0
+
+var _title: Label
+var _top := 400.0
 
 func _label(text: String, size: int, x: float, y: float, w: float, h: float, align: HorizontalAlignment) -> Label:
 	var l := Label.new()
 	l.text = text
-	l.add_theme_font_size_override("font_size", size)
-	l.add_theme_constant_override("outline_size", 8)
-	l.add_theme_color_override("font_outline_color", Color.BLACK)
+	Style.style_label(l, size)
 	l.horizontal_alignment = align
 	l.vertical_alignment = VERTICAL_ALIGNMENT_CENTER
 	l.position = Vector2(x, y)
@@ -176,8 +155,8 @@ func show_cards(cards: Array[Dictionary], combos: Array = [], remember: bool = t
 		var p := _parts[i]
 		var kind: String = c["kind"]
 		var kc: Color = KIND_COLORS[kind]
-		(p["isb"] as StyleBoxFlat).bg_color = c["color"]
-		(p["glyph"] as Label).text = c["glyph"]
+		(p["icon"] as IconView).plate = c["color"]
+		(p["icon"] as IconView).icon = c["glyph"]
 		(p["name"] as Label).text = c["name"]
 		(p["line"] as Label).text = c["line"]
 		# the kind, readable at a glance: frame, banner and its facts
@@ -186,13 +165,13 @@ func show_cards(cards: Array[Dictionary], combos: Array = [], remember: bool = t
 		var is_combo: bool = i < combos.size() and combos[i] != ""
 		for state in ["normal", "hover", "pressed", "disabled", "focus"]:
 			var sb := b.get_theme_stylebox(state) as StyleBoxFlat
-			var base := kc.darkened(0.78)
-			sb.bg_color = base.lightened(0.12) if state == "hover" else (base.lightened(0.25) if state == "pressed" else base)
-			sb.border_color = Color(1.0, 1.0, 0.7) if is_combo else kc
+			var base := Style.SURFACE_DARK
+			sb.bg_color = base.lightened(0.08) if state == "hover" else (base.lightened(0.16) if state == "pressed" else base)
+			sb.border_color = Style.ACCENT if is_combo else kc
 		for k in 3:
 			var pip := (p["pips"] as Array)[k] as Panel
 			pip.visible = kind == "perk"
-			(pip.get_theme_stylebox("panel") as StyleBoxFlat).bg_color = Color.WHITE if k < int(c["level"]) else kc.darkened(0.55)
+			(pip.get_theme_stylebox("panel") as StyleBoxFlat).bg_color = Style.ACCENT if k < int(c["level"]) else Color(Style.INK, 0.6)
 		(p["watch"] as Control).visible = kind == "boost"
 		var tag := p["tag"] as Label
 		tag.visible = kind != "perk"
@@ -208,7 +187,7 @@ func show_cards(cards: Array[Dictionary], combos: Array = [], remember: bool = t
 			Save.mark_explained(kind)
 		(p["combo"] as Label).visible = is_combo
 		(p["combo"] as Label).text = "COMBO!" if is_combo else ""
-		b.position = Vector2(1200.0, 400.0 + (CARD_H + 30.0) * i)
+		b.position = Vector2(1200.0, _top + (CARD_H + 30.0) * i)
 	_born_ms = Time.get_ticks_msec()
 	shown = true
 	_root.visible = true
@@ -234,9 +213,9 @@ func _on_card(i: int) -> void:
 ## Pre-warm: draw sample cards (every card kind) for a moment.
 func prewarm_show() -> void:
 	var sample: Array[Dictionary] = [
-		{"kind": "perk", "id": "x", "name": "Lucky Whiskers", "glyph": "W", "color": Color(1.0, 0.4, 0.85), "line": "50% can on Whisker closes 0123456789", "level": 2, "owned": true},
-		{"kind": "boost", "id": "x", "name": "Magnet Storm", "glyph": "M", "color": Color(0.8, 0.5, 1.0), "line": "Cans fly to you, 20 s", "level": 0, "owned": false},
-		{"kind": "supply", "id": "x", "name": "Coin Bag", "glyph": "$", "color": Color(1.0, 0.8, 0.2), "line": "+1.5K coins now", "level": 0, "owned": false},
+		{"kind": "perk", "id": "x", "name": "Lucky Whiskers", "glyph": "lucky_whiskers", "color": Color(1.0, 0.4, 0.85), "line": "50% can on Whisker closes 0123456789", "level": 2, "owned": true},
+		{"kind": "boost", "id": "x", "name": "Magnet Storm", "glyph": "magnet_storm", "color": Color(0.8, 0.5, 1.0), "line": "Cans fly to you, 20 s", "level": 0, "owned": false},
+		{"kind": "supply", "id": "x", "name": "Coin Bag", "glyph": "coin_bag", "color": Color(1.0, 0.8, 0.2), "line": "+1.5K coins now", "level": 0, "owned": false},
 	]
 	show_cards(sample, ["Combo", "", ""], false)
 	for b in _cards:

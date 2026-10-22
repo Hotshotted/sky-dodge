@@ -1,0 +1,75 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, user-scalable=no, initial-scale=1.0, viewport-fit=cover">
+<meta name="theme-color" content="#0a1020">
+<meta name="author" content="Clear Prop Games">
+<meta name="application-name" content="Sky Dodge">
+<title>$GODOT_PROJECT_NAME</title>
+<style>
+html, body, #canvas { margin: 0; padding: 0; border: 0; }
+body { color: #fff; background: #0a1020; overflow: hidden; touch-action: none; }
+#canvas { display: block; }
+#canvas:focus { outline: none; }
+/* The loading page: the studio's colours, its mark, and a progress bar. Nothing else. */
+#status { position: absolute; inset: 0; display: flex; flex-direction: column; justify-content: center; align-items: center;
+  background: linear-gradient(180deg, #1d3157 0%, #14213d 45%, #0a1426 100%); transition: opacity .3s ease-out; }
+#status.gone { opacity: 0; pointer-events: none; }
+#status svg { width: min(78vw, 420px); height: auto; max-height: 52vh; overflow: visible; }
+#bar { width: min(62vw, 360px); height: 18px; margin-top: 4vh; border-radius: 9px; background: rgba(10, 16, 32, .85);
+  border: 2px solid rgba(158, 184, 230, .35); box-shadow: 0 6px 16px rgba(3, 8, 20, .45); overflow: hidden; }
+#fill { width: 6%; height: 100%; border-radius: 9px; background: linear-gradient(180deg, #ffe07a 0%, #ffc933 55%, #e0a41a 100%); transition: width .25s ease-out; }
+#oops { display: none; max-width: min(84vw, 420px); margin-top: 4vh; padding: 16px 22px; border-radius: 22px; text-align: center;
+  background: #14213d; border: 3px solid rgba(158, 184, 230, .55); font: 700 18px/1.35 'Nunito', 'Avenir Next', 'Trebuchet MS', Arial, sans-serif; }
+#oops small { display: block; margin-top: 6px; color: #8497b8; font-weight: 600; }
+</style>
+$GODOT_HEAD_INCLUDE
+</head>
+<body>
+<canvas id="canvas"></canvas>
+<noscript></noscript>
+<div id="status">
+<!--MARK-->
+<div id="bar"><div id="fill"></div></div>
+<div id="oops"></div>
+</div>
+<script src="$GODOT_URL"></script>
+<script>
+const GODOT_CONFIG = $GODOT_CONFIG;
+const GODOT_THREADS_ENABLED = $GODOT_THREADS_ENABLED;
+const engine = new Engine(GODOT_CONFIG);
+(function () {
+  var overlay = document.getElementById('status');
+  var fill = document.getElementById('fill');
+  var bar = document.getElementById('bar');
+  var oops = document.getElementById('oops');
+  function fail(err) {
+    console.error(err);
+    bar.style.display = 'none';
+    oops.style.display = 'block';
+    oops.textContent = 'The game could not start. Please reload the page.';
+    var small = document.createElement('small');
+    small.textContent = (err && err.message) ? err.message : (typeof err === 'string' ? err : '');
+    if (small.textContent) { oops.appendChild(small); }
+  }
+  var missing = Engine.getMissingFeatures({ threads: GODOT_THREADS_ENABLED });
+  if (missing.length !== 0) {
+    fail('This browser is missing: ' + missing.join(', '));
+    return;
+  }
+  engine.startGame({
+    onProgress: function (current, total) {
+      if (current > 0 && total > 0) {
+        fill.style.width = Math.max(6, Math.min(100, (current / total) * 100)) + '%';
+      }
+    }
+  }).then(function () {
+    fill.style.width = '100%';
+    overlay.classList.add('gone');   /* the game's own start-up screen takes over in the same colours */
+    setTimeout(function () { overlay.remove(); }, 400);
+  }, fail);
+}());
+</script>
+</body>
+</html>
